@@ -36,6 +36,7 @@ function parseArgs(argv) {
     ui: false,
     maxRefine: undefined,
     maxReview: undefined,
+    maxClarify: undefined,
     model: undefined,
     permissionMode: undefined,
     mock: false,
@@ -52,6 +53,7 @@ function parseArgs(argv) {
     '--extras',
     '--max-refine',
     '--max-review',
+    '--max-clarify',
     '--model',
     '--permission-mode',
     '--install',
@@ -64,6 +66,7 @@ function parseArgs(argv) {
     '--extras': 'extras',
     '--max-refine': 'maxRefine',
     '--max-review': 'maxReview',
+    '--max-clarify': 'maxClarify',
     '--model': 'model',
     '--permission-mode': 'permissionMode',
     '--install': 'install',
@@ -101,7 +104,7 @@ function parseArgs(argv) {
       if (value === undefined) {
         fail(`Flag ${arg} requires a value.`);
       }
-      if (key === 'maxRefine' || key === 'maxReview') {
+      if (key === 'maxRefine' || key === 'maxReview' || key === 'maxClarify') {
         out[key] = Number(value);
       } else if (key === 'extras') {
         // Comma-separated and/or repeatable; accumulate non-empty paths.
@@ -145,6 +148,7 @@ Options:
                            (comma-separated; repeatable)
   --max-refine <N>         Max refine cycles before gating (must be >=1; default 5)
   --max-review <N>         Max review cycles before gating (must be >=1; default 5)
+  --max-clarify <N>        Max clarify rounds before moving to planning (>=1; default 3)
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode (default acceptEdits)
   --mock                   Offline mock mode (no claude, no tokens)
@@ -340,6 +344,7 @@ async function main() {
     extras,
     maxRefineCycles: flags.maxRefine,
     maxReviewCycles: flags.maxReview,
+    maxClarifyCycles: flags.maxClarify,
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,

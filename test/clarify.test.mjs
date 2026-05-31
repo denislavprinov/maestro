@@ -76,3 +76,11 @@ test('normalizeClarify caps questions at MAX_CLARIFY_QUESTIONS (4)', () => {
   const out = normalizeClarify(many);
   assert.equal(out.questions.length, 4);
 });
+
+import { spawnSync } from 'node:child_process';
+
+test('CLI advertises --max-clarify in help', () => {
+  const r = spawnSync(process.execPath, ['src/cli/maestro.mjs', '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /--max-clarify/);
+});

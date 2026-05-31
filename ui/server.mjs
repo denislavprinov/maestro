@@ -215,6 +215,7 @@ app.post('/api/run', async (req, res) => {
 
     const maxRefineCycles = clampInt(body.maxRefine, 5);
     const maxReviewCycles = clampInt(body.maxReview, 5);
+    const maxClarifyCycles = clampInt(body.maxClarify, 3);
     const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
 
     const runId = randomUUID();
@@ -231,6 +232,7 @@ app.post('/api/run', async (req, res) => {
       extras,
       maxRefineCycles,
       maxReviewCycles,
+      maxClarifyCycles,
       agentsDir: AGENTS_DIR,
       claude: { permissionMode: 'acceptEdits', mock },
     });
