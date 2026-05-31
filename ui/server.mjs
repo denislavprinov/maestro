@@ -117,6 +117,7 @@ function summarizeRuns() {
     projectDir: r.projectDir,
     title: r.title,
     status: r.status,
+    startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
   }));
 }
@@ -244,6 +245,7 @@ app.post('/api/run', async (req, res) => {
       projectDir,
       title,
       status: 'starting',
+      startedAt: new Date().toISOString(),
       events: [],
       pendingQuestion: null,
     };

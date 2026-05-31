@@ -12,228 +12,294 @@
     />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <span class="logo">maestro</span>
-        <span class="tagline">Plan &rarr; Refine &rarr; Implement &rarr; Review</span>
-      </div>
-      <div class="conn">
-        <span id="ws-dot" class="dot dot-off" title="WebSocket status"></span>
-        <span id="ws-label">disconnected</span>
-      </div>
-    </header>
+    <div class="app">
+      <!-- ===================== Sidebar ===================== -->
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark"><span></span></div>
+          <div class="name">maestro</div>
+        </div>
 
-    <main class="layout">
-      <!-- LEFT COLUMN: form + history -->
-      <section class="col col-left">
-        <!-- (1) New pipeline form -->
-        <div class="card">
-          <h2>New pipeline</h2>
-          <form id="run-form" autocomplete="off">
-            <label class="field">
-              <span class="label">Project</span>
-              <div class="project-row">
-                <select id="projectSelect" name="projectSelect">
-                  <option value="" disabled selected>No projects yet</option>
-                  <option value="__add__">+ Add project&hellip;</option>
-                </select>
-                <button
-                  type="button"
-                  id="project-delete"
-                  class="btn btn-mini"
-                  title="Remove the selected project from the list"
-                  disabled
-                >
-                  &#10005;
-                </button>
-              </div>
-              <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
+        <nav class="nav">
+          <a href="#new" data-nav="new" class="active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>New pipeline</span>
+          </a>
+          <a href="#running" data-nav="running">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
+            <span>Running</span>
+            <span class="nav-count n-amber" id="nav-running-count">0</span>
+          </a>
+          <a href="#history" data-nav="history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
+            <span>History</span>
+            <span class="nav-count n-grey" id="nav-history-count">0</span>
+          </a>
+        </nav>
 
-              <div id="add-project" class="add-project hidden">
-                <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
-                <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
-                <div class="add-project-actions">
-                  <button type="button" id="addProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
-                  <button type="button" id="addProjectSave" class="btn btn-primary btn-mini">Save</button>
+        <div class="side-foot">
+          <button id="install-btn" class="btn-ghost" title="Copy agents + /maestro skill into the selected project's .claude folder" style="width:100%;display:flex;align-items:center;justify-content:center;gap:9px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M5 21h14"></path></svg>
+            <span>Install agents</span>
+          </button>
+          <div class="conn">
+            <span id="ws-dot" class="dot dot-off" title="WebSocket status"></span>
+            <span id="ws-label">disconnected</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ===================== Main ===================== -->
+      <main class="main">
+        <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
+        <nav class="topnav">
+          <a href="#new" data-nav="new" class="active">New</a>
+          <a href="#running" data-nav="running">Running</a>
+          <a href="#history" data-nav="history">History</a>
+        </nav>
+
+        <!-- ===== VIEW: NEW PIPELINE ===== -->
+        <section class="view" data-view="new">
+          <div class="topbar">
+            <div>
+              <h1>New pipeline</h1>
+              <div class="sub">Plan &rarr; Refine &rarr; Implement &rarr; Review</div>
+            </div>
+          </div>
+
+          <div class="grid single">
+            <section class="card">
+              <form id="run-form" autocomplete="off">
+                <!-- Project -->
+                <div class="field">
+                  <label for="projectSelect">Project</label>
+                  <div class="row-2">
+                    <div class="select-wrap with-x">
+                      <select id="projectSelect" name="projectSelect">
+                        <option value="" disabled selected>No projects yet</option>
+                        <option value="__add__">+ Add project&hellip;</option>
+                      </select>
+                    </div>
+                    <button type="button" id="project-delete" class="icon-btn" title="Remove the selected project from the list" disabled>&#10005;</button>
+                  </div>
+                  <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
+
+                  <div id="add-project" class="add-project hidden">
+                    <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
+                    <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                    <div class="add-project-actions">
+                      <button type="button" id="addProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
+                      <button type="button" id="addProjectSave" class="btn btn-primary btn-mini">Save</button>
+                    </div>
+                    <small class="hint" id="addProjectMsg"></small>
+                  </div>
                 </div>
-                <small class="hint" id="addProjectMsg"></small>
-              </div>
-            </label>
 
-            <label class="field">
-              <span class="label">Title <em class="opt">(optional)</em></span>
-              <input id="title" name="title" type="text" placeholder="Short name for this run" spellcheck="false" />
-            </label>
+                <!-- Title -->
+                <div class="field">
+                  <label for="title">Title <span class="opt">(optional)</span></label>
+                  <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                </div>
 
-            <fieldset class="field source">
-              <legend>Task source</legend>
-              <div class="radio-row">
-                <label class="radio">
-                  <input type="radio" name="source" value="prompt" checked />
-                  <span>Prompt</span>
-                </label>
-                <label class="radio">
-                  <input type="radio" name="source" value="markdown" />
-                  <span>Markdown</span>
-                </label>
-              </div>
+                <!-- Task source -->
+                <div class="field">
+                  <label>Task source</label>
+                  <div class="seg" id="source-seg">
+                    <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
+                    <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                  </div>
+                  <!-- hidden radios kept as the source of truth read at submit -->
+                  <input type="radio" name="source" value="prompt" checked hidden />
+                  <input type="radio" name="source" value="markdown" hidden />
 
-              <div id="prompt-pane" class="source-pane">
-                <textarea
-                  id="prompt"
-                  name="prompt"
-                  rows="6"
-                  placeholder="Describe the software task to build..."
-                ></textarea>
-              </div>
+                  <div id="prompt-pane" class="source-pane">
+                    <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>
+                  </div>
 
-              <div id="markdown-pane" class="source-pane hidden">
-                <textarea
-                  id="promptMarkdown"
-                  name="promptMarkdown"
-                  rows="6"
-                  placeholder="Paste a markdown spec, or load a .md file below..."
-                ></textarea>
-                <label class="file-load">
-                  <span class="btn btn-ghost">Load .md file</span>
-                  <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
-                </label>
-                <span id="mdFileName" class="hint"></span>
-              </div>
-            </fieldset>
+                  <div id="markdown-pane" class="source-pane hidden">
+                    <textarea id="promptMarkdown" name="promptMarkdown" class="textarea" rows="6" style="margin-top:11px" placeholder="Paste a markdown spec, or load a .md file below&hellip;"></textarea>
+                    <div class="file" style="margin-top:11px">
+                      <button type="button" class="pick" data-pick="md">Load .md file</button>
+                      <span id="mdFileName" class="state hint"></span>
+                      <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
+                    </div>
+                  </div>
+                </div>
 
-            <label class="field">
-              <span class="label">Optional extra files</span>
-              <input id="extras" type="file" multiple />
-              <small id="extrasNote" class="hint">Reference files uploaded and copied into the pipeline's extras/ folder.</small>
-            </label>
+                <!-- Optional extra files -->
+                <div class="field">
+                  <label>Optional extra files</label>
+                  <div class="file">
+                    <button type="button" class="pick" data-pick="extras">Choose files</button>
+                    <span class="state" id="extrasNote">Reference files uploaded and copied into the pipeline's extras/ folder.</span>
+                    <input id="extras" type="file" multiple hidden />
+                  </div>
+                </div>
 
-            <div class="grid-2">
-              <label class="field">
-                <span class="label">Max refine cycles</span>
-                <input id="maxRefine" name="maxRefine" type="number" min="1" value="5" />
-              </label>
-              <label class="field">
-                <span class="label">Max review cycles</span>
-                <input id="maxReview" name="maxReview" type="number" min="1" value="5" />
-              </label>
+                <!-- Cycles -->
+                <div class="row-2">
+                  <div class="field" style="flex:1;margin-bottom:0">
+                    <label for="maxRefine">Max refine cycles</label>
+                    <input id="maxRefine" name="maxRefine" class="input" type="number" min="1" value="5" />
+                  </div>
+                  <div class="field" style="flex:1;margin-bottom:0">
+                    <label for="maxReview">Max review cycles</label>
+                    <input id="maxReview" name="maxReview" class="input" type="number" min="1" value="5" />
+                  </div>
+                </div>
+
+                <!-- Pipeline configuration -->
+                <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
+                  <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
+                  <div class="hint" style="margin:0 0 6px">Model and reasoning effort per stage.</div>
+
+                  <div class="stage-cfg">
+                    <div class="acc violet"></div>
+                    <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
+                    <div class="picks">
+                      <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
+                      <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
+                    </div>
+                    <small class="step-current" data-role="planner"></small>
+                  </div>
+
+                  <div class="stage-cfg">
+                    <div class="acc green"></div>
+                    <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
+                    <div class="picks">
+                      <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
+                      <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
+                    </div>
+                    <small class="step-current" data-role="refiner"></small>
+                  </div>
+
+                  <div class="stage-cfg">
+                    <div class="acc peach"></div>
+                    <div class="meta"><b>Implement</b><small>write the code</small></div>
+                    <div class="picks">
+                      <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
+                      <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
+                    </div>
+                    <small class="step-current" data-role="implementer"></small>
+                  </div>
+
+                  <div class="stage-cfg">
+                    <div class="acc blue"></div>
+                    <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
+                    <div class="picks">
+                      <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
+                      <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
+                    </div>
+                    <small class="step-current" data-role="reviewer"></small>
+                  </div>
+                </div>
+
+                <!-- Mock -->
+                <div class="switch-row" style="margin-top:22px">
+                  <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
+                  <span class="txt">Mock mode — no Claude calls, offline dry run</span>
+                </div>
+                <input id="mock" type="checkbox" hidden />
+
+                <!-- Actions -->
+                <div class="actions" style="justify-content:flex-end">
+                  <button type="submit" id="start-btn" class="btn-go">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
+                    Start run
+                  </button>
+                </div>
+                <p id="form-msg" class="form-msg" aria-live="polite"></p>
+              </form>
+            </section>
+          </div>
+        </section>
+        <!-- /view new -->
+
+        <!-- ===== VIEW: RUNNING ===== -->
+        <section class="view hidden" data-view="running">
+          <div class="topbar">
+            <div>
+              <h1>Running</h1>
+              <div class="sub" id="running-sub">0 pipelines executing · 0 need your input</div>
             </div>
+            <span class="pill-run amber hidden" id="running-status-pill" style="box-shadow:var(--shadow-soft)"><span class="pdot"></span> 0 needs input</span>
+          </div>
 
-            <label class="check">
-              <input id="mock" type="checkbox" />
-              <span>Mock mode (no Claude calls, offline dry run)</span>
-            </label>
+          <div class="run-list" id="run-list"></div>
 
-            <div class="actions">
-              <button type="button" id="install-btn" class="btn btn-ghost" title="Copy agents + /maestro skill into the project's .claude folder">
-                Install agents into this folder
-              </button>
-              <button type="submit" id="start-btn" class="btn btn-primary">Start</button>
+          <!-- clone target for one run card (Task 3 fills it) -->
+          <template id="run-card-tpl">
+            <section class="card run-card" data-run-id="">
+              <div class="run-top">
+                <div><div class="run-title"></div><div class="run-meta"></div></div>
+                <span class="pill-run"><span class="pdot"></span><span class="pill-text"></span></span>
+              </div>
+              <div class="stages compact">
+                <div class="stage" data-step="preflight"><div class="num">1</div><div class="lbl"><b>Preflight</b><small class="sub">checks</small></div></div>
+                <div class="stage" data-step="plan"><div class="num">2</div><div class="lbl"><b>Plan</b><small class="sub"></small></div></div>
+                <div class="stage" data-step="refine"><div class="num">3</div><div class="lbl"><b>Refine</b><small class="sub"></small><em class="cycle"></em></div></div>
+                <div class="stage" data-step="implement"><div class="num">4</div><div class="lbl"><b>Implement</b><small class="sub"></small></div></div>
+                <div class="stage" data-step="review"><div class="num">5</div><div class="lbl"><b>Review</b><small class="sub"></small><em class="cycle"></em></div></div>
+                <div class="stage" data-step="done"><div class="num">6</div><div class="lbl"><b>Done</b><small class="sub">complete</small></div></div>
+              </div>
+              <div class="run-foot"><span class="chip"></span><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
+              <div class="run-log">
+                <div class="run-log-head"><span class="ll-label">Live log</span><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                <div class="log"></div>
+              </div>
+              <div class="qpanel hidden"></div>
+            </section>
+          </template>
+        </section>
+        <!-- /view running -->
+
+        <!-- ===== VIEW: HISTORY ===== -->
+        <section class="view hidden" data-view="history">
+          <div class="topbar">
+            <div>
+              <h1>History</h1>
+              <div class="sub">Completed and stopped pipelines</div>
             </div>
-            <p id="form-msg" class="form-msg" aria-live="polite"></p>
-          </form>
-        </div>
-
-        <!-- (6) History -->
-        <div class="card">
-          <div class="card-head">
-            <h2>History</h2>
-            <button type="button" id="refresh-history" class="btn btn-mini">Refresh</button>
+            <button type="button" id="refresh-history" class="btn-ghost" style="padding:11px 20px">Refresh</button>
           </div>
-          <ul id="history" class="history">
-            <li class="empty">Select a project to load history.</li>
-          </ul>
-        </div>
-      </section>
 
-      <!-- RIGHT COLUMN: tracker + question + log -->
-      <section class="col col-right">
-        <!-- (2) Steps tracker -->
-        <div class="card">
-          <div class="card-head">
-            <h2>Pipeline</h2>
-            <div class="run-meta">
-              <span id="run-status" class="badge">idle</span>
-              <button type="button" id="stop-btn" class="btn btn-danger" disabled>Stop</button>
-            </div>
-          </div>
-          <ol id="steps" class="steps">
-            <li class="step" data-step="preflight"><span class="num">1</span><span class="name">Preflight</span></li>
+          <div class="run-list" id="history"></div>
 
-            <li class="step" data-step="plan" data-role="planner">
-              <span class="num">2</span><span class="name">Plan</span>
-              <div class="step-config" data-role="planner">
-                <select class="step-model" data-role="planner" aria-label="Plan model"></select>
-                <select class="step-effort" data-role="planner" aria-label="Plan effort"></select>
-                <small class="step-current" data-role="planner"></small>
+          <!-- clone target for one history card (Task 5 fills it) -->
+          <template id="hist-card-tpl">
+            <section class="card hist-card">
+              <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
+                <span class="badge"></span>
+                <div class="h-meta"><b></b><small></small></div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
-            </li>
-
-            <li class="step" data-step="refine" data-role="refiner">
-              <span class="num">3</span><span class="name">Refine</span><em class="cycle" data-cycle></em>
-              <div class="step-config" data-role="refiner">
-                <select class="step-model" data-role="refiner" aria-label="Refine model"></select>
-                <select class="step-effort" data-role="refiner" aria-label="Refine effort"></select>
-                <small class="step-current" data-role="refiner"></small>
+              <div class="hist-detail" hidden>
+                <div class="stages compact">
+                  <div class="stage" data-step="preflight"><div class="num">1</div><div class="lbl"><b>Preflight</b><small class="sub">checks</small></div></div>
+                  <div class="stage" data-step="plan"><div class="num">2</div><div class="lbl"><b>Plan</b><small class="sub"></small></div></div>
+                  <div class="stage" data-step="refine"><div class="num">3</div><div class="lbl"><b>Refine</b><small class="sub"></small></div></div>
+                  <div class="stage" data-step="implement"><div class="num">4</div><div class="lbl"><b>Implement</b><small class="sub"></small></div></div>
+                  <div class="stage" data-step="review"><div class="num">5</div><div class="lbl"><b>Review</b><small class="sub"></small></div></div>
+                  <div class="stage" data-step="done"><div class="num">6</div><div class="lbl"><b>Done</b><small class="sub">complete</small></div></div>
+                </div>
               </div>
-            </li>
+            </section>
+          </template>
+        </section>
+        <!-- /view history -->
+      </main>
+    </div>
 
-            <li class="step" data-step="implement" data-role="implementer">
-              <span class="num">4</span><span class="name">Implement</span>
-              <div class="step-config" data-role="implementer">
-                <select class="step-model" data-role="implementer" aria-label="Implement model"></select>
-                <select class="step-effort" data-role="implementer" aria-label="Implement effort"></select>
-                <small class="step-current" data-role="implementer"></small>
-              </div>
-            </li>
-
-            <li class="step" data-step="review" data-role="reviewer">
-              <span class="num">5</span><span class="name">Review</span><em class="cycle" data-cycle></em>
-              <div class="step-config" data-role="reviewer">
-                <select class="step-model" data-role="reviewer" aria-label="Review model"></select>
-                <select class="step-effort" data-role="reviewer" aria-label="Review effort"></select>
-                <small class="step-current" data-role="reviewer"></small>
-              </div>
-            </li>
-
-            <li class="step" data-step="done"><span class="num">6</span><span class="name">Done</span></li>
-          </ol>
+    <!-- ===== Saved-markdown viewer (modal) ===== -->
+    <div id="viewer-card" class="viewer-modal hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="viewer-title">Saved pipeline</h2>
+          <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
         </div>
-
-        <!-- (4) Question panel -->
-        <div id="question-card" class="card question-card hidden">
-          <div class="card-head">
-            <h2 id="question-title">Input needed</h2>
-            <span id="question-kind" class="badge"></span>
-          </div>
-          <div id="question-body"></div>
-        </div>
-
-        <!-- (3) Live log window -->
-        <div class="card log-card">
-          <div class="card-head">
-            <h2>Live log</h2>
-            <div class="log-controls">
-              <label class="check check-inline">
-                <input id="autoscroll" type="checkbox" checked />
-                <span>Auto-scroll</span>
-              </label>
-              <button type="button" id="clear-log" class="btn btn-mini">Clear</button>
-            </div>
-          </div>
-          <div id="log" class="log" role="log" aria-live="polite"></div>
-        </div>
-
-        <!-- saved-markdown viewer -->
-        <div id="viewer-card" class="card hidden">
-          <div class="card-head">
-            <h2 id="viewer-title">Saved pipeline</h2>
-            <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
-          </div>
-          <pre id="viewer" class="viewer"></pre>
-        </div>
-      </section>
-    </main>
+        <pre id="viewer" class="viewer"></pre>
+      </div>
+    </div>
 
     <script src="/app.js" type="module"></script>
   </body>

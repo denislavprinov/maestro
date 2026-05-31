@@ -1,7 +1,7 @@
 // maestro UI client. Vanilla ESM, no framework, no build step.
 
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const $ = (sel, root = document) => (root || document).querySelector(sel);
+const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel)];
 
 // ---------------------------------------------------------------------------
 // App state
@@ -9,14 +9,12 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const state = {
   ws: null,
   wsReady: false,
-  runId: null, // currently-tracked run
+  helloSubscribed: new Set(), // runIds we've already sent a backfill subscribe for this socket
   projectDir: '',
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
-  pendingQuestion: null, // last unanswered question {id, kind, ...}
-  status: 'idle',
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -57,21 +55,11 @@ const el = {
   startBtn: $('#start-btn'),
   formMsg: $('#form-msg'),
 
-  runStatus: $('#run-status'),
-  stopBtn: $('#stop-btn'),
-  steps: $('#steps'),
-
-  questionCard: $('#question-card'),
-  questionTitle: $('#question-title'),
-  questionKind: $('#question-kind'),
-  questionBody: $('#question-body'),
-
-  log: $('#log'),
-  autoscroll: $('#autoscroll'),
-  clearLog: $('#clear-log'),
+  pipelineConfig: $('#pipeline-config'),
 
   history: $('#history'),
   refreshHistory: $('#refresh-history'),
+  navHistoryCount: $('#nav-history-count'),
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
@@ -96,14 +84,11 @@ function connectWS() {
 
   ws.addEventListener('open', () => {
     state.wsReady = true;
+    // A reconnect yields a fresh `hello`; backfill subscribes are driven from
+    // there (handleServerMessage), not re-sent here. Reset the per-socket
+    // dedupe set so the new socket re-subscribes to still-live runs.
+    state.helloSubscribed = new Set();
     setWsStatus(true);
-    if (state.runId) {
-      try {
-        ws.send(JSON.stringify({ type: 'subscribe', runId: state.runId }));
-      } catch {
-        /* ignore */
-      }
-    }
   });
 
   ws.addEventListener('message', (e) => {
@@ -146,45 +131,103 @@ function setWsStatus(on) {
 }
 
 // ---------------------------------------------------------------------------
-// Server message router. We only act on events for the run we're tracking.
+// Server message router. Multi-run: every run's events arrive here (the server
+// broadcasts every run to every socket). Each event carries its own runId; we
+// fan it out to the matching per-run model.
 // ---------------------------------------------------------------------------
 function handleServerMessage(msg) {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'hello') {
-    // server greeting; nothing required.
+    onHello(msg);
     return;
   }
 
-  // Only react to events for the active run.
-  if (msg.runId && state.runId && msg.runId !== state.runId) return;
-  if (!state.runId && msg.runId) state.runId = msg.runId;
+  // Tagged per-run event. Ignore anything without a runId.
+  if (!msg.runId) return;
+  const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
     case 'phase':
-      onPhase(msg);
+      onPhase(r, msg);
       break;
     case 'log':
-      appendLog(msg);
+      onLog(r, msg);
       break;
     case 'question':
-      onQuestion(msg);
+      onQuestion(r, msg);
       break;
     case 'artifact':
-      onArtifact(msg);
+      onArtifact(r, msg);
       break;
     case 'state':
-      onState(msg);
+      onState(r, msg);
       break;
     case 'done':
-      onDone(msg);
+      onDone(r, msg);
       break;
     case 'error':
-      onError(msg);
+      onError(r, msg);
       break;
     default:
       break;
   }
+
+  updateNavCounts();
+  // If the user is already on the Running view, build/repaint cards now.
+  // Without this, a run this tab didn't start (begun in another tab or via the
+  // /maestro CLI — the server sends `hello` only once per socket and broadcasts
+  // later runs purely as tagged events) would bump the nav badge but never
+  // render a card until the user navigated away and back. renderRunningView
+  // diffs by data-run-id and reuses r.el, so this is cheap + idempotent.
+  if (currentView() === 'running') renderRunningView();
+}
+
+// hello greeting carries the server's authoritative run list. We upsert each
+// into our map, backfill-subscribe to non-terminal runs whose buffer we don't
+// yet have, and refresh whatever view is showing.
+function onHello(msg) {
+  const ws = state.ws;
+  const list = Array.isArray(msg.runs) ? msg.runs : [];
+  for (const r0 of list) {
+    if (!r0 || !r0.runId) continue;
+    upsertRun({
+      runId: r0.runId,
+      title: r0.title,
+      projectDir: r0.projectDir,
+      status: r0.status,
+      startedAt: r0.startedAt,
+      pendingQuestion: r0.pendingQuestion || null,
+    });
+
+    const nonTerminal =
+      r0.status === 'starting' || r0.status === 'running' || (r0.pendingQuestion != null);
+    // Backfill that run's buffered events exactly once per socket. (Runs started
+    // by THIS tab already stream live via broadcast and were not in any prior
+    // hello, so they get subscribed here only if a reconnect re-lists them.)
+    if (nonTerminal && ws && state.wsReady && !state.helloSubscribed.has(r0.runId)) {
+      state.helloSubscribed.add(r0.runId);
+      try {
+        ws.send(JSON.stringify({ type: 'subscribe', runId: r0.runId }));
+      } catch {
+        /* ignore */
+      }
+    }
+    // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
+  }
+
+  updateNavCounts();
+  const cur = currentView();
+  if (cur === 'running') renderRunningView();
+  if (cur === 'history') {
+    const d = selectedProjectPath();
+    if (d) loadHistory(d);
+  }
+}
+
+function currentView() {
+  const h = location.hash.slice(1);
+  return VIEW_NAMES.includes(h) ? h : 'new';
 }
 
 // ---------------------------------------------------------------------------
@@ -209,63 +252,102 @@ function normalizePhase(phase) {
   return null;
 }
 
-function onPhase(msg) {
+// ---------------------------------------------------------------------------
+// Multi-run engine: per-run model + Map. Each run renders into one card in the
+// Running view; events are fanned out by handleServerMessage.
+// ---------------------------------------------------------------------------
+const runs = new Map();
+
+function nowHMS() {
+  const d = new Date();
+  return d.toTimeString().slice(0, 8);
+}
+
+function makeRun({ runId, title, projectDir, status = 'running', startedAt, local = false, pendingQuestion = null }) {
+  return {
+    runId,
+    title: title || '(untitled)',
+    projectDir: projectDir || '',
+    status,
+    startedAt: startedAt || nowHMS(),
+    local,
+    maxStepIdx: -1,
+    phaseKey: 'preflight',
+    cycle: 0,
+    phaseStatus: '',
+    pendingQuestion,
+    configSnapshot: null,
+    logLines: [],
+    el: null,
+    _finished: false,
+  };
+}
+
+// Upsert a run model. Only assigns DEFINED keys from the partial, and callers
+// must never pass logLines/el/configSnapshot in a partial — those heavy/DOM
+// fields are owned locally and must not be clobbered by a hello/tagged event.
+function upsertRun(partial) {
+  let r = runs.get(partial.runId);
+  if (!r) {
+    r = makeRun(partial);
+    runs.set(partial.runId, r);
+  } else {
+    for (const k of Object.keys(partial)) {
+      if (partial[k] !== undefined) r[k] = partial[k];
+    }
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// Per-run event handlers
+// ---------------------------------------------------------------------------
+function onPhase(r, msg) {
   const key = normalizePhase(msg.phase);
-  if (key) setActiveStep(key, msg.cycle, msg.status);
-  // Also surface phase transitions in the log for visibility.
+  if (key) {
+    const idx = STEP_ORDER.indexOf(key);
+    if (idx > r.maxStepIdx) r.maxStepIdx = idx;
+    r.phaseKey = key;
+    if (msg.cycle) r.cycle = msg.cycle;
+    r.phaseStatus = msg.status || '';
+  }
+  // The "done" phase marks all steps complete.
+  if (key === 'done' || (msg.phase && String(msg.phase).toLowerCase().includes('done'))) {
+    r.maxStepIdx = STEP_ORDER.indexOf('done');
+    r.phaseKey = 'done';
+  }
+  // Surface the phase transition in the run's log.
   const cyc = msg.cycle ? ` #${msg.cycle}` : '';
   const st = msg.status ? ` (${msg.status})` : '';
-  appendLog({ source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
-
-  if (key === 'done' || (msg.phase && String(msg.phase).toLowerCase().includes('done'))) {
-    markAllDoneUpTo('done');
-  }
+  onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
+  maybeResume(r);
+  paintRunCard(r);
 }
 
-// Furthest step index reached this run. The review->fix loop legitimately emits
-// implement passes between reviews; without this, the tracker would un-mark the
-// already-completed Review step and appear to jump backward each fix cycle.
-let maxStepIdx = -1;
+// A submitted answer is only confirmed resumed when the next phase/state event
+// for this run arrives (the server returns 200 even for a stale id, so HTTP
+// success is not proof). Clear the pending question + panel here.
+function maybeResume(r) {
+  if (!r._answering) return;
+  r._answering = false;
+  r.pendingQuestion = null;
+  clearQpanel(r);
+}
 
-function setActiveStep(key, cycle, status) {
-  const idx = STEP_ORDER.indexOf(key);
-  if (idx > maxStepIdx) maxStepIdx = idx;
-  $$('.step', el.steps).forEach((node) => {
-    const step = node.dataset.step;
-    const sIdx = STEP_ORDER.indexOf(step);
-    node.classList.remove('active', 'done');
-    // Mark done everything strictly before the furthest step reached so a later
-    // implement fix-pass does not visually regress completed steps.
-    if (sIdx >= 0 && sIdx < maxStepIdx) node.classList.add('done');
-  });
-  const active = $(`.step[data-step="${key}"]`, el.steps);
-  if (active) {
-    if (status === 'done' || status === 'complete' || status === 'passed') {
-      active.classList.add('done');
-    } else {
-      active.classList.add('active');
+function onState(r, msg) {
+  if (msg.status) r.status = msg.status;
+  if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg.phase) {
+    const key = normalizePhase(msg.phase);
+    if (key) {
+      const idx = STEP_ORDER.indexOf(key);
+      if (idx > r.maxStepIdx) r.maxStepIdx = idx;
+      r.phaseKey = key;
     }
-    const cyEl = $('.cycle', active);
-    if (cyEl) cyEl.textContent = cycle ? `#${cycle}` : '';
   }
-}
-
-function markAllDoneUpTo(key) {
-  const idx = STEP_ORDER.indexOf(key);
-  $$('.step', el.steps).forEach((node) => {
-    const sIdx = STEP_ORDER.indexOf(node.dataset.step);
-    node.classList.remove('active');
-    if (sIdx <= idx) node.classList.add('done');
-  });
-}
-
-function resetSteps() {
-  maxStepIdx = -1;
-  $$('.step', el.steps).forEach((node) => {
-    node.classList.remove('active', 'done');
-    const cyEl = $('.cycle', node);
-    if (cyEl) cyEl.textContent = '';
-  });
+  if (msg.cycle) r.cycle = msg.cycle;
+  maybeResume(r);
+  paintRunCard(r);
 }
 
 // ---------------------------------------------------------------------------
@@ -298,9 +380,10 @@ function option(value, text) {
 }
 
 function renderStepConfigs() {
-  // Selectors are read-only while a run is active (config is loaded once at run
-  // start; edits apply to the NEXT run). See setRunStatus.
-  const locked = state.status === 'running' || state.status === 'starting' || state.status === 'waiting';
+  // Config always edits the NEXT run, so selectors are never locked. (The
+  // multi-run engine in Task 3 owns per-run status; there is no global run
+  // status to gate on anymore.)
+  const locked = false;
 
   for (const role of STEP_ROLES) {
     const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
@@ -382,9 +465,9 @@ async function addModelFlow(role) {
   }
 }
 
-// Delegated change handler for all step selects (markup is static; el.steps is
-// already cached in the `el` map as `steps: $('#steps')`).
-el.steps.addEventListener('change', (e) => {
+// Delegated change handler for all step selects. The selects live in the
+// #pipeline-config block (cached as el.pipelineConfig); each carries data-role.
+el.pipelineConfig.addEventListener('change', (e) => {
   const t = e.target;
   if (!(t instanceof HTMLSelectElement)) return;
   const role = t.dataset.role;
@@ -403,8 +486,11 @@ el.steps.addEventListener('change', (e) => {
 // ---------------------------------------------------------------------------
 // Log window
 // ---------------------------------------------------------------------------
-function appendLog({ source, level, text, ts }) {
-  if (text === undefined || text === null) return;
+const MAX_LOG_LINES = 4000;
+
+// Build one .log-line node from a normalized log record. (Same DOM shape the
+// old global appendLog produced: ts/src/msg spans + lvl class.)
+function buildLogLine({ source, level, text, ts }) {
   const line = document.createElement('div');
   line.className = 'log-line lvl-' + (level || 'info');
 
@@ -421,13 +507,45 @@ function appendLog({ source, level, text, ts }) {
   m.textContent = String(text);
 
   line.append(t, s, m);
-  el.log.appendChild(line);
+  return line;
+}
 
-  // cap rendered lines to keep DOM light
-  const MAX = 4000;
-  while (el.log.childElementCount > MAX) el.log.removeChild(el.log.firstChild);
+// Per-run log: push to the model and, if the card is mounted, append the line.
+function onLog(r, msg) {
+  const text = msg.text;
+  if (text === undefined || text === null) return;
+  const rec = { ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text };
+  r.logLines.push(rec);
+  if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
 
-  if (el.autoscroll.checked) el.log.scrollTop = el.log.scrollHeight;
+  if (r.el) {
+    const logEl = r.el.querySelector('.log');
+    if (logEl) {
+      logEl.appendChild(buildLogLine(rec));
+      while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
+      const sw = r.el.querySelector('.switch.autoscroll');
+      if (sw && sw.classList.contains('on')) logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+}
+
+function onArtifact(r, msg) {
+  onLog(r, {
+    source: 'artifact',
+    level: 'artifact',
+    text: `${msg.kind || 'file'}: ${msg.path || ''}`,
+    ts: Date.now(),
+  });
+}
+
+// Non-run-scoped UI notices (config/answer/install errors). There is no global
+// log surface anymore, so route these to the console; keep the {source,level,
+// text,ts} shape for call-site compatibility.
+function appendLog({ source, level, text }) {
+  if (text === undefined || text === null) return;
+  const tag = source ? `[${source}]` : '';
+  if (level === 'error') console.error(`maestro ${tag} ${text}`);
+  else console.log(`maestro ${tag} ${text}`);
 }
 
 function fmtTime(ts) {
@@ -438,275 +556,403 @@ function fmtTime(ts) {
   return `${hh}:${mm}:${ss}`;
 }
 
-function onArtifact(msg) {
-  appendLog({
-    source: 'artifact',
-    level: 'artifact',
-    text: `${msg.kind || 'file'}: ${msg.path || ''}`,
-    ts: Date.now(),
-  });
+// ---------------------------------------------------------------------------
+// Questions (clarify) and gates. The full question/gate UI is built INLINE into
+// each run card's .qpanel slot (no global question card). onQuestion stores the
+// pending question, builds the panel, and repaints (paintRunCard toggles
+// .attention + paints the paused stepper).
+// ---------------------------------------------------------------------------
+function onQuestion(r, msg) {
+  r.pendingQuestion = msg;
+  // A new question supersedes any half-finished answer attempt.
+  r._answering = false;
+  if (r.el) renderQpanel(r);
+  paintRunCard(r);
 }
 
-// ---------------------------------------------------------------------------
-// State snapshot
-// ---------------------------------------------------------------------------
-function onState(msg) {
-  if (msg.status) setRunStatus(msg.status);
-  // If snapshot carries phase/cycle, reflect it.
-  if (msg.phase) {
-    const key = normalizePhase(msg.phase);
-    if (key) setActiveStep(key, msg.cycle, msg.phaseStatus);
+// The `?` glyph used in the panel head. Built fresh each call (a node can only
+// live in one place in the DOM).
+function questionIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '17');
+  svg.setAttribute('height', '17');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M9.1 9a3 3 0 1 1 4.6 2.5c-.9.6-1.7 1.2-1.7 2.3');
+  path.setAttribute('stroke-linecap', 'round');
+  const circle = document.createElementNS(NS, 'circle');
+  circle.setAttribute('cx', '12');
+  circle.setAttribute('cy', '17.5');
+  circle.setAttribute('r', '.5');
+  circle.setAttribute('fill', 'currentColor');
+  circle.setAttribute('stroke-width', '1.4');
+  svg.append(path, circle);
+  return svg;
+}
+
+// Filter a clarify question's options down to the real ones (the contract pads
+// to 3 slots with '' — drop empty/whitespace).
+function realOptions(q) {
+  const opts = Array.isArray(q && q.options) ? q.options : [];
+  return opts.filter((o) => typeof o === 'string' && o.trim() !== '');
+}
+
+// Build the inline question/gate panel into r.el's .qpanel from r.pendingQuestion,
+// un-hide it, and wire its inputs. Idempotent: re-building replaces the content.
+function renderQpanel(r) {
+  if (!r.el) return;
+  const panel = r.el.querySelector('.qpanel');
+  if (!panel) return;
+  const pq = r.pendingQuestion;
+  panel.innerHTML = '';
+  if (!pq) {
+    panel.classList.add('hidden');
+    return;
   }
-}
 
-// ---------------------------------------------------------------------------
-// Questions (clarify) and gates
-// ---------------------------------------------------------------------------
-function onQuestion(msg) {
-  state.pendingQuestion = msg;
-  setRunStatus('waiting');
-  if (msg.kind === 'gate') {
-    renderGate(msg);
+  const isGate = pq.kind === 'gate' || Array.isArray(pq.issues);
+
+  // ----- head -----
+  const head = document.createElement('div');
+  head.className = 'qpanel-head';
+  head.appendChild(questionIcon());
+  const title = document.createElement('b');
+  if (isGate) {
+    title.textContent = 'Cycle gate';
   } else {
-    renderClarify(msg);
+    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
+    title.textContent = `${phaseLabel} needs your input`;
   }
-  showQuestionCard(true);
+  head.appendChild(title);
+  if (!isGate) {
+    const n = realQuestions(pq).length;
+    const count = document.createElement('span');
+    count.className = 'qcount';
+    count.textContent = `${n} question${n === 1 ? '' : 's'}`;
+    head.appendChild(count);
+  }
+  panel.appendChild(head);
+
+  if (isGate) renderGateBody(r, panel, pq);
+  else renderClarifyBody(r, panel, pq);
+
+  panel.classList.remove('hidden');
 }
 
-function showQuestionCard(show) {
-  el.questionCard.classList.toggle('hidden', !show);
-  if (show) el.questionCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+// Clarify questions with at least a question string. (questions may be [] when
+// the planner had nothing to ask — handled separately with a note.)
+function realQuestions(pq) {
+  return (Array.isArray(pq && pq.questions) ? pq.questions : []).filter(
+    (q) => q && typeof q.question === 'string' && q.question.trim() !== ''
+  );
 }
 
-function renderClarify(msg) {
-  el.questionTitle.textContent = 'Clarification needed';
-  el.questionKind.textContent = 'clarify';
-  el.questionKind.className = 'badge waiting';
-  el.questionBody.innerHTML = '';
+function renderClarifyBody(r, panel, pq) {
+  const questions = realQuestions(pq);
 
-  const questions = Array.isArray(msg.questions) ? msg.questions : [];
-  // Per-question selected choice store.
-  const selections = new Map();
+  // r._answers maps a stable per-question key -> chosen value (option text or
+  // free-text or ''). Rebuilt each render so it tracks the current markup.
+  r._answers = [];
 
   if (questions.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'gate-intro';
-    p.textContent = 'The planner asked for input but provided no questions. You may submit an empty answer to continue.';
-    el.questionBody.appendChild(p);
+    const note = document.createElement('div');
+    note.className = 'gate-intro';
+    note.textContent =
+      'No specific questions — you can submit an empty answer to let the pipeline proceed.';
+    panel.appendChild(note);
   }
 
-  questions.forEach((q, qi) => {
-    const qid = q.id != null ? q.id : `q${qi}`;
+  questions.forEach((q, i) => {
     const block = document.createElement('div');
-    block.className = 'q-block';
+    block.className = 'qblock';
 
-    const qh = document.createElement('p');
-    qh.className = 'q-question';
-    qh.textContent = q.question || `Question ${qi + 1}`;
-    block.appendChild(qh);
+    const text = document.createElement('div');
+    text.className = 'qtext';
+    const qn = document.createElement('span');
+    qn.className = 'qn';
+    qn.textContent = String(i + 1);
+    text.appendChild(qn);
+    text.appendChild(document.createTextNode(q.question));
+    block.appendChild(text);
 
-    const opts = document.createElement('div');
-    opts.className = 'q-options';
-    // Filter empty option slots: the clarify contract pads to 3 slots with '',
-    // so a question with 1-2 real options would otherwise render blank buttons.
-    const options = (Array.isArray(q.options) ? q.options : []).filter((o) => o && o.trim());
-    options.forEach((opt) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'q-option';
-      b.textContent = opt;
-      b.addEventListener('click', () => {
-        selections.set(qid, opt);
-        // clear free text when an option is picked
-        if (free) free.value = '';
-        $$('.q-option', opts).forEach((o) => o.classList.remove('selected'));
-        b.classList.add('selected');
+    const opts = realOptions(q);
+    const slot = { id: q.id, question: q.question, choice: '' };
+    r._answers.push(slot);
+
+    // allowFreeText === false => options-only (no free-text input). Absent or
+    // true keeps the input. When suppressed, slot.choice can only be set by an
+    // option click; if none is picked it stays '' (submit yields '' gracefully).
+    const showFree = q.allowFreeText !== false;
+
+    const optsWrap = document.createElement('div');
+    optsWrap.className = 'qopts';
+
+    let free = null;
+    if (showFree) {
+      free = document.createElement('input');
+      free.className = 'qfree';
+      free.type = 'text';
+      free.placeholder = 'Or type your own answer…';
+    }
+
+    opts.forEach((optText) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'qopt';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.textContent = optText;
+      btn.addEventListener('click', () => {
+        // Select this option, clear siblings + the free-text field (if present).
+        optsWrap.querySelectorAll('.qopt').forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle('sel', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
+        if (free) {
+          free.value = '';
+          free.classList.remove('has');
+        }
+        slot.choice = optText;
       });
-      opts.appendChild(b);
+      optsWrap.appendChild(btn);
     });
-    block.appendChild(opts);
+    if (opts.length) block.appendChild(optsWrap);
 
-    // free-text alternative
-    const lbl = document.createElement('label');
-    lbl.className = 'q-free-label';
-    lbl.textContent = q.allowFreeText === false ? 'Other (free text):' : 'Or type your own answer:';
-    block.appendChild(lbl);
+    // Free-text input: typing clears any option selection and becomes the choice.
+    if (free) {
+      free.addEventListener('input', () => {
+        const v = free.value;
+        free.classList.toggle('has', v.trim() !== '');
+        if (v.trim() !== '') {
+          optsWrap.querySelectorAll('.qopt').forEach((b) => {
+            b.classList.remove('sel');
+            b.setAttribute('aria-pressed', 'false');
+          });
+        }
+        slot.choice = v;
+      });
+      block.appendChild(free);
+    }
 
-    const freeRow = document.createElement('div');
-    freeRow.className = 'q-free';
-    const free = document.createElement('input');
-    free.type = 'text';
-    free.placeholder = 'Type a custom answer...';
-    free.addEventListener('input', () => {
-      if (free.value.trim()) {
-        selections.set(qid, free.value);
-        $$('.q-option', opts).forEach((o) => o.classList.remove('selected'));
-      } else {
-        selections.delete(qid);
-      }
-    });
-    freeRow.appendChild(free);
-    block.appendChild(freeRow);
-
-    // stash references for submit
-    block._qid = qid;
-    block._question = q.question || '';
-    block._getChoice = () => (selections.has(qid) ? selections.get(qid) : (free.value.trim() || ''));
-    el.questionBody.appendChild(block);
+    panel.appendChild(block);
   });
 
-  const row = document.createElement('div');
-  row.className = 'q-submit-row';
+  // ----- foot: submit -----
+  const foot = document.createElement('div');
+  foot.className = 'qpanel-foot';
   const submit = document.createElement('button');
   submit.type = 'button';
-  submit.className = 'btn btn-primary';
-  submit.textContent = 'Submit answers';
-  submit.addEventListener('click', () => {
-    const answers = $$('.q-block', el.questionBody).map((b) => ({
-      id: b._qid,
-      question: b._question,
-      choice: b._getChoice(),
-    }));
-    sendAnswer(msg.id, { answers });
-  });
-  row.appendChild(submit);
-  el.questionBody.appendChild(row);
+  submit.className = 'btn-go';
+  const NS = 'http://www.w3.org/2000/svg';
+  const play = document.createElementNS(NS, 'svg');
+  play.setAttribute('width', '14');
+  play.setAttribute('height', '14');
+  play.setAttribute('viewBox', '0 0 24 24');
+  play.setAttribute('fill', 'currentColor');
+  const tri = document.createElementNS(NS, 'path');
+  tri.setAttribute('d', 'M6 4l14 8-14 8V4Z');
+  play.appendChild(tri);
+  submit.appendChild(play);
+  submit.appendChild(document.createTextNode('Submit answers & resume'));
+  foot.appendChild(submit);
+  panel.appendChild(foot);
 }
 
-function renderGate(msg) {
-  el.questionTitle.textContent = 'Cycle gate';
-  el.questionKind.textContent = 'gate';
-  el.questionKind.className = 'badge waiting';
-  el.questionBody.innerHTML = '';
+function renderGateBody(r, panel, pq) {
+  const issues = Array.isArray(pq.issues) ? pq.issues : [];
 
-  const intro = document.createElement('p');
+  const intro = document.createElement('div');
   intro.className = 'gate-intro';
-  intro.textContent =
-    'The maximum number of cycles was reached and there are still open critical/major issues. Choose how to proceed.';
-  el.questionBody.appendChild(intro);
+  intro.textContent = issues.length
+    ? 'This cycle reached its limit with open issues. Approve another cycle to keep iterating, or continue with what you have.'
+    : 'This cycle reached its limit. Approve another cycle to keep iterating, or continue with what you have.';
+  panel.appendChild(intro);
 
-  const issues = Array.isArray(msg.issues) ? msg.issues : [];
   if (issues.length) {
-    const ul = document.createElement('ul');
-    ul.className = 'issues';
+    const list = document.createElement('ul');
+    list.className = 'issues';
     issues.forEach((iss) => {
+      const sev = String((iss && iss.severity) || 'suggestion').toLowerCase();
       const li = document.createElement('li');
-      const sev = (iss.severity || 'minor').toLowerCase();
       li.className = `issue sev-${sev}`;
 
-      const head = document.createElement('div');
-      head.className = 'issue-head';
-      const sevTag = document.createElement('span');
-      sevTag.className = 'issue-sev';
-      sevTag.textContent = sev;
-      const title = document.createElement('span');
-      title.className = 'issue-title';
-      title.textContent = iss.title || '(untitled issue)';
-      head.append(sevTag, title);
-      li.appendChild(head);
+      const ihead = document.createElement('div');
+      ihead.className = 'issue-head';
+      const sevEl = document.createElement('span');
+      sevEl.className = 'issue-sev';
+      sevEl.textContent = sev;
+      const titleEl = document.createElement('span');
+      titleEl.className = 'issue-title';
+      titleEl.textContent = (iss && iss.title) || '(untitled issue)';
+      ihead.append(sevEl, titleEl);
+      li.appendChild(ihead);
 
-      if (iss.detail) {
-        const d = document.createElement('p');
-        d.className = 'issue-detail';
-        d.textContent = iss.detail;
-        li.appendChild(d);
+      if (iss && iss.detail) {
+        const det = document.createElement('div');
+        det.className = 'issue-detail';
+        det.textContent = iss.detail;
+        li.appendChild(det);
       }
-      if (iss.location) {
+      if (iss && iss.location) {
         const loc = document.createElement('div');
         loc.className = 'issue-loc';
         loc.textContent = iss.location;
         li.appendChild(loc);
       }
-      ul.appendChild(li);
+      list.appendChild(li);
     });
-    el.questionBody.appendChild(ul);
-  } else {
-    const none = document.createElement('p');
-    none.className = 'gate-intro';
-    none.textContent = 'No issue details were provided.';
-    el.questionBody.appendChild(none);
+    panel.appendChild(list);
   }
 
-  const actions = document.createElement('div');
-  actions.className = 'gate-actions';
-
-  const continueBtn = document.createElement('button');
-  continueBtn.type = 'button';
-  continueBtn.className = 'btn';
-  continueBtn.textContent = "Don't have another cycle and continue";
-  continueBtn.addEventListener('click', () => sendAnswer(msg.id, { decision: 'continue' }));
-
-  const anotherBtn = document.createElement('button');
-  anotherBtn.type = 'button';
-  anotherBtn.className = 'btn btn-primary';
-  anotherBtn.textContent = 'I approve another cycle';
-  anotherBtn.addEventListener('click', () => sendAnswer(msg.id, { decision: 'another' }));
-
-  actions.append(continueBtn, anotherBtn);
-  el.questionBody.appendChild(actions);
+  const foot = document.createElement('div');
+  foot.className = 'qpanel-foot gate-actions';
+  const cont = document.createElement('button');
+  cont.type = 'button';
+  cont.className = 'btn gate-continue';
+  cont.textContent = "Don't approve another cycle and continue";
+  const another = document.createElement('button');
+  another.type = 'button';
+  another.className = 'btn btn-primary gate-another';
+  another.textContent = 'I approve another cycle';
+  foot.append(cont, another);
+  panel.appendChild(foot);
 }
 
-async function sendAnswer(id, payload) {
-  if (!state.runId || !id) return;
-  // optimistic: hide panel + show running
-  showQuestionCard(false);
-  state.pendingQuestion = null;
-  setRunStatus('running');
+// Gather the clarify answers from the live model slots and POST them.
+function submitAnswer(r) {
+  const answers = (r._answers || []).map((s) => ({
+    id: s.id,
+    question: s.question,
+    choice: typeof s.choice === 'string' ? s.choice.trim() : '',
+  }));
+  postAnswer(r, { answers });
+}
+
+// POST /api/answer for a run's pending question. On a transport/HTTP error we
+// log to the card and re-enable the panel; on 200 we DON'T assume the run
+// resumed (the server returns 200 even for a stale id) — we disable the panel,
+// show a "Resuming…" affordance, set r._answering, and KEEP r.pendingQuestion.
+// The panel is cleared only when the next phase/state event confirms resume.
+async function postAnswer(r, payload) {
+  if (!r || !r.pendingQuestion) return;
+  // Re-entrancy guard: an answer is already in flight for this run. Without
+  // this a synthetic/double click (or a re-triggered handler) could fire a
+  // second POST before maybeResume clears _answering.
+  if (r._answering) return;
+  // Never post for a dead run.
+  if (r._finished || isTerminalStatus(r.status)) return;
+  const id = r.pendingQuestion.id;
+  const runId = r.runId;
+
+  setPanelBusy(r, true);
+  r._answering = true;
+
   try {
     const res = await fetch('/api/answer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId: state.runId, id, payload }),
+      body: JSON.stringify({ runId, id, payload }),
     });
     if (!res.ok) {
       const err = await safeJson(res);
-      appendLog({ source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
+      r._answering = false;
+      setPanelBusy(r, false);
+      onLog(r, { source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
+      return;
     }
+    // 200: keep pendingQuestion; wait for the next phase/state to confirm resume.
   } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
+    r._answering = false;
+    setPanelBusy(r, false);
+    onLog(r, { source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
   }
 }
 
-// ---------------------------------------------------------------------------
-// Done / error
-// ---------------------------------------------------------------------------
-function onDone(msg) {
-  setRunStatus(msg.status || 'done');
-  markAllDoneUpTo('done');
-  showQuestionCard(false);
-  el.stopBtn.disabled = true;
-  el.startBtn.disabled = false;
-  appendLog({
-    source: 'system',
-    level: 'system',
-    text: `pipeline ${msg.status || 'done'}${msg.pipelineDir ? ' -> ' + msg.pipelineDir : ''}`,
-    ts: Date.now(),
-  });
-  // refresh history to show the saved pipeline
-  if (state.projectDir) loadHistory(state.projectDir);
-}
-
-function onError(msg) {
-  setRunStatus('error');
-  el.stopBtn.disabled = true;
-  el.startBtn.disabled = false;
-  appendLog({ source: 'system', level: 'error', text: `error: ${msg.message || 'unknown error'}`, ts: Date.now() });
-}
-
-function setRunStatus(status) {
-  state.status = status;
-  el.runStatus.textContent = status;
-  el.runStatus.className = 'badge ' + statusClass(status);
-  renderStepConfigs(); // lock during run, unlock when idle/done/error/stopped
-}
-
-function statusClass(status) {
+// Single source of truth for "this run is over". The server's terminal statuses
+// are done|error|stopped; the remaining synonyms are accepted defensively. Used
+// by liveRuns (to exclude finished runs) and postAnswer (to refuse a late POST).
+function isTerminalStatus(status) {
   const s = String(status || '').toLowerCase();
-  if (s === 'running' || s === 'starting') return 'running';
-  if (s === 'done' || s === 'complete' || s === 'completed' || s === 'success') return 'done';
-  if (s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed') return 'error';
-  if (s === 'waiting') return 'waiting';
-  return '';
+  return s === 'done' || s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed' || s === 'complete' || s === 'completed';
+}
+
+// Disable/enable the panel's interactive controls and reflect a "Resuming…"
+// state on the primary button while an answer is in flight / awaiting resume.
+function setPanelBusy(r, busy) {
+  if (!r.el) return;
+  const panel = r.el.querySelector('.qpanel');
+  if (!panel) return;
+  panel.querySelectorAll('button, input').forEach((node) => {
+    node.disabled = busy;
+  });
+  const primary = panel.querySelector('.btn-go, .gate-another');
+  if (primary && busy && !primary.dataset.label) {
+    primary.dataset.label = primary.textContent;
+    primary.textContent = 'Resuming…';
+  } else if (primary && !busy && primary.dataset.label) {
+    primary.textContent = primary.dataset.label;
+    delete primary.dataset.label;
+  }
+}
+
+// Empty + hide a run's qpanel and drop its attention ring. Used on resume and
+// from finishRun's terminal path.
+function clearQpanel(r) {
+  if (!r.el) return;
+  const panel = r.el.querySelector('.qpanel');
+  if (panel) {
+    panel.innerHTML = '';
+    panel.classList.add('hidden');
+  }
+  r.el.classList.remove('attention');
+}
+
+// ---------------------------------------------------------------------------
+// Done / error — converge to a single idempotent terminal path.
+//
+// The server fires BOTH `error` and `done` on an error, and a stop emits
+// state(stopped) -> done. finishRun is guarded by r._finished so the second
+// call no-ops. On finish we paint the terminal stepper, drop the card from the
+// live view, refresh History for that project, then client-evict the heavy
+// fields (logLines/el) while keeping the model in the map so a duplicate
+// hello/event won't recreate it fresh.
+// ---------------------------------------------------------------------------
+function finishRun(r, status) {
+  if (r._finished) return;
+  r._finished = true;
+  r.status = status;
+  r.pendingQuestion = null;
+  r._answering = false;
+
+  // Clear the card's qpanel + attention before it drops out.
+  if (r.el) {
+    clearQpanel(r);
+    // Paint the terminal stepper one last time while the card still exists.
+    paintStepper(r);
+  }
+
+  const projectDir = r.projectDir;
+  // Card drops out of the live view (liveRuns excludes terminal statuses).
+  renderRunningView();
+  updateNavCounts();
+  if (projectDir && projectDir === selectedProjectPath()) loadHistory(projectDir);
+
+  // Client-evict heavy fields; keep the model so a stray duplicate event/hello
+  // re-upserts onto the (already _finished) model rather than a fresh one.
+  r.logLines = [];
+  r.el = null;
+}
+
+function onDone(r, msg) {
+  finishRun(r, msg.status || 'done');
+}
+
+function onError(r) {
+  finishRun(r, 'error');
 }
 
 // ---------------------------------------------------------------------------
@@ -718,6 +964,49 @@ function syncSourceToggle() {
   el.markdownPane.classList.toggle('hidden', val !== 'markdown');
 }
 el.sourceRadios.forEach((r) => r.addEventListener('change', syncSourceToggle));
+
+// Segmented Task-source toggle. The .seg buttons are the visible control; the
+// hidden radios (input[name="source"]) remain the source of truth read at submit.
+$$('#source-seg button[data-src]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const src = btn.dataset.src;
+    $$('#source-seg button[data-src]').forEach((b) => {
+      const on = b === btn;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    const radio = el.sourceRadios.find((r) => r.value === src);
+    if (radio) radio.checked = true;
+    syncSourceToggle();
+  });
+});
+
+// Mock switch. The visible .switch mirrors the hidden #mock checkbox, which is
+// what the submit handler reads (el.mock.checked).
+const mockSwitch = $('#mock-switch');
+function toggleMock() {
+  const on = !el.mock.checked;
+  el.mock.checked = on;
+  mockSwitch.classList.toggle('on', on);
+  mockSwitch.setAttribute('aria-checked', String(on));
+}
+if (mockSwitch) {
+  mockSwitch.addEventListener('click', toggleMock);
+  mockSwitch.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      toggleMock();
+    }
+  });
+}
+
+// File-picker buttons trigger their (hidden) <input type=file>.
+$$('.pick[data-pick]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.pick === 'md') el.mdFile.click();
+    else if (btn.dataset.pick === 'extras') el.extras.click();
+  });
+});
 
 el.mdFile.addEventListener('change', async () => {
   const f = el.mdFile.files && el.mdFile.files[0];
@@ -917,7 +1206,8 @@ el.projectDelete.addEventListener('click', async () => {
     state.projects = Array.isArray(data.projects) ? data.projects : [];
     if (localStorage.getItem(LAST_PROJECT_KEY) === name) localStorage.removeItem(LAST_PROJECT_KEY);
     state.projectDir = '';
-    el.history.innerHTML = '<li class="empty">Select a project to load history.</li>';
+    el.history.innerHTML = '';
+    el.history.appendChild(histEmpty('Select a project to load history.'));
     renderProjectOptions('');
   } catch (e) {
     setFormMsg(`Delete error: ${e.message}`, 'err');
@@ -938,10 +1228,11 @@ el.form.addEventListener('submit', async (e) => {
   const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
   const promptText = el.prompt.value.trim();
   const mdText = el.promptMarkdown.value.trim();
+  const title = el.title.value.trim();
 
   const body = {
     projectDir,
-    title: el.title.value.trim() || undefined,
+    title: title || undefined,
     maxRefine: Number(el.maxRefine.value) || 5,
     maxReview: Number(el.maxReview.value) || 5,
     mock: el.mock.checked,
@@ -980,8 +1271,10 @@ el.form.addEventListener('submit', async (e) => {
       return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
     }
 
-    // begin tracking the new run
-    beginRun(data.runId, projectDir);
+    // begin tracking the new run (creates a local model + switches to Running)
+    beginRun(data.runId, projectDir, title);
+    // Re-enable the form so more runs can be started concurrently.
+    el.startBtn.disabled = false;
     setFormMsg('Run started.', 'ok');
     if (extras.length) {
       appendLog({
@@ -997,29 +1290,17 @@ el.form.addEventListener('submit', async (e) => {
   }
 });
 
-function beginRun(runId, projectDir) {
-  state.runId = runId;
-  state.projectDir = projectDir;
-  state.pendingQuestion = null;
-  // fresh canvas
-  el.log.innerHTML = '';
-  resetSteps();
-  showQuestionCard(false);
+// Create the local run model for a run THIS tab just started, snapshot the
+// config it was launched with, and switch to the Running view. We do NOT send a
+// subscribe here: live events arrive via the server's broadcast, and a
+// subscribe would double-replay this run's buffer on the next hello.
+function beginRun(runId, projectDir, title) {
+  const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
+  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models }));
   hideViewer();
-  setRunStatus('starting');
-  setActiveStep('preflight');
-  el.stopBtn.disabled = false;
-
-  appendLog({ source: 'system', level: 'system', text: `run ${runId} started in ${projectDir}`, ts: Date.now() });
-
-  // make sure WS is subscribed (covers the buffered-replay case)
-  if (state.ws && state.wsReady) {
-    try {
-      state.ws.send(JSON.stringify({ type: 'subscribe', runId }));
-    } catch {
-      /* ignore */
-    }
-  }
+  updateNavCounts();
+  showView('running');
+  renderRunningView();
 }
 
 function setFormMsg(text, kind) {
@@ -1028,31 +1309,78 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Stop
+// Per-card Stop. POST /api/stop; on success the server emits state(stopped) +
+// done, which finishRun handles (card drops out + History refresh). On failure
+// re-enable the button and log to that card.
 // ---------------------------------------------------------------------------
-el.stopBtn.addEventListener('click', async () => {
-  if (!state.runId) return;
-  el.stopBtn.disabled = true;
+async function stopRun(runId, btn) {
+  if (btn) btn.disabled = true;
   try {
     const res = await fetch('/api/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId: state.runId }),
+      body: JSON.stringify({ runId }),
     });
     if (!res.ok) {
       const err = await safeJson(res);
-      appendLog({ source: 'ui', level: 'error', text: `stop failed: ${err.error || res.status}`, ts: Date.now() });
-      el.stopBtn.disabled = false;
-    } else {
-      appendLog({ source: 'ui', level: 'system', text: 'stop requested', ts: Date.now() });
-      setRunStatus('stopped');
-      showQuestionCard(false);
+      if (btn) btn.disabled = false;
+      const r = runs.get(runId);
+      if (r) onLog(r, { source: 'ui', level: 'error', text: `stop failed: ${err.error || res.status}`, ts: Date.now() });
     }
   } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `stop error: ${e.message}`, ts: Date.now() });
-    el.stopBtn.disabled = false;
+    if (btn) btn.disabled = false;
+    const r = runs.get(runId);
+    if (r) onLog(r, { source: 'ui', level: 'error', text: `stop error: ${e.message}`, ts: Date.now() });
   }
-});
+}
+
+// Delegated controls on the dynamic run-card list: per-card Stop + per-card
+// auto-scroll switch. Scoped to each card via closest('.run-card').
+const runListEl = $('#run-list');
+if (runListEl) {
+  runListEl.addEventListener('click', (e) => {
+    const stopBtn = e.target.closest && e.target.closest('.btn-stop');
+    if (stopBtn) {
+      const card = stopBtn.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      if (runId) stopRun(runId, stopBtn);
+      return;
+    }
+    const sw = e.target.closest && e.target.closest('.switch.autoscroll');
+    if (sw) {
+      const on = !sw.classList.contains('on');
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
+      return;
+    }
+
+    // qpanel actions. Resolve the run per-card via the enclosing .run-card so
+    // delegation works for any dynamically-built card.
+    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another');
+    if (qbtn) {
+      const card = qbtn.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      const r = runId && runs.get(runId);
+      if (!r) return;
+      if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
+      else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
+      else submitAnswer(r);
+    }
+  });
+
+  // a11y: the autoscroll .switch has role="switch" + tabindex="0" but only the
+  // click path toggled it. Mirror that toggle for Space/Enter via a delegated
+  // keydown (scoped through closest('.run-card') so it can't fire elsewhere).
+  runListEl.addEventListener('keydown', (e) => {
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    const sw = e.target.closest && e.target.closest('.switch.autoscroll');
+    if (!sw || !sw.closest('.run-card')) return;
+    e.preventDefault();
+    const on = !sw.classList.contains('on');
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', String(on));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Install agents
@@ -1083,13 +1411,6 @@ el.installBtn.addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Log controls
-// ---------------------------------------------------------------------------
-el.clearLog.addEventListener('click', () => {
-  el.log.innerHTML = '';
-});
-
-// ---------------------------------------------------------------------------
 // History
 // ---------------------------------------------------------------------------
 el.refreshHistory.addEventListener('click', () => {
@@ -1106,52 +1427,197 @@ async function loadHistory(projectDir) {
       renderHistoryError(data.error || `HTTP ${res.status}`);
       return;
     }
-    renderHistory(projectDir, data.pipelines || []);
+    renderHistory(projectDir, data.pipelines || [], data.live || []);
   } catch (e) {
     renderHistoryError(e.message);
   }
 }
 
-function renderHistory(projectDir, pipelines) {
+// Render the #history container as expandable .hist-card DIVs (never <li>).
+// Merges the disk `pipelines` with the in-memory `live` runs (deduped by id) so
+// an active/just-finished run surfaces even before it's written to disk.
+function renderHistory(projectDir, pipelines, live = []) {
   el.history.innerHTML = '';
-  if (!pipelines.length) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = 'No saved pipelines yet for this folder.';
-    el.history.appendChild(li);
+
+  // Merge: start from disk records, append any live entry whose id isn't present.
+  const records = [...(Array.isArray(pipelines) ? pipelines : [])];
+  const seen = new Set(records.map((p) => p && p.id).filter(Boolean));
+  for (const lr of Array.isArray(live) ? live : []) {
+    if (!lr) continue;
+    const id = lr.id || lr.runId;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    // Normalize a live entry into a record shape the card builder understands.
+    records.push({ id, title: lr.title, status: lr.status || 'running', live: true, startedAt: lr.startedAt });
+  }
+
+  if (el.navHistoryCount) el.navHistoryCount.textContent = String(records.length);
+
+  if (!records.length) {
+    el.history.appendChild(histEmpty('No saved pipelines yet for this folder.'));
     return;
   }
-  pipelines.forEach((p) => {
-    const li = document.createElement('li');
-    li.className = 'history-item';
 
-    const title = document.createElement('div');
-    title.className = 'h-title';
-    title.textContent = p.title || p.id || '(untitled)';
-
-    const meta = document.createElement('div');
-    meta.className = 'h-meta';
-    const status = document.createElement('span');
-    status.className = 'h-status ' + statusClass(p.status);
-    status.textContent = p.status || 'unknown';
-    const when = document.createElement('span');
-    when.textContent = fmtDate(p.startedAt || p.mtime);
-    const idSpan = document.createElement('span');
-    idSpan.textContent = p.id || '';
-    meta.append(status, when, idSpan);
-
-    li.append(title, meta);
-    li.addEventListener('click', () => viewPipeline(projectDir, p.id, p.title));
-    el.history.appendChild(li);
+  records.forEach((p) => {
+    el.history.appendChild(buildHistCard(projectDir, p));
   });
+}
+
+// One row of the history empty/error state — a DIV (never an <li>).
+function histEmpty(text) {
+  const div = document.createElement('div');
+  div.className = 'hist-empty';
+  div.textContent = text;
+  return div;
+}
+
+// Map a pipeline status to { cls, text } for the collapsed-card badge.
+function historyBadge(p) {
+  const s = String(p.status || '').toLowerCase();
+  if (s === 'done' || s === 'complete' || s === 'completed') return { cls: 'badge green', text: 'DONE' };
+  if (s === 'stopped' || s === 'aborted') return { cls: 'badge red', text: 'STOPPED' };
+  if (s === 'error' || s === 'failed') return { cls: 'badge red', text: 'ERROR' };
+  if (p.live || s === 'running' || s === 'starting') return { cls: 'badge running', text: 'RUNNING' };
+  return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
+}
+
+// Build one expandable history card from a (disk or live) record. The collapsed
+// card shows only list-feed data (badge/title/timestamp); the tinted stepper is
+// lazily fetched + rendered on first expand.
+function buildHistCard(projectDir, p) {
+  const tpl = $('#hist-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  const id = p.id || '';
+  node.dataset.pipelineId = id;
+
+  const badge = node.querySelector('.badge');
+  if (badge) {
+    const { cls, text } = historyBadge(p);
+    badge.className = cls;
+    badge.textContent = text;
+  }
+
+  const titleEl = node.querySelector('.h-meta b');
+  const title = p.title || id || '(untitled)';
+  if (titleEl) {
+    titleEl.textContent = title;
+    // Title click opens the saved-markdown viewer (distinct from expand).
+    titleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      viewPipeline(projectDir, id, p.title);
+    });
+  }
+  const whenEl = node.querySelector('.h-meta small');
+  if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
+
+  const head = node.querySelector('.hist-head');
+  const detail = node.querySelector('.hist-detail');
+  if (head && detail) {
+    const toggle = () => toggleHistCard(projectDir, id, head, detail);
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  }
+
+  return node;
+}
+
+// Expand/collapse a history card. On the FIRST expand, lazily fetch the saved
+// state and render the tinted stepper, caching it so re-expand doesn't refetch.
+function toggleHistCard(projectDir, id, head, detail) {
+  const expanded = head.getAttribute('aria-expanded') === 'true';
+  if (expanded) {
+    head.setAttribute('aria-expanded', 'false');
+    detail.hidden = true;
+    return;
+  }
+  head.setAttribute('aria-expanded', 'true');
+  detail.hidden = false;
+  if (detail.dataset.loaded === '1') return; // cached — don't refetch
+  detail.dataset.loaded = '1';
+  loadHistDetail(projectDir, id, detail);
+}
+
+// Fetch GET /api/runs/:id and tint this card's stepper from data.state. On
+// failure, show a small inline notice and allow a retry on the next expand.
+async function loadHistDetail(projectDir, id, detail) {
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`);
+    const data = await safeJson(res);
+    if (!res.ok) {
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    if (!data || !data.state) {
+      // 200 but no saved state.json yet (e.g. an in-progress run not persisted).
+      throw new Error('no saved details for this pipeline yet');
+    }
+    // A prior failed expand may have left a "Could not load details…" note in
+    // this card. On a successful retry, clear it so the stepper isn't shown
+    // alongside a stale error.
+    const stale = detail.querySelector('.detail-error');
+    if (stale) stale.remove();
+    paintHistStepper(detail, data.state);
+  } catch (e) {
+    detail.dataset.loaded = ''; // allow a retry on the next expand
+    let note = detail.querySelector('.detail-error');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'detail-error';
+      detail.appendChild(note);
+    }
+    note.textContent = `Could not load details: ${e.message}`;
+  }
+}
+
+// Tint the 6-stage stepper inside a history card's .hist-detail from a saved
+// state ({ phase, status, cycle }). Driven by the reached phase, not live events.
+function paintHistStepper(detail, st) {
+  const status = String(st.status || '').toLowerCase();
+  const key = normalizePhase(st.phase);
+  const reached = key ? STEP_ORDER.indexOf(key) : -1;
+  const isDone = status === 'done' || status === 'complete' || status === 'completed';
+
+  for (const stage of detail.querySelectorAll('.stage[data-step]')) {
+    const idx = STEP_ORDER.indexOf(stage.dataset.step);
+    const numEl = stage.querySelector('.num');
+    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
+    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+
+    let kind = null; // 'done' | 'stop' | null(pending)
+    if (isDone) {
+      kind = 'done'; // DONE: every stage complete (incl. the Done step).
+    } else if (idx < reached) {
+      kind = 'done'; // stages before the reached step completed.
+    } else if (idx === reached) {
+      // STOPPED/ERROR halt at the reached step; otherwise mark it reached/done.
+      kind = (status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed') ? 'stop' : 'done';
+    }
+    // idx > reached and idx === doneIdx (when not done) stay pending.
+
+    if (kind === 'done') {
+      stage.classList.add('s-done');
+      if (numEl) numEl.classList.add('n-green');
+    } else if (kind === 'stop') {
+      stage.classList.add('s-stop');
+      if (numEl) numEl.classList.add('n-red');
+    } else if (numEl) {
+      numEl.classList.add('n-grey'); // pending
+    }
+
+    // Single saved `cycle` scalar — show on refine/review only if present. We do
+    // NOT fabricate separate refine/review counts (no data source for them).
+    const cyEl = stage.querySelector('.cycle');
+    if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(stage.dataset.step) && st.cycle) ? `#${st.cycle}` : '';
+  }
 }
 
 function renderHistoryError(message) {
   el.history.innerHTML = '';
-  const li = document.createElement('li');
-  li.className = 'empty';
-  li.textContent = `Could not load history: ${message}`;
-  el.history.appendChild(li);
+  el.history.appendChild(histEmpty(`Could not load history: ${message}`));
 }
 
 async function viewPipeline(projectDir, id, title) {
@@ -1180,6 +1646,14 @@ function hideViewer() {
   el.viewerCard.classList.add('hidden');
 }
 el.viewerClose.addEventListener('click', hideViewer);
+// Close the modal on backdrop click (overlay itself, not its inner card)...
+el.viewerCard.addEventListener('click', (e) => {
+  if (e.target === el.viewerCard) hideViewer();
+});
+// ...and on Escape, when it's open.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !el.viewerCard.classList.contains('hidden')) hideViewer();
+});
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -1200,10 +1674,283 @@ function fmtDate(v) {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-run rendering: one card per live run in the Running view.
+// ---------------------------------------------------------------------------
+
+// A run is "live" while it is starting/running OR has a pending question
+// (paused). Terminal statuses (done|error|stopped) are never live; on finish we
+// also clear pendingQuestion, so a lingering question can't keep it live.
+// The `!r._finished` guard ensures a run that has been through finishRun can
+// never re-enter the live list — even if an out-of-order event or a future
+// hello upserts it with a live `status` again. The terminal exclusion routes
+// through isTerminalStatus so the done|error|stopped definition lives in one
+// place (shared with postAnswer's guard).
+function liveRuns() {
+  return [...runs.values()].filter(
+    (r) =>
+      !r._finished &&
+      !isTerminalStatus(r.status) &&
+      (r.status === 'starting' || r.status === 'running' || r.pendingQuestion != null)
+  );
+}
+
+// Project basename for display (e.g. "/a/b/proj" -> "proj").
+function projectName(dir) {
+  if (!dir) return '(no project)';
+  const parts = String(dir).replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1] || dir;
+}
+
+// Derive an HH:MM:SS label from an ISO timestamp; pass through anything that
+// already looks like a bare time string.
+function startedLabel(startedAt) {
+  if (!startedAt) return '';
+  const d = new Date(startedAt);
+  if (!isNaN(d.getTime())) return d.toTimeString().slice(0, 8);
+  return String(startedAt);
+}
+
+const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', done: 'Done' };
+const CYCLING_PHASES = new Set(['refine', 'review']);
+
+// Status-pill copy map (committed — no '?'). Returns { family, text }.
+function statusPill(r) {
+  if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
+  if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
+  if (r.status === 'done') return { family: 'green', text: 'Done' };
+  if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
+  if (r.status === 'error') return { family: 'red', text: 'Error' };
+  // running
+  switch (r.phaseKey) {
+    case 'plan': return { family: 'violet', text: 'Planning' };
+    case 'refine': return { family: 'peach', text: 'Refining' };
+    case 'implement': return { family: 'blue', text: 'Implementing' };
+    case 'review': return { family: 'peach', text: 'Reviewing' };
+    default: return { family: 'peach', text: 'Running' };
+  }
+}
+
+function buildRunCard(r) {
+  const tpl = $('#run-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  node.dataset.runId = r.runId;
+
+  const titleEl = node.querySelector('.run-title');
+  if (titleEl) titleEl.textContent = r.title;
+  const metaEl = node.querySelector('.run-meta');
+  if (metaEl) metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}`;
+
+  // Stage sublabels: only meaningful for a run THIS tab started (we have the
+  // config snapshot). preflight/done keep their static labels.
+  if (r.local && r.configSnapshot) fillStageSublabels(node, r.configSnapshot);
+
+  // Hydrate the log from any events that arrived before the card existed.
+  const logEl = node.querySelector('.log');
+  if (logEl) for (const rec of r.logLines) logEl.appendChild(buildLogLine(rec));
+
+  // A2: a card built from a hello-seeded pending question (mid-pause reload, the
+  // original `question` event may be past the replay buffer) must render the
+  // panel immediately from r.pendingQuestion — independent of any replayed
+  // event. r.el must be set before renderQpanel reads it.
+  if (r.pendingQuestion != null) {
+    r.el = node;
+    renderQpanel(r);
+  }
+
+  return node;
+}
+
+// Map each agent role's snapshot (model label + effort) onto the matching
+// stage's sublabel. The card steps use phase keys; map them to config roles.
+const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer' };
+function fillStageSublabels(node, snap) {
+  const models = Array.isArray(snap.models) ? snap.models : [];
+  const steps = snap.steps || {};
+  const labelFor = (role) => {
+    const sel = steps[role] || {};
+    const m = models.find((x) => x.id === sel.model);
+    const modelLabel = m ? m.label : 'default';
+    return sel.effort ? `${modelLabel} · ${sel.effort}` : modelLabel;
+  };
+  for (const stage of node.querySelectorAll('.stage[data-step]')) {
+    const step = stage.dataset.step;
+    const role = STEP_TO_ROLE[step];
+    if (!role) continue; // preflight/done keep static sublabel
+    const sub = stage.querySelector('.sub');
+    if (sub) sub.textContent = labelFor(role);
+  }
+}
+
+// Paint the 6-stage stepper from the run model.
+const STAGE_NUM = { done: ['s-done', 'n-green'], now: ['s-now', 'n-peach'], pause: ['s-pause', 'n-amber'], stop: ['s-stop', 'n-red'] };
+function paintStepper(r) {
+  if (!r.el) return;
+  const terminalDone = r.status === 'done';
+  for (const stage of r.el.querySelectorAll('.stage[data-step]')) {
+    const step = stage.dataset.step;
+    const idx = STEP_ORDER.indexOf(step);
+    const numEl = stage.querySelector('.num');
+
+    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
+    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+
+    let kind = null; // 'done' | 'now' | 'pause' | 'stop' | null(pending)
+    if (terminalDone) {
+      kind = 'done';
+    } else if (idx < r.maxStepIdx) {
+      kind = 'done';
+    } else if (idx === r.maxStepIdx) {
+      if (r.pendingQuestion != null) kind = 'pause';
+      else if (r.status === 'stopped') kind = 'stop';
+      else if (['done', 'complete', 'passed'].includes(r.phaseStatus)) kind = 'done';
+      else kind = 'now';
+    }
+
+    if (kind) {
+      const [sCls, nCls] = STAGE_NUM[kind];
+      stage.classList.add(sCls);
+      if (numEl) numEl.classList.add(nCls);
+    } else if (numEl) {
+      numEl.classList.add('n-grey'); // pending
+    }
+
+    // Cycle badge on refine/review.
+    const cyEl = stage.querySelector('.cycle');
+    if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(step) && r.cycle) ? `#${r.cycle}` : '';
+  }
+}
+
+function paintRunCard(r) {
+  if (!r.el) return;
+
+  // Status pill: family class + text, preserving the leading .pdot.
+  const pill = r.el.querySelector('.pill-run');
+  if (pill) {
+    const { family, text } = statusPill(r);
+    pill.className = `pill-run ${family}`;
+    const txt = pill.querySelector('.pill-text');
+    if (txt) txt.textContent = text;
+    else pill.textContent = text;
+  }
+
+  // Foot chip.
+  const chip = r.el.querySelector('.chip');
+  if (chip) {
+    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Running';
+    if (r.pendingQuestion != null) {
+      const n = questionCount(r.pendingQuestion);
+      chip.textContent = `${phaseLabel} paused · ${n} question${n === 1 ? '' : 's'}`;
+    } else if (CYCLING_PHASES.has(r.phaseKey) && r.cycle) {
+      // Max cycles aren't carried on the client run model, so show the current
+      // cycle number without a misleading denominator.
+      chip.textContent = `${phaseLabel} cycle ${r.cycle}`;
+    } else {
+      chip.textContent = phaseLabel;
+    }
+  }
+
+  paintStepper(r);
+  r.el.classList.toggle('attention', r.pendingQuestion != null);
+}
+
+function questionCount(pq) {
+  if (!pq) return 0;
+  if (Array.isArray(pq.questions)) return pq.questions.length;
+  if (Array.isArray(pq.issues)) return pq.issues.length;
+  return 1;
+}
+
+function renderRunningView() {
+  const list = $('#run-list');
+  if (!list) return;
+  const live = liveRuns();
+  const seen = new Set();
+
+  for (const r of live) {
+    seen.add(r.runId);
+    if (!r.el) {
+      r.el = buildRunCard(r);
+      list.append(r.el);
+    }
+    paintRunCard(r);
+  }
+
+  // Remove cards whose run is no longer live.
+  [...list.children].forEach((c) => {
+    if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
+  });
+
+  // Empty state.
+  if (live.length === 0) {
+    list.innerHTML = '<div class="run-empty">No pipelines running — start one from New.</div>';
+  }
+
+  // Header counts.
+  const needs = live.filter((r) => r.pendingQuestion).length;
+  const sub = $('#running-sub');
+  if (sub) {
+    sub.textContent =
+      `${live.length} pipeline${live.length === 1 ? '' : 's'} executing · ${needs} need${needs === 1 ? 's' : ''} your input`;
+  }
+  const pill = $('#running-status-pill');
+  if (pill) {
+    pill.classList.toggle('hidden', needs === 0);
+    const txt = pill.querySelector('.pill-text');
+    const label = `${needs} need${needs === 1 ? 's' : ''} input`;
+    if (txt) txt.textContent = label;
+    else {
+      // Preserve a leading .pdot if present; replace only the trailing text.
+      const dot = pill.querySelector('.pdot');
+      pill.textContent = '';
+      if (dot) pill.appendChild(dot);
+      pill.append(document.createTextNode(' ' + label));
+    }
+  }
+}
+
+function updateNavCounts() {
+  const c = $('#nav-running-count');
+  if (c) c.textContent = String(liveRuns().length);
+}
+
+// ---------------------------------------------------------------------------
+// Router: sidebar nav (+ responsive top-nav) toggle between the three views.
+// ---------------------------------------------------------------------------
+const views = $$('.view');
+const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
+const VIEW_NAMES = ['new', 'running', 'history'];
+
+function showView(name) {
+  views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
+  navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
+  if (name === 'running') renderRunningView();
+  if (name === 'history') {
+    const d = selectedProjectPath();
+    if (d) loadHistory(d);
+  }
+}
+
+// Nav clicks only update the hash; the single hashchange listener drives
+// showView so each navigation runs it exactly once (no double /api/runs fetch).
+navLinks.forEach((a) =>
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    location.hash = a.dataset.nav;
+  })
+);
+
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (VIEW_NAMES.includes(h)) showView(h);
+});
+
+// ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
 syncSourceToggle();
 setWsStatus(false);
-setRunStatus('idle');
 loadProjects();
 connectWS();
+const bootHash = location.hash.slice(1);
+showView(VIEW_NAMES.includes(bootHash) ? bootHash : 'new');
+updateNavCounts();
