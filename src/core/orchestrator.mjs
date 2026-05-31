@@ -3,7 +3,7 @@
 //
 //   preflight
 //     -> ensure git repo + checkpoint
-//     -> planner clarify loop  (ask questions until none remain)
+//     -> planner clarify       (single round; ask up to four questions, or none)
 //     -> planner plan
 //     -> refine loop           (refiner; stop when no blocking; gate past max)
 //     -> implementer (implement)
@@ -62,7 +62,6 @@ const AGENT_FILES = {
  * @param {string} [opts.title]
  * @param {number} [opts.maxRefineCycles=5]
  * @param {number} [opts.maxReviewCycles=5]
- * @param {number} [opts.maxClarifyCycles=3]
  * @param {object} [opts.claude]  { bin?, permissionMode="acceptEdits", model?, mock? }
  * @param {string} [opts.agentsDir]
  * @param {string} [opts.pipelineId]
@@ -80,7 +79,6 @@ class Orchestrator extends EventEmitter {
     this.projectDir = resolve(this.opts.projectDir || process.cwd());
     this.maxRefineCycles = numOr(this.opts.maxRefineCycles, 5);
     this.maxReviewCycles = numOr(this.opts.maxReviewCycles, 5);
-    this.maxClarifyCycles = numOr(this.opts.maxClarifyCycles, 3);
     this.claude = {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
@@ -209,8 +207,8 @@ class Orchestrator extends EventEmitter {
       this._phase('preflight', 0, 'done');
       this._checkAbort();
 
-      // 4) Planner clarify loop.
-      const answers = await this._clarifyLoop();
+      // 4) Planner clarify (single round).
+      const answers = await this._clarify();
       this._checkAbort();
 
       // 5) Planner plan.
@@ -290,45 +288,31 @@ class Orchestrator extends EventEmitter {
   // ── phase helpers ─────────────────────────────────────────────────────────────
 
   /**
-   * The clarify loop: run planner clarify; if it returns questions, emit a
-   * clarify question, await answers, persist, and re-run until no questions
-   * remain. Returns the accumulated answers array.
+   * Single clarify round: run the planner once (it asks up to four questions),
+   * record the answers, then return them for the plan phase. There is no
+   * re-ask loop — when the planner has no questions we skip straight to plan.
+   * Returns the answers array ([{ id, question, choice }]).
    */
-  async _clarifyLoop() {
-    const collected = [];
-    let round = 0;
-    // Guard against a pathological agent that never stops asking. Configurable
-    // via maxClarifyCycles (default 3); also the natural exit is questions === 0.
-    const maxRounds = this.maxClarifyCycles;
-    while (round < maxRounds) {
-      round += 1;
-      this._phase('clarify', round, 'start');
-      const { questions } = await runPlannerClarify(this._phaseCtx('planner'), {
-        round,
-        priorAnswers: collected,
-      });
-      this._checkAbort();
-      if (!Array.isArray(questions) || questions.length === 0) {
-        this._phase('clarify', round, 'done');
-        await appendAudit(this.pipeline.dir, `Clarify round ${round}: no further questions.`);
-        break;
-      }
-      this._artifact('clarify', join(this.pipeline.dir, 'clarify.json'));
-      const id = `clarify-${round}`;
-      const answer = await this._ask({ id, kind: 'clarify', questions });
-      this._checkAbort();
-      const answers = normalizeClarifyAnswer(answer, questions);
-      // Persist this round's Q&A and reuse the enriched (question-text-bearing)
-      // result for the fed-back prompt + the later plan phase.
-      const enriched = await this._writeClarifyAnswers(questions, answers);
-      for (const a of enriched) collected.push(a);
-      await appendAudit(
-        this.pipeline.dir,
-        `Clarify round ${round}: answered ${answers.length} question(s).`,
-      );
-      this._phase('clarify', round, 'done');
+  async _clarify() {
+    this._phase('clarify', 1, 'start');
+    const { questions } = await runPlannerClarify(this._phaseCtx('planner'), {
+      round: 1,
+      priorAnswers: [], // single round: there is never a prior round to feed back
+    });
+    this._checkAbort();
+    if (!Array.isArray(questions) || questions.length === 0) {
+      this._phase('clarify', 1, 'done');
+      await appendAudit(this.pipeline.dir, `Clarify: no questions; proceeding to plan.`);
+      return [];
     }
-    return collected;
+    this._artifact('clarify', join(this.pipeline.dir, 'clarify.json'));
+    const answer = await this._ask({ id: 'clarify-1', kind: 'clarify', questions });
+    this._checkAbort();
+    const answers = normalizeClarifyAnswer(answer, questions);
+    const enriched = await this._writeClarifyAnswers(questions, answers);
+    await appendAudit(this.pipeline.dir, `Clarify: answered ${answers.length} question(s).`);
+    this._phase('clarify', 1, 'done');
+    return enriched;
   }
 
   /**

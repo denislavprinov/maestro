@@ -58,9 +58,37 @@ test('clarify converges once answers are fed back (mock)', async () => {
   assert.equal(r2.questions.length, 0, 'round 2 with answers asks nothing');
 });
 
-test('maxClarifyCycles defaults to 3 and is overridable', () => {
-  assert.equal(createOrchestrator({}).maxClarifyCycles, 3);
-  assert.equal(createOrchestrator({ maxClarifyCycles: 2 }).maxClarifyCycles, 2);
+test('orchestrator no longer exposes a clarify round cap', () => {
+  const orch = createOrchestrator({});
+  assert.equal(orch.maxClarifyCycles, undefined, 'maxClarifyCycles field should be gone');
+});
+
+test('clarify runs exactly one round (no clarify phase past cycle 1)', async () => {
+  const projectDir = await makeTmpDir();
+  const orch = createOrchestrator({
+    projectDir,
+    prompt: 'demo task',
+    auto: true,
+    claude: { mock: true },
+  });
+  const clarifyCycles = [];
+  let clarifyQuestions = 0;
+  orch.on('phase', ({ phase, cycle }) => {
+    if (phase === 'clarify') clarifyCycles.push(cycle);
+  });
+  // In mock mode the planner always returns questions on the first call
+  // (MOCK_PRIOR === 0), so a single clarify round must fire this exactly once.
+  orch.on('question', ({ kind }) => {
+    if (kind === 'clarify') clarifyQuestions += 1;
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', 'mock pipeline should finish');
+  assert.ok(clarifyCycles.length > 0, 'clarify phase should run');
+  assert.ok(
+    clarifyCycles.every((c) => c === 1),
+    `clarify must stay on cycle 1, saw cycles ${clarifyCycles.join(',')}`,
+  );
+  assert.equal(clarifyQuestions, 1, 'clarify must be asked exactly once');
 });
 
 import { normalizeClarify } from '../src/core/protocol.mjs';
