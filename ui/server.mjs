@@ -1,0 +1,493 @@
+// ui/server.mjs
+// Express static server + REST API + WebSocket bridge that drives the
+// deterministic orchestrator core. Only non-builtin deps: express + ws.
+//
+// Run:  node ui/server.mjs   (or `npm start`)
+// Env:  PORT (default 4317), MAESTRO_MOCK (forwarded to runs when ?mock or body.mock)
+
+import express from 'express';
+import { WebSocketServer } from 'ws';
+import http from 'node:http';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { listPipelines, readPipeline } from '../src/core/artifacts.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
+const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
+const PORT = Number(process.env.PORT) || 4317;
+
+// ---------------------------------------------------------------------------
+// Run registry. Each entry holds the live orchestrator + a ring buffer of the
+// events emitted so far so that a WebSocket which connects late can replay.
+// ---------------------------------------------------------------------------
+/** @type {Map<string, { id, orch, projectDir, title, status, events: any[], pendingQuestion: any }>} */
+const runs = new Map();
+
+const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error'];
+const MAX_BUFFER = 5000;
+
+// ---------------------------------------------------------------------------
+// WebSocket plumbing
+// ---------------------------------------------------------------------------
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+/** All currently connected sockets. */
+const sockets = new Set();
+
+wss.on('connection', (ws, req) => {
+  sockets.add(ws);
+  // Optional ?runId=... -> replay that run's buffered events so a reconnecting
+  // client immediately sees the full state.
+  let requestedRunId = null;
+  try {
+    const u = new URL(req.url, 'http://localhost');
+    requestedRunId = u.searchParams.get('runId');
+  } catch {
+    requestedRunId = null;
+  }
+
+  send(ws, { type: 'hello', runs: summarizeRuns() });
+
+  if (requestedRunId && runs.has(requestedRunId)) {
+    const entry = runs.get(requestedRunId);
+    for (const ev of entry.events) send(ws, ev);
+  }
+
+  ws.on('close', () => sockets.delete(ws));
+  ws.on('error', () => sockets.delete(ws));
+  ws.on('message', (data) => {
+    // Clients may ask to (re)subscribe / replay a run's history.
+    let msg = null;
+    try {
+      msg = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    if (msg && msg.type === 'subscribe' && msg.runId && runs.has(msg.runId)) {
+      const entry = runs.get(msg.runId);
+      for (const ev of entry.events) send(ws, ev);
+    }
+  });
+});
+
+function send(ws, obj) {
+  if (ws.readyState === ws.OPEN) {
+    try {
+      ws.send(JSON.stringify(obj));
+    } catch {
+      /* ignore individual socket failures */
+    }
+  }
+}
+
+/** Broadcast an already-tagged event object to every open socket. */
+function broadcast(obj) {
+  const text = JSON.stringify(obj);
+  for (const ws of sockets) {
+    if (ws.readyState === ws.OPEN) {
+      try {
+        ws.send(text);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+function summarizeRuns() {
+  return [...runs.values()].map((r) => ({
+    runId: r.id,
+    projectDir: r.projectDir,
+    title: r.title,
+    status: r.status,
+    pendingQuestion: r.pendingQuestion || null,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Wire a core orchestrator's events onto the WebSocket, tagged with runId.
+// ---------------------------------------------------------------------------
+function subscribe(orch, name, handler) {
+  // Support a Node EventEmitter (`.on`), an `.addListener` alias, or an
+  // EventTarget-style (`.addEventListener`) "EventEmitter-like" object.
+  if (typeof orch.on === 'function') {
+    orch.on(name, handler);
+  } else if (typeof orch.addListener === 'function') {
+    orch.addListener(name, handler);
+  } else if (typeof orch.addEventListener === 'function') {
+    orch.addEventListener(name, (ev) => handler(ev && ev.detail !== undefined ? ev.detail : ev));
+  }
+}
+
+function wireRun(entry) {
+  const { id, orch } = entry;
+
+  const record = (event) => {
+    const tagged = { runId: id, ...event };
+    entry.events.push(tagged);
+    if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
+    broadcast(tagged);
+    return tagged;
+  };
+
+  for (const name of EVENT_NAMES) {
+    subscribe(orch, name, (payload) => {
+      const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
+
+      if (name === 'question') {
+        entry.pendingQuestion = event;
+      }
+      if (name === 'done') {
+        entry.status = (payload && payload.status) || 'done';
+        entry.pendingQuestion = null;
+      }
+      if (name === 'error') {
+        entry.status = 'error';
+        entry.pendingQuestion = null;
+      }
+      if (name === 'phase') {
+        entry.status = 'running';
+      }
+      if (name === 'state' && payload && typeof payload === 'object') {
+        // Mirror status from the snapshot when present. (Pending questions are
+        // cleared explicitly on answer/done/error, not from state snapshots.)
+        if (payload.status) entry.status = payload.status;
+      }
+
+      record(event);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Express middleware + static
+// ---------------------------------------------------------------------------
+app.use(express.json({ limit: '8mb' }));
+app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+
+function badRequest(res, message) {
+  res.status(400).json({ error: message });
+}
+
+function resolveProjectDir(input) {
+  if (!input || typeof input !== 'string' || !input.trim()) return null;
+  let p = input.trim();
+  if (p.startsWith('~')) p = path.join(process.env.HOME || process.env.USERPROFILE || '', p.slice(1));
+  return path.resolve(p);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/run  -> start a new orchestration run
+// body: { projectDir, prompt?, promptMarkdown?, title?, maxRefine?, maxReview?, mock? }
+// ---------------------------------------------------------------------------
+app.post('/api/run', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const projectDir = resolveProjectDir(body.projectDir);
+    if (!projectDir) return badRequest(res, 'projectDir is required');
+
+    // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
+    const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
+    const promptMarkdown =
+      typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
+    const effectivePrompt = prompt || promptMarkdown;
+    if (!effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
+
+    if (!fs.existsSync(projectDir)) {
+      try {
+        await fsp.mkdir(projectDir, { recursive: true });
+      } catch (err) {
+        return badRequest(res, `cannot create projectDir: ${err.message}`);
+      }
+    }
+
+    const maxRefineCycles = clampInt(body.maxRefine, 5);
+    const maxReviewCycles = clampInt(body.maxReview, 5);
+    const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
+
+    const runId = randomUUID();
+    const title = (typeof body.title === 'string' && body.title.trim()) || effectivePrompt.slice(0, 80);
+
+    // Materialize any uploaded extra files to a temp dir; the orchestrator's
+    // createPipeline copies them into <pipeline>/extras/.
+    const extras = await writeExtras(runId, body.extras);
+
+    const orch = createOrchestrator({
+      projectDir,
+      prompt: effectivePrompt,
+      title,
+      extras,
+      maxRefineCycles,
+      maxReviewCycles,
+      agentsDir: AGENTS_DIR,
+      claude: { permissionMode: 'acceptEdits', mock },
+    });
+
+    const entry = {
+      id: runId,
+      orch,
+      projectDir,
+      title,
+      status: 'starting',
+      events: [],
+      pendingQuestion: null,
+    };
+    runs.set(runId, entry);
+    wireRun(entry);
+
+    // Fire-and-forget; all progress is surfaced through events.
+    Promise.resolve()
+      .then(() => orch.run())
+      .catch((err) => {
+        const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
+        entry.status = 'error';
+        entry.events.push(event);
+        broadcast(event);
+      });
+
+    res.json({ runId });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/answer  -> resolve a pending question for a run
+// body: { runId, id, payload }
+// ---------------------------------------------------------------------------
+app.post('/api/answer', (req, res) => {
+  const { runId, id, payload } = req.body || {};
+  if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
+  if (!id) return badRequest(res, 'question id is required');
+  const entry = runs.get(runId);
+  try {
+    entry.orch.answer(id, payload);
+    if (entry.pendingQuestion && entry.pendingQuestion.id === id) entry.pendingQuestion = null;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/stop  -> abort a run
+// body: { runId }
+// ---------------------------------------------------------------------------
+app.post('/api/stop', (req, res) => {
+  const { runId } = req.body || {};
+  if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
+  const entry = runs.get(runId);
+  try {
+    entry.orch.stop();
+    entry.status = 'stopped';
+    entry.pendingQuestion = null;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/runs?projectDir  -> history of saved pipelines
+// ---------------------------------------------------------------------------
+app.get('/api/runs', async (req, res) => {
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const pipelines = (await Promise.resolve(listPipelines(projectDir))) || [];
+    // Also expose any live (in-memory) runs for this project that may not yet
+    // be on disk, so the UI history reflects an active run too.
+    const live = [...runs.values()]
+      .filter((r) => r.projectDir === projectDir)
+      .map((r) => ({ id: r.id, runId: r.id, title: r.title, status: r.status, live: true }));
+    res.json({ pipelines, live });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/runs/:id?projectDir  -> saved pipeline markdown + state
+// ---------------------------------------------------------------------------
+app.get('/api/runs/:id', async (req, res) => {
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  const id = req.params.id;
+  try {
+    const data = await Promise.resolve(readPipeline(projectDir, id));
+    if (!data) return res.status(404).json({ error: 'pipeline not found' });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/install  -> copy agents + skill into <projectDir>/.claude
+// body: { projectDir }
+// ---------------------------------------------------------------------------
+app.post('/api/install', async (req, res) => {
+  const projectDir = resolveProjectDir((req.body || {}).projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const result = await installAgents(projectDir);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Install logic (mirrors scripts/install.mjs): copy agents/*.md and
+// skills/maestro/** into <projectDir>/.claude/...
+// ---------------------------------------------------------------------------
+async function installAgents(projectDir) {
+  const claudeDir = path.join(projectDir, '.claude');
+  const agentsTarget = path.join(claudeDir, 'agents');
+  const skillTarget = path.join(claudeDir, 'skills', 'maestro');
+  await fsp.mkdir(agentsTarget, { recursive: true });
+  await fsp.mkdir(skillTarget, { recursive: true });
+
+  const copied = [];
+
+  // Copy agents/*.md
+  if (fs.existsSync(AGENTS_DIR)) {
+    const entries = await fsp.readdir(AGENTS_DIR);
+    for (const name of entries) {
+      if (!name.endsWith('.md')) continue;
+      const from = path.join(AGENTS_DIR, name);
+      const to = path.join(agentsTarget, name);
+      await fsp.copyFile(from, to);
+      copied.push(path.relative(projectDir, to));
+    }
+  }
+
+  // Copy skills/maestro/** recursively
+  const skillSrc = path.join(SKILLS_DIR, 'maestro');
+  if (fs.existsSync(skillSrc)) {
+    await copyDir(skillSrc, skillTarget, projectDir, copied);
+    // Personalize the copied SKILL.md so /maestro targets this repo's path.
+    await rewriteSkillRepoPath(skillTarget, PROJECT_ROOT);
+  }
+
+  return {
+    ok: true,
+    target: claudeDir,
+    copied,
+    hint: 'Open Claude Code in this folder and run: /maestro <prompt>',
+  };
+}
+
+/**
+ * Rewrite the `<MAESTRO_REPO>` placeholder in an installed SKILL.md to this repo's
+ * absolute path. Best-effort; never throws.
+ */
+async function rewriteSkillRepoPath(skillTarget, repoRoot) {
+  const skillMd = path.join(skillTarget, 'SKILL.md');
+  try {
+    const original = await fsp.readFile(skillMd, 'utf8');
+    const rewritten = original.split('<MAESTRO_REPO>').join(repoRoot);
+    if (rewritten !== original) await fsp.writeFile(skillMd, rewritten, 'utf8');
+  } catch {
+    /* no SKILL.md or unreadable — skip */
+  }
+}
+
+async function copyDir(srcDir, destDir, baseForRel, copiedOut) {
+  await fsp.mkdir(destDir, { recursive: true });
+  const entries = await fsp.readdir(srcDir, { withFileTypes: true });
+  for (const ent of entries) {
+    const from = path.join(srcDir, ent.name);
+    const to = path.join(destDir, ent.name);
+    if (ent.isDirectory()) {
+      await copyDir(from, to, baseForRel, copiedOut);
+    } else if (ent.isFile()) {
+      await fsp.copyFile(from, to);
+      copiedOut.push(path.relative(baseForRel, to));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+function clampInt(v, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.floor(n);
+}
+
+/**
+ * Decode uploaded extra files ([{ name, dataBase64 }]) to a per-run temp dir and
+ * return absolute paths. Filenames are reduced to their basename to prevent
+ * path traversal. Returns [] when nothing usable was provided.
+ * @param {string} runId
+ * @param {Array<{name?:string, dataBase64?:string}>} list
+ * @returns {Promise<string[]>}
+ */
+async function writeExtras(runId, list) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const dir = path.join(os.tmpdir(), `orchestrator-extras-${runId}`);
+  await fsp.mkdir(dir, { recursive: true });
+  const out = [];
+  let i = 0;
+  for (const item of list) {
+    i += 1;
+    if (!item || typeof item !== 'object') continue;
+    const data = typeof item.dataBase64 === 'string' ? item.dataBase64 : '';
+    if (!data) continue;
+    // Sanitize to a bare filename; fall back to a generated name.
+    let name = path.basename(String(item.name || '').trim());
+    if (!name || name === '.' || name === '..') name = `extra-${i}`;
+    const dest = path.join(dir, name);
+    try {
+      await fsp.writeFile(dest, Buffer.from(data, 'base64'));
+      out.push(dest);
+    } catch {
+      /* skip a file we cannot decode/write */
+    }
+  }
+  return out;
+}
+
+function isTruthy(v) {
+  if (v === undefined || v === null) return false;
+  const s = String(v).toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+// SPA fallback: any unmatched GET that is not an /api or /ws path serves
+// index.html. Implemented as middleware (not a route pattern) so it does not
+// depend on path-to-regexp wildcard syntax, which differs between Express 4
+// and Express 5.
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'), (err) => {
+    if (err) next();
+  });
+});
+
+server.on('error', (err) => {
+  console.error(`[maestro-ui] server error: ${err && err.message ? err.message : err}`);
+});
+
+server.listen(PORT, () => {
+  const url = `http://localhost:${PORT}`;
+  console.log(`[maestro-ui] listening on ${url}`);
+  console.log(`[maestro-ui] WebSocket on ws://localhost:${PORT}/ws`);
+});
+
+export { app, server, runs };

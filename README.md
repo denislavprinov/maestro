@@ -1,0 +1,199 @@
+# Maestro
+
+A **deterministic multi-agent pipeline** that drives Claude Code (headless) through
+**Plan -> Refine -> Implement -> Review** for a software task. It ships three ways to
+run the same pipeline: a **CLI**, an installable **`/maestro` skill**, and a **web
+UI**.
+
+Plain Node.js ESM (`.mjs`), Node `>=18`. Minimal dependencies: `express` + `ws` only.
+The frontend is vanilla HTML/CSS/JS — no framework, no build step.
+
+> The full, binding contract for every module, event, and on-disk file lives in
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Read it before changing any signature.
+
+---
+
+## What it is
+
+You give the orchestrator a **project folder** and a **prompt** (or a markdown brief).
+A deterministic state machine then runs four agents in sequence, looping until the work
+clears quality gates:
+
+1. **Planner** writes an initial plan (with code snippets) and, instead of *assuming*
+   anything, asks you conceptual questions — each with **3 options plus a free-text
+   field**. The Q&A is appended to the plan so reviewers see it.
+2. **Plan Refiner** reviews the plan (including its code snippets), writes a refined
+   `-v2`, `-v3`, ... and re-runs until only minor/suggestion issues remain (or you
+   approve continuing past the cycle cap).
+3. **Implementer** follows the latest plan with no deviation, using TDD
+   (red-green-refactor).
+4. **Code Reviewer** reviews the git diff, writes a review, and hands back to the
+   implementer to fix — looping Implement -> Review until only minor/suggestion issues
+   remain (or you approve continuing past the cap).
+
+Everything is saved as markdown + JSON under `ai-artifacts/` for audit.
+
+### Preflight tooling
+
+Before planning, the orchestrator probes for optional graph tools and, if present,
+tells the agents to use them:
+
+- [`graphify`](https://github.com/safishamsi/graphify)
+- [`code-review-graph`](https://github.com/tirth8205/code-review-graph)
+
+If **both** are installed, it **always uses graphify**. All probes fail safe — a
+missing tool never breaks a run.
+
+---
+
+## Install
+
+```bash
+npm install
+```
+
+Requires Node `>=18` and the `claude` CLI on your `PATH` for real (non-mock) runs.
+
+---
+
+## Quick start
+
+### CLI
+
+Run a pipeline against a project folder:
+
+```bash
+npm run cli -- --project /path/to/your/project --prompt "Add a /search endpoint"
+```
+
+Or use a markdown brief as the prompt:
+
+```bash
+npm run cli -- --project /path/to/your/project --file ./brief.md --title "Search feature"
+```
+
+Useful flags: `--max-refine N`, `--max-review N`, `--model <m>`,
+`--permission-mode <m>`, `--yes`/`--non-interactive` (auto-answer clarify with the
+first option and gates with "continue"). See `docs/ARCHITECTURE.md` §4.1 for the full
+list.
+
+### Web UI
+
+```bash
+npm start
+```
+
+Then open the printed URL (default `http://localhost:4317`). The UI lets you:
+
+- start a run from a **prompt or markdown document**, pointed at any **project folder**,
+  with optional extra files;
+- watch a **steps tracker** (preflight / plan / refine #N / implement / review #N /
+  done);
+- answer **clarify questions** (3 options + free text) and **loop gates** ("Don't have
+  another cycle and continue" / "I approve another cycle", with the open critical/major
+  issues shown);
+- follow a **live streaming log**;
+- **Stop** a run;
+- browse **history** of past pipelines and read their saved markdown.
+
+There's also an **"Install agents into this folder"** button that copies the agents +
+skill into a target project so you can use `/maestro` there.
+
+### `/maestro` skill (inside your own project)
+
+Copy the agents and the skill into your project's `.claude/`:
+
+```bash
+npm run install:agents -- /path/to/your/project
+# or: node scripts/install.mjs /path/to/your/project [--force]
+```
+
+Then open Claude Code in that project and run:
+
+```
+/maestro Add a /search endpoint with pagination
+```
+
+The skill starts the same deterministic orchestrator script.
+
+### Mock demo (offline, no tokens)
+
+The whole pipeline can run **fully offline** without spawning `claude` — it produces
+real artifact files using a deterministic mock:
+
+```bash
+npm run smoke
+```
+
+This is equivalent to:
+
+```bash
+MAESTRO_MOCK=1 node src/cli/maestro.mjs --project examples/sandbox --prompt "demo task" --mock --yes
+```
+
+Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
+
+---
+
+## The 4 agents
+
+| Agent | File | Role |
+| --- | --- | --- |
+| Planner | `agents/maestro-planner.md` | Initial plan with code snippets; asks conceptual questions (3 options + free text) instead of assuming; appends Q&A to the plan. |
+| Plan Refiner | `agents/maestro-plan-refiner.md` | Reviews + refines the plan (and its code snippets); writes `-vN`; emits a severity-tagged review per cycle. |
+| Implementer | `agents/maestro-implementer.md` | Follows the latest plan with no deviation; TDD red-green-refactor; also runs in "fix" mode against a review. |
+| Code Reviewer | `agents/maestro-code-reviewer.md` | Reviews the git diff; writes review markdown + JSON; hands back to the implementer to fix. |
+
+---
+
+## The loops
+
+- **Clarify loop** — planner re-asks until there are no open questions; answers are
+  persisted and appended to the plan.
+- **Refine loop** — Refiner runs repeatedly. It stops when no `critical`/`major` issues
+  remain. Past `--max-refine` (default 5) cycles it asks you to **continue** or approve
+  **another** cycle, escalating indefinitely.
+- **Review loop** — Reviewer -> Implementer(fix) -> Reviewer ... stops when no
+  `critical`/`major` issues remain. Past `--max-review` (default 5) cycles it asks the
+  same continue/another gate.
+
+A run is "blocked" only by `critical` or `major` issues; `minor`/`suggestion` issues do
+not hold up the loop.
+
+---
+
+## Artifact layout
+
+All outputs are written under `<projectDir>/ai-artifacts/`:
+
+```
+ai-artifacts/
+  plans/        <DD-MM-YY>-<name>.md, -v2.md, -v3.md ...   (plans + refinements)
+  reviews/      <DD-MM-YY>-<name>-impl-review.md           (implementation reviews)
+  pipelines/    <DD-MM-YY>-<slug>-<id>/                    (one folder per run)
+    prompt.md            the prompt text (or copied markdown brief)
+    extras/              any optional extra files you attached
+    clarify.json         planner's open questions (3 options + free text each)
+    clarify-answers.json your answers
+    refine-review-cycle1.json  per-cycle refiner review JSON (one per refine cycle)
+    impl-review-cycle1.json    per-cycle code-reviewer review JSON (one per review cycle)
+    state.json           machine-readable run state snapshot
+    pipeline.md          human-readable audit log (history view reads this)
+```
+
+The exact JSON shapes are specified in `docs/ARCHITECTURE.md` §5.
+
+---
+
+## Project structure
+
+```
+src/core/        protocol, artifacts, preflight, claude-runner, phases, orchestrator
+src/cli/         orchestrate.mjs (CLI entry)
+scripts/         install.mjs (copy agents + skill into a target project)
+agents/          the four agent system prompts
+skills/          orchestrate/SKILL.md (the /maestro skill)
+ui/              server.mjs + public/ (single-page web UI)
+docs/            ARCHITECTURE.md (single source of truth)
+ai-artifacts/    generated plans, reviews, and pipeline run folders
+```

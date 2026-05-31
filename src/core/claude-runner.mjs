@@ -1,0 +1,561 @@
+// src/core/claude-runner.mjs
+// Spawn Claude Code headless and stream its events, with a fully offline MOCK
+// mode that performs the same role-appropriate side effects so the whole
+// pipeline can run end-to-end without spawning claude or spending tokens.
+//
+// ── MOCK MARKER PROTOCOL (shared with phases.mjs) ────────────────────────────
+// In mock mode the runner does not call any model. Instead it reads simple
+// markers embedded (one per line) in the `prompt` (and, as a fallback, the
+// `systemPrompt`). The phases layer is responsible for emitting these markers.
+//
+//   MOCK_ROLE: <role>      one of:
+//                            planner-clarify | planner-plan |
+//                            refiner | implementer | reviewer
+//   MOCK_OUT: <path>       primary output artifact path (absolute)
+//                          - planner-clarify : clarify.json path
+//                          - planner-plan    : plan .md path
+//                          - refiner         : output -vN plan .md path
+//                          - reviewer        : review .md path
+//   MOCK_JSON: <path>      review json path (refiner + reviewer)
+//   MOCK_CYCLE: <n>        loop cycle number (refiner + reviewer)
+//   MOCK_IN: <path>        input plan path (refiner; optional, used to seed -vN)
+//   MOCK_BASE: <name>      base slug (optional, used for nicer mock content)
+//
+// Markers are matched leniently: "KEY: value" anywhere at the start of a line,
+// case-sensitive keys, value trimmed. Missing markers degrade gracefully.
+// The mock is deterministic: blocking-issue counts decrease with cycle so the
+// orchestrator's refine/review loops always terminate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
+import { constants as FS } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const DEFAULT_BIN = process.env.MAESTRO_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
+
+/**
+ * Whether mock mode is active. Driven by MAESTRO_MOCK or an explicit opts.mock
+ * passed through by the orchestrator (handled by caller mapping mock->env or
+ * by passing systemPrompt/prompt markers; we also honor a `mock` field).
+ */
+function mockEnabled(opts) {
+  if (opts && opts.mock) return true;
+  const v = process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK;
+  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+}
+
+/**
+ * Run Claude headless (or the mock). Streams events via onEvent and resolves
+ * with the accumulated assistant/result text and the process exit code.
+ *
+ * @param {object} o
+ * @param {string} o.cwd                 working directory for claude
+ * @param {string} [o.systemPrompt]      appended system prompt
+ * @param {string} o.prompt              the user prompt (-p)
+ * @param {string[]} [o.allowedTools]    e.g. ["Read","Write","Edit","Bash"]
+ * @param {string} [o.permissionMode]    e.g. "acceptEdits"
+ * @param {string} [o.model]             optional model id
+ * @param {(e:{type:string, raw?:any, text?:string})=>void} [o.onEvent]
+ * @param {AbortSignal} [o.signal]
+ * @param {string} [o.bin]               claude binary (default "claude")
+ * @param {boolean} [o.mock]             force mock mode
+ * @returns {Promise<{text:string, exitCode:number}>}
+ */
+export async function runClaude(o = {}) {
+  const {
+    cwd = process.cwd(),
+    systemPrompt = '',
+    prompt = '',
+    allowedTools,
+    permissionMode = 'acceptEdits',
+    model,
+    onEvent = () => {},
+    signal,
+    bin = DEFAULT_BIN,
+  } = o;
+
+  if (signal?.aborted) {
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+
+  if (mockEnabled(o)) {
+    return runMock({ cwd, systemPrompt, prompt, onEvent, signal });
+  }
+
+  return runReal({
+    cwd,
+    systemPrompt,
+    prompt,
+    allowedTools,
+    permissionMode,
+    model,
+    onEvent,
+    signal,
+    bin,
+  });
+}
+
+// ── Real execution ───────────────────────────────────────────────────────────
+
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, onEvent, signal, bin }) {
+  return new Promise((resolveP, rejectP) => {
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
+    if (systemPrompt) {
+      args.push('--append-system-prompt', systemPrompt);
+    }
+    if (model) {
+      args.push('--model', model);
+    }
+    if (Array.isArray(allowedTools) && allowedTools.length) {
+      args.push('--allowedTools', allowedTools.join(','));
+    }
+
+    let child;
+    try {
+      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      rejectP(new Error(`Failed to spawn ${bin}: ${err.message}`));
+      return;
+    }
+
+    let resultText = '';
+    let assistantText = '';
+    let stderrBuf = '';
+    let settled = false;
+
+    const onAbort = () => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      // Escalate if it ignores SIGTERM.
+      setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+      }, 1500).unref?.();
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener?.('abort', onAbort);
+      fn(arg);
+    };
+
+    const rl = createInterface({ input: child.stdout });
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let evt;
+      try {
+        evt = JSON.parse(trimmed);
+      } catch {
+        // Non-JSON line (rare). Surface as a raw log.
+        safeEmit(onEvent, { type: 'log', text: trimmed, raw: trimmed });
+        return;
+      }
+      const text = extractText(evt);
+      if (evt?.type === 'assistant' && text) assistantText += text;
+      if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
+      safeEmit(onEvent, { type: evt?.type || 'event', raw: evt, text: text || undefined });
+    });
+
+    child.stderr.on('data', (d) => {
+      stderrBuf += d.toString();
+    });
+
+    child.on('error', (err) => {
+      finish(rejectP, new Error(`${bin} error: ${err.message}`));
+    });
+
+    child.on('close', (code) => {
+      rl.close();
+      if (signal?.aborted) {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        finish(rejectP, err);
+        return;
+      }
+      if (code !== 0) {
+        finish(rejectP, new Error(`${bin} exited with code ${code}: ${stderrBuf.trim() || 'no stderr'}`));
+        return;
+      }
+      const text = resultText || assistantText;
+      finish(resolveP, { text, exitCode: code ?? 0 });
+    });
+  });
+}
+
+function safeEmit(onEvent, e) {
+  try {
+    onEvent(e);
+  } catch {
+    /* listener errors must not break the stream */
+  }
+}
+
+/**
+ * Pull human-readable text out of a stream-json event. Handles the common
+ * Claude Code shapes: { type:"assistant", message:{ content:[{type:"text", text}] } }
+ * and { type:"result", result:"..." }.
+ */
+function extractText(evt) {
+  if (!evt || typeof evt !== 'object') return '';
+  if (typeof evt.result === 'string') return evt.result;
+  const content = evt.message?.content ?? evt.content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
+      .map((c) => c.text)
+      .join('');
+  }
+  if (typeof content === 'string') return content;
+  return '';
+}
+
+// ── Mock execution ───────────────────────────────────────────────────────────
+
+/**
+ * Parse "KEY: value" markers from the prompt (preferred) and systemPrompt.
+ */
+function parseMarkers(prompt, systemPrompt) {
+  const markers = {};
+  const scan = (txt) => {
+    if (!txt) return;
+    for (const line of String(txt).split(/\r?\n/)) {
+      const m = line.match(/^\s*(MOCK_[A-Z]+)\s*:\s*(.*)$/);
+      if (m) {
+        const key = m[1];
+        if (markers[key] === undefined) markers[key] = m[2].trim();
+      }
+    }
+  };
+  scan(prompt);
+  scan(systemPrompt);
+  return markers;
+}
+
+async function ensureDir(filePath) {
+  await mkdir(dirname(filePath), { recursive: true });
+}
+
+async function exists(p) {
+  try {
+    await access(p, FS.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Emit a canned log line and yield to the event loop. */
+async function emitLog(onEvent, text) {
+  safeEmit(onEvent, { type: 'assistant', text, raw: { mock: true, text } });
+  // Let consumers process the event; keeps mock async-realistic.
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+function abortIfNeeded(signal) {
+  if (signal?.aborted) {
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+}
+
+/**
+ * Offline mock: emits a few log lines and performs role-appropriate writes.
+ */
+async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
+  abortIfNeeded(signal);
+  const m = parseMarkers(prompt, systemPrompt);
+  const role = m.MOCK_ROLE || inferRole(prompt, systemPrompt);
+  const cycle = Number(m.MOCK_CYCLE || '1') || 1;
+
+  await emitLog(onEvent, `[mock] starting role=${role || 'unknown'} cycle=${cycle}`);
+  abortIfNeeded(signal);
+
+  let text = `[mock] role ${role} complete`;
+  switch (role) {
+    case 'planner-clarify':
+      text = await mockPlannerClarify(m, cycle, onEvent);
+      break;
+    case 'planner-plan':
+      text = await mockPlannerPlan(m, onEvent);
+      break;
+    case 'refiner':
+      text = await mockRefiner(m, cycle, onEvent);
+      break;
+    case 'implementer':
+      text = await mockImplementer(m, cwd, onEvent);
+      break;
+    case 'reviewer':
+      text = await mockReviewer(m, cycle, onEvent);
+      break;
+    default:
+      await emitLog(onEvent, `[mock] no side effects for unknown role`);
+      break;
+  }
+
+  abortIfNeeded(signal);
+  await emitLog(onEvent, `[mock] done role=${role}`);
+  return { text, exitCode: 0 };
+}
+
+/** Best-effort role inference if MOCK_ROLE is absent. */
+function inferRole(prompt, systemPrompt) {
+  const hay = `${prompt}\n${systemPrompt}`.toLowerCase();
+  if (hay.includes('clarif')) return 'planner-clarify';
+  if (hay.includes('refine')) return 'refiner';
+  if (hay.includes('review')) return 'reviewer';
+  if (hay.includes('implement')) return 'implementer';
+  if (hay.includes('plan')) return 'planner-plan';
+  return 'unknown';
+}
+
+async function mockPlannerClarify(m, cycle, onEvent) {
+  const out = m.MOCK_OUT;
+  // Round 1 asks one clarifying question; subsequent rounds report no further
+  // questions so the orchestrator's clarify loop terminates naturally (rather
+  // than only via its MAX_ROUNDS safety cap).
+  const payload =
+    cycle <= 1
+      ? {
+          questions: [
+            {
+              id: 'q1',
+              question:
+                'How should the feature handle invalid input — fail fast, coerce, or ignore?',
+              options: [
+                'Fail fast with a clear error',
+                'Coerce to a safe default',
+                'Ignore and continue',
+              ],
+              allowFreeText: true,
+            },
+          ],
+        }
+      : { questions: [] };
+  await emitLog(
+    onEvent,
+    cycle <= 1
+      ? '[mock] planner asking one clarifying question'
+      : '[mock] planner has no further questions',
+  );
+  if (!out) return '[mock] planner-clarify: no MOCK_OUT given';
+  await ensureDir(out);
+  await writeFile(out, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return JSON.stringify(payload);
+}
+
+async function mockPlannerPlan(m, onEvent) {
+  const out = m.MOCK_OUT;
+  const base = m.MOCK_BASE || 'feature';
+  await emitLog(onEvent, '[mock] planner writing initial plan with code snippet');
+  if (!out) return '[mock] planner-plan: no MOCK_OUT given';
+  const md = mockPlanMarkdown(base, 1);
+  await ensureDir(out);
+  await writeFile(out, md, 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] plan written to ${out}`;
+}
+
+function mockPlanMarkdown(base, version) {
+  return (
+    `# Plan: ${base} (v${version})\n\n` +
+    `## Overview\n\n` +
+    `Deterministic mock plan for "${base}". Implements a small module using TDD.\n\n` +
+    `## Steps\n\n` +
+    `1. Write a failing test for the core function.\n` +
+    `2. Implement the function until the test passes.\n` +
+    `3. Refactor for clarity.\n\n` +
+    `## Code Snippets\n\n` +
+    '```js\n' +
+    `// src/feature.mjs\n` +
+    `export function feature(input) {\n` +
+    `  if (input == null) throw new Error('input required');\n` +
+    `  return String(input).trim();\n` +
+    `}\n` +
+    '```\n\n' +
+    '```js\n' +
+    `// test/feature.test.mjs\n` +
+    `import { feature } from '../src/feature.mjs';\n` +
+    `import assert from 'node:assert';\n` +
+    `assert.equal(feature('  hi '), 'hi');\n` +
+    '```\n\n' +
+    `## Clarifications (Q&A)\n\n` +
+    `- **Q:** How should the feature handle invalid input?\n` +
+    `  - **A:** Fail fast with a clear error\n`
+  );
+}
+
+async function mockRefiner(m, cycle, onEvent) {
+  const out = m.MOCK_OUT;
+  const jsonPath = m.MOCK_JSON;
+  const base = m.MOCK_BASE || 'feature';
+  await emitLog(onEvent, `[mock] refiner reviewing plan (cycle ${cycle})`);
+
+  // Seed the -vN plan from the input plan if available, else from template.
+  if (out) {
+    let body = '';
+    if (m.MOCK_IN && (await exists(m.MOCK_IN))) {
+      try {
+        body = await readFile(m.MOCK_IN, 'utf8');
+      } catch {
+        body = '';
+      }
+    }
+    if (!body) body = mockPlanMarkdown(base, cycle + 1);
+    const refined =
+      body +
+      `\n## Refinement notes (cycle ${cycle})\n\n` +
+      `- Tightened error handling and added an edge-case test.\n`;
+    await ensureDir(out);
+    await writeFile(out, refined, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  }
+
+  // Cycle 1 has one blocking (major) issue; cycle >=2 has only minor.
+  const review =
+    cycle <= 1
+      ? {
+          summary: 'Plan is mostly solid but one major gap remains.',
+          issues: [
+            {
+              severity: 'major',
+              title: 'Missing error-path test',
+              detail: 'The plan does not test the invalid-input branch.',
+              location: 'test/feature.test.mjs',
+            },
+            {
+              severity: 'minor',
+              title: 'Naming',
+              detail: 'Consider a more descriptive function name.',
+              location: 'src/feature.mjs',
+            },
+          ],
+        }
+      : {
+          summary: 'No blocking issues remain.',
+          issues: [
+            {
+              severity: 'minor',
+              title: 'Doc comment',
+              detail: 'Add a short JSDoc to the exported function.',
+              location: 'src/feature.mjs',
+            },
+          ],
+        };
+
+  if (jsonPath) {
+    await ensureDir(jsonPath);
+    await writeFile(jsonPath, JSON.stringify(review, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${jsonPath}`, raw: { mock: true, file: jsonPath } });
+  }
+  return JSON.stringify(review);
+}
+
+async function mockImplementer(m, cwd, onEvent) {
+  await emitLog(onEvent, '[mock] implementer applying plan via TDD (red-green-refactor)');
+  const srcDir = join(cwd, 'src');
+  const testDir = join(cwd, 'test');
+  await mkdir(srcDir, { recursive: true });
+  await mkdir(testDir, { recursive: true });
+
+  const srcFile = join(srcDir, 'feature.mjs');
+  const testFile = join(testDir, 'feature.test.mjs');
+
+  // Append (not overwrite) so repeated fix cycles keep producing a non-empty diff.
+  const stamp = new Date().toISOString();
+  const srcContent =
+    `// generated by mock implementer @ ${stamp}\n` +
+    `export function feature(input) {\n` +
+    `  if (input == null) throw new Error('input required');\n` +
+    `  return String(input).trim();\n` +
+    `}\n`;
+  if (await exists(srcFile)) {
+    await appendFile(srcFile, `\n// fix pass @ ${stamp}\n`, 'utf8');
+  } else {
+    await writeFile(srcFile, srcContent, 'utf8');
+  }
+
+  const testContent =
+    `// generated by mock implementer @ ${stamp}\n` +
+    `import { feature } from '../src/feature.mjs';\n` +
+    `import assert from 'node:assert';\n` +
+    `assert.equal(feature('  hi '), 'hi');\n` +
+    `assert.throws(() => feature(null));\n`;
+  if (await exists(testFile)) {
+    await appendFile(testFile, `\n// fix pass @ ${stamp}\n`, 'utf8');
+  } else {
+    await writeFile(testFile, testContent, 'utf8');
+  }
+
+  safeEmit(onEvent, { type: 'tool_use', text: `edited ${srcFile} and ${testFile}`, raw: { mock: true } });
+  return `[mock] implemented feature in ${srcFile} with test ${testFile}`;
+}
+
+async function mockReviewer(m, cycle, onEvent) {
+  const mdPath = m.MOCK_OUT;
+  const jsonPath = m.MOCK_JSON;
+  await emitLog(onEvent, `[mock] reviewer reviewing git diff (cycle ${cycle})`);
+
+  // Cycle 1: one major. Cycle >=2: only suggestion. Loop terminates by cycle 2.
+  const review =
+    cycle <= 1
+      ? {
+          summary: 'Implementation works but a major issue needs a fix.',
+          issues: [
+            {
+              severity: 'major',
+              title: 'Unhandled empty-string input',
+              detail: 'feature("") returns "" but the plan expects a thrown error.',
+              location: 'src/feature.mjs',
+            },
+          ],
+        }
+      : {
+          summary: 'Looks good. Only a suggestion remains.',
+          issues: [
+            {
+              severity: 'suggestion',
+              title: 'Add a usage example',
+              detail: 'A short example in the README would help.',
+              location: 'README.md',
+            },
+          ],
+        };
+
+  if (mdPath) {
+    const md =
+      `# Implementation Review (cycle ${cycle})\n\n` +
+      `## Summary\n\n${review.summary}\n\n` +
+      `## Issues\n\n` +
+      review.issues
+        .map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`)
+        .join('\n') +
+      '\n';
+    await ensureDir(mdPath);
+    await writeFile(mdPath, md, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${mdPath}`, raw: { mock: true, file: mdPath } });
+  }
+  if (jsonPath) {
+    await ensureDir(jsonPath);
+    await writeFile(jsonPath, JSON.stringify(review, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${jsonPath}`, raw: { mock: true, file: jsonPath } });
+  }
+  return JSON.stringify(review);
+}

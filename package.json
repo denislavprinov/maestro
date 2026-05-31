@@ -1,0 +1,27 @@
+{
+  "name": "maestro",
+  "version": "0.1.0",
+  "description": "Maestro — deterministic multi-agent pipeline that drives Claude Code (headless) through Plan -> Refine -> Implement -> Review, with a CLI, an installable /maestro skill, and a web UI.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/denislavprinov/maestro.git"
+  },
+  "homepage": "https://github.com/denislavprinov/maestro#readme",
+  "bin": {
+    "maestro": "src/cli/maestro.mjs"
+  },
+  "scripts": {
+    "start": "node ui/server.mjs",
+    "cli": "node src/cli/maestro.mjs",
+    "install:agents": "node scripts/install.mjs",
+    "smoke": "MAESTRO_MOCK=1 node src/cli/maestro.mjs --project examples/sandbox --prompt \"demo task\" --mock --yes"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}

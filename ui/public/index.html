@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Maestro</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>%E2%9A%99%EF%B8%8F</text></svg>"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">maestro</span>
+        <span class="tagline">Plan &rarr; Refine &rarr; Implement &rarr; Review</span>
+      </div>
+      <div class="conn">
+        <span id="ws-dot" class="dot dot-off" title="WebSocket status"></span>
+        <span id="ws-label">disconnected</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- LEFT COLUMN: form + history -->
+      <section class="col col-left">
+        <!-- (1) New pipeline form -->
+        <div class="card">
+          <h2>New pipeline</h2>
+          <form id="run-form" autocomplete="off">
+            <label class="field">
+              <span class="label">Project folder</span>
+              <input
+                id="projectDir"
+                name="projectDir"
+                type="text"
+                placeholder="/absolute/path/to/your/project"
+                spellcheck="false"
+                required
+              />
+              <small class="hint">The orchestrator operates inside this folder.</small>
+            </label>
+
+            <label class="field">
+              <span class="label">Title <em class="opt">(optional)</em></span>
+              <input id="title" name="title" type="text" placeholder="Short name for this run" spellcheck="false" />
+            </label>
+
+            <fieldset class="field source">
+              <legend>Task source</legend>
+              <div class="radio-row">
+                <label class="radio">
+                  <input type="radio" name="source" value="prompt" checked />
+                  <span>Prompt</span>
+                </label>
+                <label class="radio">
+                  <input type="radio" name="source" value="markdown" />
+                  <span>Markdown</span>
+                </label>
+              </div>
+
+              <div id="prompt-pane" class="source-pane">
+                <textarea
+                  id="prompt"
+                  name="prompt"
+                  rows="6"
+                  placeholder="Describe the software task to build..."
+                ></textarea>
+              </div>
+
+              <div id="markdown-pane" class="source-pane hidden">
+                <textarea
+                  id="promptMarkdown"
+                  name="promptMarkdown"
+                  rows="6"
+                  placeholder="Paste a markdown spec, or load a .md file below..."
+                ></textarea>
+                <label class="file-load">
+                  <span class="btn btn-ghost">Load .md file</span>
+                  <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
+                </label>
+                <span id="mdFileName" class="hint"></span>
+              </div>
+            </fieldset>
+
+            <label class="field">
+              <span class="label">Optional extra files</span>
+              <input id="extras" type="file" multiple />
+              <small id="extrasNote" class="hint">Reference files uploaded and copied into the pipeline's extras/ folder.</small>
+            </label>
+
+            <div class="grid-2">
+              <label class="field">
+                <span class="label">Max refine cycles</span>
+                <input id="maxRefine" name="maxRefine" type="number" min="1" value="5" />
+              </label>
+              <label class="field">
+                <span class="label">Max review cycles</span>
+                <input id="maxReview" name="maxReview" type="number" min="1" value="5" />
+              </label>
+            </div>
+
+            <label class="check">
+              <input id="mock" type="checkbox" />
+              <span>Mock mode (no Claude calls, offline dry run)</span>
+            </label>
+
+            <div class="actions">
+              <button type="button" id="install-btn" class="btn btn-ghost" title="Copy agents + /maestro skill into the project's .claude folder">
+                Install agents into this folder
+              </button>
+              <button type="submit" id="start-btn" class="btn btn-primary">Start</button>
+            </div>
+            <p id="form-msg" class="form-msg" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <!-- (6) History -->
+        <div class="card">
+          <div class="card-head">
+            <h2>History</h2>
+            <button type="button" id="refresh-history" class="btn btn-mini">Refresh</button>
+          </div>
+          <ul id="history" class="history">
+            <li class="empty">Enter a project folder to load history.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN: tracker + question + log -->
+      <section class="col col-right">
+        <!-- (2) Steps tracker -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Pipeline</h2>
+            <div class="run-meta">
+              <span id="run-status" class="badge">idle</span>
+              <button type="button" id="stop-btn" class="btn btn-danger" disabled>Stop</button>
+            </div>
+          </div>
+          <ol id="steps" class="steps">
+            <li class="step" data-step="preflight"><span class="num">1</span><span class="name">Preflight</span></li>
+            <li class="step" data-step="plan"><span class="num">2</span><span class="name">Plan</span></li>
+            <li class="step" data-step="refine"><span class="num">3</span><span class="name">Refine</span><em class="cycle" data-cycle></em></li>
+            <li class="step" data-step="implement"><span class="num">4</span><span class="name">Implement</span></li>
+            <li class="step" data-step="review"><span class="num">5</span><span class="name">Review</span><em class="cycle" data-cycle></em></li>
+            <li class="step" data-step="done"><span class="num">6</span><span class="name">Done</span></li>
+          </ol>
+        </div>
+
+        <!-- (4) Question panel -->
+        <div id="question-card" class="card question-card hidden">
+          <div class="card-head">
+            <h2 id="question-title">Input needed</h2>
+            <span id="question-kind" class="badge"></span>
+          </div>
+          <div id="question-body"></div>
+        </div>
+
+        <!-- (3) Live log window -->
+        <div class="card log-card">
+          <div class="card-head">
+            <h2>Live log</h2>
+            <div class="log-controls">
+              <label class="check check-inline">
+                <input id="autoscroll" type="checkbox" checked />
+                <span>Auto-scroll</span>
+              </label>
+              <button type="button" id="clear-log" class="btn btn-mini">Clear</button>
+            </div>
+          </div>
+          <div id="log" class="log" role="log" aria-live="polite"></div>
+        </div>
+
+        <!-- saved-markdown viewer -->
+        <div id="viewer-card" class="card hidden">
+          <div class="card-head">
+            <h2 id="viewer-title">Saved pipeline</h2>
+            <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+          </div>
+          <pre id="viewer" class="viewer"></pre>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
