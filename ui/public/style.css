@@ -280,7 +280,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .form-msg.err{color:var(--red-ink);}
 
 /* ---------- Pipeline config ---------- */
-.stage-cfg{display:flex;align-items:center;gap:16px;padding:15px 0;border-top:1px solid var(--line);}
+.stage-cfg{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:15px 0;border-top:1px solid var(--line);}
 .stage-cfg:first-of-type{border-top:none;padding-top:4px;}
 .stage-cfg .acc{width:10px;height:38px;border-radius:6px;flex:0 0 auto;}
 .stage-cfg .meta{flex:1;min-width:0;}
@@ -296,7 +296,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .step-config{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}
 .step-config select{width:auto;font-size:12.5px;padding:8px 30px 8px 11px;border-radius:10px;background:#fff;border-color:var(--line-2);}
 .step-config select:disabled{opacity:.6;cursor:not-allowed;}
-.step-current{width:100%;color:var(--ink-3);font-size:11.5px;}
+.step-current{flex-basis:100%;width:100%;text-align:right;margin-top:2px;color:var(--ink-3);font-size:11.5px;}
 
 /* ---------- Live log ---------- */
 .log-card .card-head{margin-bottom:14px;}

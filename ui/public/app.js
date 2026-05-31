@@ -1548,8 +1548,12 @@ async function loadHistDetail(projectDir, id, detail) {
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`);
     const data = await safeJson(res);
-    if (!res.ok || !data || !data.state) {
+    if (!res.ok) {
       throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    if (!data || !data.state) {
+      // 200 but no saved state.json yet (e.g. an in-progress run not persisted).
+      throw new Error('no saved details for this pipeline yet');
     }
     // A prior failed expand may have left a "Could not load details…" note in
     // this card. On a successful retry, clear it so the stepper isn't shown
