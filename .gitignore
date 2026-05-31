@@ -1,5 +1,5 @@
 node_modules
 examples/sandbox
-ai-artifacts/pipelines/*/
+ai-artifacts/
 *.log
 graphify-out/
