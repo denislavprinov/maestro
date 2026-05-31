@@ -73,10 +73,9 @@ Phases, in order, driven by the deterministic orchestrator state machine:
    **always use graphify**.
 2. **git checkpoint** — ensure the target project is a git repo (`git init` + initial
    commit if none); record a checkpoint ref so the reviewer can diff against it.
-3. **plan (planner)** — clarify loop then plan.
-   - **clarify loop:** planner asks conceptual questions whenever it would otherwise
-     assume. Each question has exactly **3 options + a free-text field**. Re-run clarify
-     until no questions remain. Persist the Q&A.
+3. **plan (planner)** — single clarify round then plan.
+   - **clarify:** planner asks one round of conceptual questions whenever it would otherwise
+     assume. Each question has exactly **3 options + a free-text field**. Persist the Q&A.
    - **plan:** planner writes the plan markdown (must include code snippets) and appends
      a `## Clarifications (Q&A)` section with what was asked and answered.
 4. **refine loop (plan-refiner)** — `cycle++`; refiner reviews the latest plan
@@ -340,8 +339,8 @@ EventEmitter state machine sequencing all phases + loops + gates.
 1. **preflight** -> `detectTools(projectDir)`.
 2. **ensure target git repo** — `git init` + initial commit if none; record checkpoint
    ref (used as the diff base for review).
-3. **planner clarify loop** — emit `question` with `kind:"clarify"`; on answers, persist
-   Q&A and re-run clarify until `questions` is empty.
+3. **planner clarify (single round)** — emit `question` with `kind:"clarify"`; on answers, persist
+   Q&A.
 4. **planner plan** — write the plan (base name derived once; version 1).
 5. **refine loop** — `cycle++`; `runRefiner`; if `!hasBlocking(review)` => stop the
    loop; if `cycle > maxRefineCycles`, emit `question` with `kind:"gate"` + the

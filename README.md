@@ -146,10 +146,10 @@ Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 
 ---
 
-## The loops
+## The phases and loops
 
-- **Clarify loop** — planner re-asks until there are no open questions; answers are
-  persisted and appended to the plan.
+- **Clarify** — planner asks one round of conceptual questions (up to four) before
+  planning; answers are persisted and appended to the plan.
 - **Refine loop** — Refiner runs repeatedly. It stops when no `critical`/`major` issues
   remain. Past `--max-refine` (default 5) cycles it asks you to **continue** or approve
   **another** cycle, escalating indefinitely.
