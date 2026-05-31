@@ -705,3 +705,35 @@ fieldset.source legend {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Project selector + inline add-form */
+.project-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.project-row select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.add-project {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 8px;
+  background: var(--bg-code, #f6f8fa);
+}
+.add-project.hidden {
+  display: none;
+}
+.add-project-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.hint.err {
+  color: var(--bad, #f85149);
+}

@@ -11,6 +11,7 @@ const state = {
   wsReady: false,
   runId: null, // currently-tracked run
   projectDir: '',
+  projects: [], // saved {name, path, exists} registry, loaded from /api/projects
   pendingQuestion: null, // last unanswered question {id, kind, ...}
   status: 'idle',
 };
@@ -23,7 +24,15 @@ const el = {
   wsLabel: $('#ws-label'),
 
   form: $('#run-form'),
-  projectDir: $('#projectDir'),
+  projectSelect: $('#projectSelect'),
+  projectDelete: $('#project-delete'),
+  projectHint: $('#projectHint'),
+  addProject: $('#add-project'),
+  newProjectName: $('#newProjectName'),
+  newProjectPath: $('#newProjectPath'),
+  addProjectSave: $('#addProjectSave'),
+  addProjectCancel: $('#addProjectCancel'),
+  addProjectMsg: $('#addProjectMsg'),
   title: $('#title'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
@@ -621,11 +630,154 @@ async function collectExtras() {
   return out;
 }
 
-el.projectDir.addEventListener('change', () => {
-  const dir = el.projectDir.value.trim();
-  if (dir) {
-    state.projectDir = dir;
-    loadHistory(dir);
+// ---------------------------------------------------------------------------
+// Project registry: dropdown + inline add-form + delete.
+// ---------------------------------------------------------------------------
+const LAST_PROJECT_KEY = 'maestro.lastProject';
+
+function selectedProjectPath() {
+  const v = el.projectSelect.value;
+  return !v || v === '__add__' ? '' : v;
+}
+
+function selectedProjectName() {
+  const opt = el.projectSelect.selectedOptions && el.projectSelect.selectedOptions[0];
+  return opt && opt.dataset ? opt.dataset.name || '' : '';
+}
+
+async function loadProjects(selectName) {
+  try {
+    const res = await fetch('/api/projects');
+    const data = await safeJson(res);
+    state.projects = data && Array.isArray(data.projects) ? data.projects : [];
+  } catch {
+    state.projects = [];
+  }
+  renderProjectOptions(selectName);
+}
+
+function renderProjectOptions(selectName) {
+  const want = selectName || localStorage.getItem(LAST_PROJECT_KEY) || '';
+  el.projectSelect.innerHTML = '';
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.textContent = state.projects.length ? 'Select a project…' : 'No projects yet';
+  el.projectSelect.appendChild(placeholder);
+
+  state.projects.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.path;
+    opt.dataset.name = p.name;
+    opt.textContent = p.exists ? p.name : `${p.name} (missing)`;
+    el.projectSelect.appendChild(opt);
+  });
+
+  const add = document.createElement('option');
+  add.value = '__add__';
+  add.textContent = '+ Add project…';
+  el.projectSelect.appendChild(add);
+
+  // Restore by index (not value) so duplicate paths can't pick the wrong name.
+  const idx = state.projects.findIndex((p) => p.name === want);
+  if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+  else placeholder.selected = true;
+
+  onProjectChanged();
+}
+
+function onProjectChanged() {
+  const path = selectedProjectPath();
+  el.projectDelete.disabled = !path;
+  if (path) {
+    state.projectDir = path;
+    localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
+    loadHistory(path);
+  } else {
+    state.projectDir = '';
+  }
+}
+
+el.projectSelect.addEventListener('change', () => {
+  if (el.projectSelect.value === '__add__') {
+    openAddProject();
+    return;
+  }
+  hideAddProject();
+  onProjectChanged();
+});
+
+function openAddProject() {
+  el.addProject.classList.remove('hidden');
+  el.newProjectName.value = '';
+  el.newProjectPath.value = '';
+  setAddMsg('');
+  el.newProjectName.focus();
+}
+
+function hideAddProject() {
+  el.addProject.classList.add('hidden');
+}
+
+function setAddMsg(text, kind) {
+  el.addProjectMsg.textContent = text || '';
+  el.addProjectMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+el.addProjectCancel.addEventListener('click', () => {
+  hideAddProject();
+  renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');
+});
+
+el.addProjectSave.addEventListener('click', async () => {
+  const name = el.newProjectName.value.trim();
+  const projPath = el.newProjectPath.value.trim();
+  if (!name) return setAddMsg('Name is required.', 'err');
+  if (!projPath) return setAddMsg('Path is required.', 'err');
+  el.addProjectSave.disabled = true;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path: projPath }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      setAddMsg(data.error || `HTTP ${res.status}`, 'err');
+      return;
+    }
+    state.projects = Array.isArray(data.projects) ? data.projects : state.projects;
+    hideAddProject();
+    renderProjectOptions(name); // auto-select the newly added project
+  } catch (e) {
+    setAddMsg(e.message, 'err');
+  } finally {
+    el.addProjectSave.disabled = false;
+  }
+});
+
+el.projectDelete.addEventListener('click', async () => {
+  const name = selectedProjectName();
+  if (!name) return;
+  if (!confirm(`Remove "${name}" from the project list? Files on disk are not touched.`)) return;
+  el.projectDelete.disabled = true;
+  try {
+    const res = await fetch(`/api/projects?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      setFormMsg(`Delete failed: ${data.error || res.status}`, 'err');
+      el.projectDelete.disabled = false;
+      return;
+    }
+    state.projects = Array.isArray(data.projects) ? data.projects : [];
+    if (localStorage.getItem(LAST_PROJECT_KEY) === name) localStorage.removeItem(LAST_PROJECT_KEY);
+    state.projectDir = '';
+    el.history.innerHTML = '<li class="empty">Select a project to load history.</li>';
+    renderProjectOptions('');
+  } catch (e) {
+    setFormMsg(`Delete error: ${e.message}`, 'err');
+    el.projectDelete.disabled = false;
   }
 });
 
@@ -636,8 +788,8 @@ el.form.addEventListener('submit', async (e) => {
   e.preventDefault();
   setFormMsg('', '');
 
-  const projectDir = el.projectDir.value.trim();
-  if (!projectDir) return setFormMsg('Project folder is required.', 'err');
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return setFormMsg('Select a project first (or add one).', 'err');
 
   const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
   const promptText = el.prompt.value.trim();
@@ -762,8 +914,8 @@ el.stopBtn.addEventListener('click', async () => {
 // Install agents
 // ---------------------------------------------------------------------------
 el.installBtn.addEventListener('click', async () => {
-  const projectDir = el.projectDir.value.trim();
-  if (!projectDir) return setFormMsg('Enter the project folder first.', 'err');
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return setFormMsg('Select a project first.', 'err');
   el.installBtn.disabled = true;
   setFormMsg('Installing agents + /maestro skill...', '');
   try {
@@ -797,9 +949,9 @@ el.clearLog.addEventListener('click', () => {
 // History
 // ---------------------------------------------------------------------------
 el.refreshHistory.addEventListener('click', () => {
-  const dir = el.projectDir.value.trim();
+  const dir = selectedProjectPath();
   if (dir) loadHistory(dir);
-  else setFormMsg('Enter the project folder to load history.', 'err');
+  else setFormMsg('Select a project to load history.', 'err');
 });
 
 async function loadHistory(projectDir) {
@@ -909,4 +1061,5 @@ function fmtDate(v) {
 syncSourceToggle();
 setWsStatus(false);
 setRunStatus('idle');
+loadProjects();
 connectWS();

@@ -31,16 +31,33 @@
           <h2>New pipeline</h2>
           <form id="run-form" autocomplete="off">
             <label class="field">
-              <span class="label">Project folder</span>
-              <input
-                id="projectDir"
-                name="projectDir"
-                type="text"
-                placeholder="/absolute/path/to/your/project"
-                spellcheck="false"
-                required
-              />
-              <small class="hint">The orchestrator operates inside this folder.</small>
+              <span class="label">Project</span>
+              <div class="project-row">
+                <select id="projectSelect" name="projectSelect">
+                  <option value="" disabled selected>No projects yet</option>
+                  <option value="__add__">+ Add project&hellip;</option>
+                </select>
+                <button
+                  type="button"
+                  id="project-delete"
+                  class="btn btn-mini"
+                  title="Remove the selected project from the list"
+                  disabled
+                >
+                  &#10005;
+                </button>
+              </div>
+              <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
+
+              <div id="add-project" class="add-project hidden">
+                <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
+                <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                <div class="add-project-actions">
+                  <button type="button" id="addProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
+                  <button type="button" id="addProjectSave" class="btn btn-primary btn-mini">Save</button>
+                </div>
+                <small class="hint" id="addProjectMsg"></small>
+              </div>
             </label>
 
             <label class="field">
@@ -124,7 +141,7 @@
             <button type="button" id="refresh-history" class="btn btn-mini">Refresh</button>
           </div>
           <ul id="history" class="history">
-            <li class="empty">Enter a project folder to load history.</li>
+            <li class="empty">Select a project to load history.</li>
           </ul>
         </div>
       </section>
