@@ -522,10 +522,13 @@ class Orchestrator extends EventEmitter {
       this._log(role, 'info', text);
       return;
     }
-    // Surface tool activity even without text.
-    if (e.type && e.type !== 'assistant') {
-      const t = e.raw?.file ? `${e.type}: ${e.raw.file}` : e.type;
-      this._log(role, 'debug', t);
+    // No human-readable text. Rather than echo the bare stream-json envelope
+    // type (the old noisy `[planner] user` / `[planner] system` lines), surface
+    // the concrete tool calls the agent made this turn. Contentless envelope
+    // events — tool_result echoes (`user`) and the init `system` event — carry
+    // no information and are dropped.
+    for (const call of describeToolUses(e.raw, this.projectDir)) {
+      this._log(role, 'debug', `→ ${call}`);
     }
   }
 
@@ -751,6 +754,61 @@ function rel(base, p) {
   const b = resolve(base);
   const full = resolve(p);
   return full.startsWith(b + '/') ? full.slice(b.length + 1) : full;
+}
+
+/**
+ * Describe the tool calls in a stream-json `assistant` event as readable
+ * one-liners (e.g. `Read src/app.js`, `Bash npm test`). Returns [] for events
+ * with no tool_use blocks — tool_result echoes, the system init event — so the
+ * caller drops them instead of logging a contentless envelope type.
+ */
+function describeToolUses(raw, projectDir) {
+  const content = raw?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const calls = [];
+  for (const c of content) {
+    if (c?.type === 'tool_use' && typeof c.name === 'string') {
+      const target = toolTarget(c.name, c.input, projectDir);
+      calls.push(target ? `${c.name} ${target}` : c.name);
+    }
+  }
+  return calls;
+}
+
+/** A short, human-readable target for a tool call (file, command, pattern…). */
+function toolTarget(name, input, projectDir) {
+  if (!input || typeof input !== 'object') return '';
+  switch (name) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'NotebookEdit':
+      return rel(projectDir, input.file_path || input.path || input.notebook_path || '');
+    case 'Bash':
+      return clip(input.command, 80);
+    case 'Grep':
+      return input.pattern
+        ? `"${input.pattern}"${input.path ? ' ' + rel(projectDir, input.path) : ''}`
+        : '';
+    case 'Glob':
+      return input.pattern || '';
+    case 'Task':
+    case 'Agent':
+      return clip(input.description || input.prompt, 60);
+    case 'WebFetch':
+    case 'WebSearch':
+      return clip(input.url || input.query, 60);
+    default:
+      return '';
+  }
+}
+
+/** Collapse whitespace and truncate to n chars with an ellipsis. */
+function clip(text, n) {
+  if (!text) return '';
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
 /**
