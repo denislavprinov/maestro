@@ -9,14 +9,12 @@ const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel
 const state = {
   ws: null,
   wsReady: false,
-  runId: null, // currently-tracked run
+  helloSubscribed: new Set(), // runIds we've already sent a backfill subscribe for this socket
   projectDir: '',
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
-  pendingQuestion: null, // last unanswered question {id, kind, ...}
-  status: 'idle',
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -85,14 +83,11 @@ function connectWS() {
 
   ws.addEventListener('open', () => {
     state.wsReady = true;
+    // A reconnect yields a fresh `hello`; backfill subscribes are driven from
+    // there (handleServerMessage), not re-sent here. Reset the per-socket
+    // dedupe set so the new socket re-subscribes to still-live runs.
+    state.helloSubscribed = new Set();
     setWsStatus(true);
-    if (state.runId) {
-      try {
-        ws.send(JSON.stringify({ type: 'subscribe', runId: state.runId }));
-      } catch {
-        /* ignore */
-      }
-    }
   });
 
   ws.addEventListener('message', (e) => {
@@ -135,45 +130,103 @@ function setWsStatus(on) {
 }
 
 // ---------------------------------------------------------------------------
-// Server message router. We only act on events for the run we're tracking.
+// Server message router. Multi-run: every run's events arrive here (the server
+// broadcasts every run to every socket). Each event carries its own runId; we
+// fan it out to the matching per-run model.
 // ---------------------------------------------------------------------------
 function handleServerMessage(msg) {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'hello') {
-    // server greeting; nothing required.
+    onHello(msg);
     return;
   }
 
-  // Only react to events for the active run.
-  if (msg.runId && state.runId && msg.runId !== state.runId) return;
-  if (!state.runId && msg.runId) state.runId = msg.runId;
+  // Tagged per-run event. Ignore anything without a runId.
+  if (!msg.runId) return;
+  const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
     case 'phase':
-      onPhase(msg);
+      onPhase(r, msg);
       break;
     case 'log':
-      appendLog(msg);
+      onLog(r, msg);
       break;
     case 'question':
-      onQuestion(msg);
+      onQuestion(r, msg);
       break;
     case 'artifact':
-      onArtifact(msg);
+      onArtifact(r, msg);
       break;
     case 'state':
-      onState(msg);
+      onState(r, msg);
       break;
     case 'done':
-      onDone(msg);
+      onDone(r, msg);
       break;
     case 'error':
-      onError(msg);
+      onError(r, msg);
       break;
     default:
       break;
   }
+
+  updateNavCounts();
+  // If the user is already on the Running view, build/repaint cards now.
+  // Without this, a run this tab didn't start (begun in another tab or via the
+  // /maestro CLI — the server sends `hello` only once per socket and broadcasts
+  // later runs purely as tagged events) would bump the nav badge but never
+  // render a card until the user navigated away and back. renderRunningView
+  // diffs by data-run-id and reuses r.el, so this is cheap + idempotent.
+  if (currentView() === 'running') renderRunningView();
+}
+
+// hello greeting carries the server's authoritative run list. We upsert each
+// into our map, backfill-subscribe to non-terminal runs whose buffer we don't
+// yet have, and refresh whatever view is showing.
+function onHello(msg) {
+  const ws = state.ws;
+  const list = Array.isArray(msg.runs) ? msg.runs : [];
+  for (const r0 of list) {
+    if (!r0 || !r0.runId) continue;
+    upsertRun({
+      runId: r0.runId,
+      title: r0.title,
+      projectDir: r0.projectDir,
+      status: r0.status,
+      startedAt: r0.startedAt,
+      pendingQuestion: r0.pendingQuestion || null,
+    });
+
+    const nonTerminal =
+      r0.status === 'starting' || r0.status === 'running' || (r0.pendingQuestion != null);
+    // Backfill that run's buffered events exactly once per socket. (Runs started
+    // by THIS tab already stream live via broadcast and were not in any prior
+    // hello, so they get subscribed here only if a reconnect re-lists them.)
+    if (nonTerminal && ws && state.wsReady && !state.helloSubscribed.has(r0.runId)) {
+      state.helloSubscribed.add(r0.runId);
+      try {
+        ws.send(JSON.stringify({ type: 'subscribe', runId: r0.runId }));
+      } catch {
+        /* ignore */
+      }
+    }
+    // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
+  }
+
+  updateNavCounts();
+  const cur = currentView();
+  if (cur === 'running') renderRunningView();
+  if (cur === 'history') {
+    const d = selectedProjectPath();
+    if (d) loadHistory(d);
+  }
+}
+
+function currentView() {
+  const h = location.hash.slice(1);
+  return VIEW_NAMES.includes(h) ? h : 'new';
 }
 
 // ---------------------------------------------------------------------------
@@ -198,63 +251,90 @@ function normalizePhase(phase) {
   return null;
 }
 
-function onPhase(msg) {
+// ---------------------------------------------------------------------------
+// Multi-run engine: per-run model + Map. Each run renders into one card in the
+// Running view; events are fanned out by handleServerMessage.
+// ---------------------------------------------------------------------------
+const runs = new Map();
+
+function nowHMS() {
+  const d = new Date();
+  return d.toTimeString().slice(0, 8);
+}
+
+function makeRun({ runId, title, projectDir, status = 'running', startedAt, local = false, pendingQuestion = null }) {
+  return {
+    runId,
+    title: title || '(untitled)',
+    projectDir: projectDir || '',
+    status,
+    startedAt: startedAt || nowHMS(),
+    local,
+    maxStepIdx: -1,
+    phaseKey: 'preflight',
+    cycle: 0,
+    phaseStatus: '',
+    pendingQuestion,
+    configSnapshot: null,
+    logLines: [],
+    el: null,
+    _finished: false,
+  };
+}
+
+// Upsert a run model. Only assigns DEFINED keys from the partial, and callers
+// must never pass logLines/el/configSnapshot in a partial — those heavy/DOM
+// fields are owned locally and must not be clobbered by a hello/tagged event.
+function upsertRun(partial) {
+  let r = runs.get(partial.runId);
+  if (!r) {
+    r = makeRun(partial);
+    runs.set(partial.runId, r);
+  } else {
+    for (const k of Object.keys(partial)) {
+      if (partial[k] !== undefined) r[k] = partial[k];
+    }
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// Per-run event handlers
+// ---------------------------------------------------------------------------
+function onPhase(r, msg) {
   const key = normalizePhase(msg.phase);
-  if (key) setActiveStep(key, msg.cycle, msg.status);
-  // Also surface phase transitions in the log for visibility.
+  if (key) {
+    const idx = STEP_ORDER.indexOf(key);
+    if (idx > r.maxStepIdx) r.maxStepIdx = idx;
+    r.phaseKey = key;
+    if (msg.cycle) r.cycle = msg.cycle;
+    r.phaseStatus = msg.status || '';
+  }
+  // The "done" phase marks all steps complete.
+  if (key === 'done' || (msg.phase && String(msg.phase).toLowerCase().includes('done'))) {
+    r.maxStepIdx = STEP_ORDER.indexOf('done');
+    r.phaseKey = 'done';
+  }
+  // Surface the phase transition in the run's log.
   const cyc = msg.cycle ? ` #${msg.cycle}` : '';
   const st = msg.status ? ` (${msg.status})` : '';
-  appendLog({ source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
-
-  if (key === 'done' || (msg.phase && String(msg.phase).toLowerCase().includes('done'))) {
-    markAllDoneUpTo('done');
-  }
+  onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
+  paintRunCard(r);
 }
 
-// Furthest step index reached this run. The review->fix loop legitimately emits
-// implement passes between reviews; without this, the tracker would un-mark the
-// already-completed Review step and appear to jump backward each fix cycle.
-let maxStepIdx = -1;
-
-function setActiveStep(key, cycle, status) {
-  const idx = STEP_ORDER.indexOf(key);
-  if (idx > maxStepIdx) maxStepIdx = idx;
-  $$('.step', el.steps).forEach((node) => {
-    const step = node.dataset.step;
-    const sIdx = STEP_ORDER.indexOf(step);
-    node.classList.remove('active', 'done');
-    // Mark done everything strictly before the furthest step reached so a later
-    // implement fix-pass does not visually regress completed steps.
-    if (sIdx >= 0 && sIdx < maxStepIdx) node.classList.add('done');
-  });
-  const active = $(`.step[data-step="${key}"]`, el.steps);
-  if (active) {
-    if (status === 'done' || status === 'complete' || status === 'passed') {
-      active.classList.add('done');
-    } else {
-      active.classList.add('active');
+function onState(r, msg) {
+  if (msg.status) r.status = msg.status;
+  if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg.phase) {
+    const key = normalizePhase(msg.phase);
+    if (key) {
+      const idx = STEP_ORDER.indexOf(key);
+      if (idx > r.maxStepIdx) r.maxStepIdx = idx;
+      r.phaseKey = key;
     }
-    const cyEl = $('.cycle', active);
-    if (cyEl) cyEl.textContent = cycle ? `#${cycle}` : '';
   }
-}
-
-function markAllDoneUpTo(key) {
-  const idx = STEP_ORDER.indexOf(key);
-  $$('.step', el.steps).forEach((node) => {
-    const sIdx = STEP_ORDER.indexOf(node.dataset.step);
-    node.classList.remove('active');
-    if (sIdx <= idx) node.classList.add('done');
-  });
-}
-
-function resetSteps() {
-  maxStepIdx = -1;
-  $$('.step', el.steps).forEach((node) => {
-    node.classList.remove('active', 'done');
-    const cyEl = $('.cycle', node);
-    if (cyEl) cyEl.textContent = '';
-  });
+  if (msg.cycle) r.cycle = msg.cycle;
+  paintRunCard(r);
 }
 
 // ---------------------------------------------------------------------------
@@ -393,11 +473,11 @@ el.pipelineConfig.addEventListener('change', (e) => {
 // ---------------------------------------------------------------------------
 // Log window
 // ---------------------------------------------------------------------------
-function appendLog({ source, level, text, ts }) {
-  // The global log surface was removed; per-card logging arrives in Task 3.
-  // Guard so any stray call (e.g. from a WS message) cannot throw.
-  if (!el.log) return;
-  if (text === undefined || text === null) return;
+const MAX_LOG_LINES = 4000;
+
+// Build one .log-line node from a normalized log record. (Same DOM shape the
+// old global appendLog produced: ts/src/msg spans + lvl class.)
+function buildLogLine({ source, level, text, ts }) {
   const line = document.createElement('div');
   line.className = 'log-line lvl-' + (level || 'info');
 
@@ -414,13 +494,45 @@ function appendLog({ source, level, text, ts }) {
   m.textContent = String(text);
 
   line.append(t, s, m);
-  el.log.appendChild(line);
+  return line;
+}
 
-  // cap rendered lines to keep DOM light
-  const MAX = 4000;
-  while (el.log.childElementCount > MAX) el.log.removeChild(el.log.firstChild);
+// Per-run log: push to the model and, if the card is mounted, append the line.
+function onLog(r, msg) {
+  const text = msg.text;
+  if (text === undefined || text === null) return;
+  const rec = { ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text };
+  r.logLines.push(rec);
+  if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
 
-  if (el.autoscroll.checked) el.log.scrollTop = el.log.scrollHeight;
+  if (r.el) {
+    const logEl = r.el.querySelector('.log');
+    if (logEl) {
+      logEl.appendChild(buildLogLine(rec));
+      while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
+      const sw = r.el.querySelector('.switch.autoscroll');
+      if (sw && sw.classList.contains('on')) logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+}
+
+function onArtifact(r, msg) {
+  onLog(r, {
+    source: 'artifact',
+    level: 'artifact',
+    text: `${msg.kind || 'file'}: ${msg.path || ''}`,
+    ts: Date.now(),
+  });
+}
+
+// Non-run-scoped UI notices (config/answer/install errors). There is no global
+// log surface anymore, so route these to the console; keep the {source,level,
+// text,ts} shape for call-site compatibility.
+function appendLog({ source, level, text }) {
+  if (text === undefined || text === null) return;
+  const tag = source ? `[${source}]` : '';
+  if (level === 'error') console.error(`maestro ${tag} ${text}`);
+  else console.log(`maestro ${tag} ${text}`);
 }
 
 function fmtTime(ts) {
@@ -431,270 +543,62 @@ function fmtTime(ts) {
   return `${hh}:${mm}:${ss}`;
 }
 
-function onArtifact(msg) {
-  appendLog({
-    source: 'artifact',
-    level: 'artifact',
-    text: `${msg.kind || 'file'}: ${msg.path || ''}`,
-    ts: Date.now(),
-  });
+// ---------------------------------------------------------------------------
+// Questions (clarify) and gates. Task 4 builds the full inline qpanel content;
+// here we just store the pending question + repaint (which toggles .attention
+// and paints the paused stepper via paintRunCard).
+// ---------------------------------------------------------------------------
+function onQuestion(r, msg) {
+  r.pendingQuestion = msg;
+  paintRunCard(r);
 }
 
 // ---------------------------------------------------------------------------
-// State snapshot
+// Done / error — converge to a single idempotent terminal path.
+//
+// The server fires BOTH `error` and `done` on an error, and a stop emits
+// state(stopped) -> done. finishRun is guarded by r._finished so the second
+// call no-ops. On finish we paint the terminal stepper, drop the card from the
+// live view, refresh History for that project, then client-evict the heavy
+// fields (logLines/el) while keeping the model in the map so a duplicate
+// hello/event won't recreate it fresh.
 // ---------------------------------------------------------------------------
-function onState(msg) {
-  if (msg.status) setRunStatus(msg.status);
-  // If snapshot carries phase/cycle, reflect it.
-  if (msg.phase) {
-    const key = normalizePhase(msg.phase);
-    if (key) setActiveStep(key, msg.cycle, msg.phaseStatus);
-  }
-}
+function finishRun(r, status) {
+  if (r._finished) return;
+  r._finished = true;
+  r.status = status;
+  r.pendingQuestion = null;
 
-// ---------------------------------------------------------------------------
-// Questions (clarify) and gates
-// ---------------------------------------------------------------------------
-function onQuestion(msg) {
-  state.pendingQuestion = msg;
-  setRunStatus('waiting');
-  // The global question card was removed; per-run qpanel rendering is Task 3.
-  // Bail before touching the (gone) question DOM so a real WS question can't throw.
-  if (!el.questionCard) return;
-  if (msg.kind === 'gate') {
-    renderGate(msg);
-  } else {
-    renderClarify(msg);
-  }
-  showQuestionCard(true);
-}
-
-function showQuestionCard(show) {
-  // Global question card removed; per-run qpanel arrives in Task 3.
-  if (!el.questionCard) return;
-  el.questionCard.classList.toggle('hidden', !show);
-  if (show) el.questionCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function renderClarify(msg) {
-  el.questionTitle.textContent = 'Clarification needed';
-  el.questionKind.textContent = 'clarify';
-  el.questionKind.className = 'badge waiting';
-  el.questionBody.innerHTML = '';
-
-  const questions = Array.isArray(msg.questions) ? msg.questions : [];
-  // Per-question selected choice store.
-  const selections = new Map();
-
-  if (questions.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'gate-intro';
-    p.textContent = 'The planner asked for input but provided no questions. You may submit an empty answer to continue.';
-    el.questionBody.appendChild(p);
-  }
-
-  questions.forEach((q, qi) => {
-    const qid = q.id != null ? q.id : `q${qi}`;
-    const block = document.createElement('div');
-    block.className = 'q-block';
-
-    const qh = document.createElement('p');
-    qh.className = 'q-question';
-    qh.textContent = q.question || `Question ${qi + 1}`;
-    block.appendChild(qh);
-
-    const opts = document.createElement('div');
-    opts.className = 'q-options';
-    // Filter empty option slots: the clarify contract pads to 3 slots with '',
-    // so a question with 1-2 real options would otherwise render blank buttons.
-    const options = (Array.isArray(q.options) ? q.options : []).filter((o) => o && o.trim());
-    options.forEach((opt) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'q-option';
-      b.textContent = opt;
-      b.addEventListener('click', () => {
-        selections.set(qid, opt);
-        // clear free text when an option is picked
-        if (free) free.value = '';
-        $$('.q-option', opts).forEach((o) => o.classList.remove('selected'));
-        b.classList.add('selected');
-      });
-      opts.appendChild(b);
-    });
-    block.appendChild(opts);
-
-    // free-text alternative
-    const lbl = document.createElement('label');
-    lbl.className = 'q-free-label';
-    lbl.textContent = q.allowFreeText === false ? 'Other (free text):' : 'Or type your own answer:';
-    block.appendChild(lbl);
-
-    const freeRow = document.createElement('div');
-    freeRow.className = 'q-free';
-    const free = document.createElement('input');
-    free.type = 'text';
-    free.placeholder = 'Type a custom answer...';
-    free.addEventListener('input', () => {
-      if (free.value.trim()) {
-        selections.set(qid, free.value);
-        $$('.q-option', opts).forEach((o) => o.classList.remove('selected'));
-      } else {
-        selections.delete(qid);
-      }
-    });
-    freeRow.appendChild(free);
-    block.appendChild(freeRow);
-
-    // stash references for submit
-    block._qid = qid;
-    block._question = q.question || '';
-    block._getChoice = () => (selections.has(qid) ? selections.get(qid) : (free.value.trim() || ''));
-    el.questionBody.appendChild(block);
-  });
-
-  const row = document.createElement('div');
-  row.className = 'q-submit-row';
-  const submit = document.createElement('button');
-  submit.type = 'button';
-  submit.className = 'btn btn-primary';
-  submit.textContent = 'Submit answers';
-  submit.addEventListener('click', () => {
-    const answers = $$('.q-block', el.questionBody).map((b) => ({
-      id: b._qid,
-      question: b._question,
-      choice: b._getChoice(),
-    }));
-    sendAnswer(msg.id, { answers });
-  });
-  row.appendChild(submit);
-  el.questionBody.appendChild(row);
-}
-
-function renderGate(msg) {
-  el.questionTitle.textContent = 'Cycle gate';
-  el.questionKind.textContent = 'gate';
-  el.questionKind.className = 'badge waiting';
-  el.questionBody.innerHTML = '';
-
-  const intro = document.createElement('p');
-  intro.className = 'gate-intro';
-  intro.textContent =
-    'The maximum number of cycles was reached and there are still open critical/major issues. Choose how to proceed.';
-  el.questionBody.appendChild(intro);
-
-  const issues = Array.isArray(msg.issues) ? msg.issues : [];
-  if (issues.length) {
-    const ul = document.createElement('ul');
-    ul.className = 'issues';
-    issues.forEach((iss) => {
-      const li = document.createElement('li');
-      const sev = (iss.severity || 'minor').toLowerCase();
-      li.className = `issue sev-${sev}`;
-
-      const head = document.createElement('div');
-      head.className = 'issue-head';
-      const sevTag = document.createElement('span');
-      sevTag.className = 'issue-sev';
-      sevTag.textContent = sev;
-      const title = document.createElement('span');
-      title.className = 'issue-title';
-      title.textContent = iss.title || '(untitled issue)';
-      head.append(sevTag, title);
-      li.appendChild(head);
-
-      if (iss.detail) {
-        const d = document.createElement('p');
-        d.className = 'issue-detail';
-        d.textContent = iss.detail;
-        li.appendChild(d);
-      }
-      if (iss.location) {
-        const loc = document.createElement('div');
-        loc.className = 'issue-loc';
-        loc.textContent = iss.location;
-        li.appendChild(loc);
-      }
-      ul.appendChild(li);
-    });
-    el.questionBody.appendChild(ul);
-  } else {
-    const none = document.createElement('p');
-    none.className = 'gate-intro';
-    none.textContent = 'No issue details were provided.';
-    el.questionBody.appendChild(none);
-  }
-
-  const actions = document.createElement('div');
-  actions.className = 'gate-actions';
-
-  const continueBtn = document.createElement('button');
-  continueBtn.type = 'button';
-  continueBtn.className = 'btn';
-  continueBtn.textContent = "Don't have another cycle and continue";
-  continueBtn.addEventListener('click', () => sendAnswer(msg.id, { decision: 'continue' }));
-
-  const anotherBtn = document.createElement('button');
-  anotherBtn.type = 'button';
-  anotherBtn.className = 'btn btn-primary';
-  anotherBtn.textContent = 'I approve another cycle';
-  anotherBtn.addEventListener('click', () => sendAnswer(msg.id, { decision: 'another' }));
-
-  actions.append(continueBtn, anotherBtn);
-  el.questionBody.appendChild(actions);
-}
-
-async function sendAnswer(id, payload) {
-  if (!state.runId || !id) return;
-  // optimistic: hide panel + show running
-  showQuestionCard(false);
-  state.pendingQuestion = null;
-  setRunStatus('running');
-  try {
-    const res = await fetch('/api/answer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId: state.runId, id, payload }),
-    });
-    if (!res.ok) {
-      const err = await safeJson(res);
-      appendLog({ source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
+  // Clear the card's qpanel + attention before it drops out.
+  if (r.el) {
+    const q = r.el.querySelector('.qpanel');
+    if (q) {
+      q.innerHTML = '';
+      q.classList.add('hidden');
     }
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
+    r.el.classList.remove('attention');
+    // Paint the terminal stepper one last time while the card still exists.
+    paintStepper(r);
   }
+
+  const projectDir = r.projectDir;
+  // Card drops out of the live view (liveRuns excludes terminal statuses).
+  renderRunningView();
+  updateNavCounts();
+  if (projectDir && projectDir === selectedProjectPath()) loadHistory(projectDir);
+
+  // Client-evict heavy fields; keep the model so a stray duplicate event/hello
+  // re-upserts onto the (already _finished) model rather than a fresh one.
+  r.logLines = [];
+  r.el = null;
 }
 
-// ---------------------------------------------------------------------------
-// Done / error
-// ---------------------------------------------------------------------------
-function onDone(msg) {
-  setRunStatus(msg.status || 'done');
-  markAllDoneUpTo('done');
-  showQuestionCard(false);
-  if (el.stopBtn) el.stopBtn.disabled = true;
-  el.startBtn.disabled = false;
-  appendLog({
-    source: 'system',
-    level: 'system',
-    text: `pipeline ${msg.status || 'done'}${msg.pipelineDir ? ' -> ' + msg.pipelineDir : ''}`,
-    ts: Date.now(),
-  });
-  // refresh history to show the saved pipeline
-  if (state.projectDir) loadHistory(state.projectDir);
+function onDone(r, msg) {
+  finishRun(r, msg.status || 'done');
 }
 
-function onError(msg) {
-  setRunStatus('error');
-  if (el.stopBtn) el.stopBtn.disabled = true;
-  el.startBtn.disabled = false;
-  appendLog({ source: 'system', level: 'error', text: `error: ${msg.message || 'unknown error'}`, ts: Date.now() });
-}
-
-function setRunStatus(status) {
-  // The global run-status badge was removed; per-run status lives on each card
-  // in Task 3. Keep state.status for any legacy readers and no-op the (gone) DOM.
-  state.status = status;
+function onError(r) {
+  finishRun(r, 'error');
 }
 
 function statusClass(status) {
@@ -978,10 +882,11 @@ el.form.addEventListener('submit', async (e) => {
   const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
   const promptText = el.prompt.value.trim();
   const mdText = el.promptMarkdown.value.trim();
+  const title = el.title.value.trim();
 
   const body = {
     projectDir,
-    title: el.title.value.trim() || undefined,
+    title: title || undefined,
     maxRefine: Number(el.maxRefine.value) || 5,
     maxReview: Number(el.maxReview.value) || 5,
     mock: el.mock.checked,
@@ -1020,8 +925,10 @@ el.form.addEventListener('submit', async (e) => {
       return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
     }
 
-    // begin tracking the new run
-    beginRun(data.runId, projectDir);
+    // begin tracking the new run (creates a local model + switches to Running)
+    beginRun(data.runId, projectDir, title);
+    // Re-enable the form so more runs can be started concurrently.
+    el.startBtn.disabled = false;
     setFormMsg('Run started.', 'ok');
     if (extras.length) {
       appendLog({
@@ -1037,29 +944,17 @@ el.form.addEventListener('submit', async (e) => {
   }
 });
 
-function beginRun(runId, projectDir) {
-  state.runId = runId;
-  state.projectDir = projectDir;
-  state.pendingQuestion = null;
-  // fresh canvas (global log/stepper removed; per-card rendering arrives in Task 3)
-  if (el.log) el.log.innerHTML = '';
-  resetSteps();
-  showQuestionCard(false);
+// Create the local run model for a run THIS tab just started, snapshot the
+// config it was launched with, and switch to the Running view. We do NOT send a
+// subscribe here: live events arrive via the server's broadcast, and a
+// subscribe would double-replay this run's buffer on the next hello.
+function beginRun(runId, projectDir, title) {
+  const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
+  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models }));
   hideViewer();
-  setRunStatus('starting');
-  setActiveStep('preflight');
-  if (el.stopBtn) el.stopBtn.disabled = false;
-
-  appendLog({ source: 'system', level: 'system', text: `run ${runId} started in ${projectDir}`, ts: Date.now() });
-
-  // make sure WS is subscribed (covers the buffered-replay case)
-  if (state.ws && state.wsReady) {
-    try {
-      state.ws.send(JSON.stringify({ type: 'subscribe', runId }));
-    } catch {
-      /* ignore */
-    }
-  }
+  updateNavCounts();
+  showView('running');
+  renderRunningView();
 }
 
 function setFormMsg(text, kind) {
@@ -1068,10 +963,64 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Stop / clear-log: the global Stop button and Live-log clear control were
-// removed in the shell rewrite. Per-card Stop and per-card log clearing arrive
-// in Task 3 (wired against each run card's own controls).
+// Per-card Stop. POST /api/stop; on success the server emits state(stopped) +
+// done, which finishRun handles (card drops out + History refresh). On failure
+// re-enable the button and log to that card.
 // ---------------------------------------------------------------------------
+async function stopRun(runId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId }),
+    });
+    if (!res.ok) {
+      const err = await safeJson(res);
+      if (btn) btn.disabled = false;
+      const r = runs.get(runId);
+      if (r) onLog(r, { source: 'ui', level: 'error', text: `stop failed: ${err.error || res.status}`, ts: Date.now() });
+    }
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    const r = runs.get(runId);
+    if (r) onLog(r, { source: 'ui', level: 'error', text: `stop error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Delegated controls on the dynamic run-card list: per-card Stop + per-card
+// auto-scroll switch. Scoped to each card via closest('.run-card').
+const runListEl = $('#run-list');
+if (runListEl) {
+  runListEl.addEventListener('click', (e) => {
+    const stopBtn = e.target.closest && e.target.closest('.btn-stop');
+    if (stopBtn) {
+      const card = stopBtn.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      if (runId) stopRun(runId, stopBtn);
+      return;
+    }
+    const sw = e.target.closest && e.target.closest('.switch.autoscroll');
+    if (sw) {
+      const on = !sw.classList.contains('on');
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
+    }
+  });
+
+  // a11y: the autoscroll .switch has role="switch" + tabindex="0" but only the
+  // click path toggled it. Mirror that toggle for Space/Enter via a delegated
+  // keydown (scoped through closest('.run-card') so it can't fire elsewhere).
+  runListEl.addEventListener('keydown', (e) => {
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    const sw = e.target.closest && e.target.closest('.switch.autoscroll');
+    if (!sw || !sw.closest('.run-card')) return;
+    e.preventDefault();
+    const on = !sw.classList.contains('on');
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', String(on));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Install agents
@@ -1220,17 +1169,229 @@ function fmtDate(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-run engine (stubbed — full per-card rendering arrives in Task 3)
+// Multi-run rendering: one card per live run in the Running view.
 // ---------------------------------------------------------------------------
-const runs = new Map();
+
+// A run is "live" while it is starting/running OR has a pending question
+// (paused). Terminal statuses (done|error|stopped) are never live; on finish we
+// also clear pendingQuestion, so a lingering question can't keep it live.
+// The `!r._finished` guard ensures a run that has been through finishRun can
+// never re-enter the live list — even if an out-of-order event or a future
+// hello upserts it with a live `status` again.
+function liveRuns() {
+  return [...runs.values()].filter(
+    (r) => !r._finished && (r.status === 'starting' || r.status === 'running' || r.pendingQuestion != null)
+  );
+}
+
+// Project basename for display (e.g. "/a/b/proj" -> "proj").
+function projectName(dir) {
+  if (!dir) return '(no project)';
+  const parts = String(dir).replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1] || dir;
+}
+
+// Derive an HH:MM:SS label from an ISO timestamp; pass through anything that
+// already looks like a bare time string.
+function startedLabel(startedAt) {
+  if (!startedAt) return '';
+  const d = new Date(startedAt);
+  if (!isNaN(d.getTime())) return d.toTimeString().slice(0, 8);
+  return String(startedAt);
+}
+
+const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', done: 'Done' };
+const CYCLING_PHASES = new Set(['refine', 'review']);
+
+// Status-pill copy map (committed — no '?'). Returns { family, text }.
+function statusPill(r) {
+  if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
+  if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
+  if (r.status === 'done') return { family: 'green', text: 'Done' };
+  if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
+  if (r.status === 'error') return { family: 'red', text: 'Error' };
+  // running
+  switch (r.phaseKey) {
+    case 'plan': return { family: 'violet', text: 'Planning' };
+    case 'refine': return { family: 'peach', text: 'Refining' };
+    case 'implement': return { family: 'blue', text: 'Implementing' };
+    case 'review': return { family: 'peach', text: 'Reviewing' };
+    default: return { family: 'peach', text: 'Running' };
+  }
+}
+
+function buildRunCard(r) {
+  const tpl = $('#run-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  node.dataset.runId = r.runId;
+
+  const titleEl = node.querySelector('.run-title');
+  if (titleEl) titleEl.textContent = r.title;
+  const metaEl = node.querySelector('.run-meta');
+  if (metaEl) metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}`;
+
+  // Stage sublabels: only meaningful for a run THIS tab started (we have the
+  // config snapshot). preflight/done keep their static labels.
+  if (r.local && r.configSnapshot) fillStageSublabels(node, r.configSnapshot);
+
+  // Hydrate the log from any events that arrived before the card existed.
+  const logEl = node.querySelector('.log');
+  if (logEl) for (const rec of r.logLines) logEl.appendChild(buildLogLine(rec));
+
+  return node;
+}
+
+// Map each agent role's snapshot (model label + effort) onto the matching
+// stage's sublabel. The card steps use phase keys; map them to config roles.
+const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer' };
+function fillStageSublabels(node, snap) {
+  const models = Array.isArray(snap.models) ? snap.models : [];
+  const steps = snap.steps || {};
+  const labelFor = (role) => {
+    const sel = steps[role] || {};
+    const m = models.find((x) => x.id === sel.model);
+    const modelLabel = m ? m.label : 'default';
+    return sel.effort ? `${modelLabel} · ${sel.effort}` : modelLabel;
+  };
+  for (const stage of node.querySelectorAll('.stage[data-step]')) {
+    const step = stage.dataset.step;
+    const role = STEP_TO_ROLE[step];
+    if (!role) continue; // preflight/done keep static sublabel
+    const sub = stage.querySelector('.sub');
+    if (sub) sub.textContent = labelFor(role);
+  }
+}
+
+// Paint the 6-stage stepper from the run model.
+const STAGE_NUM = { done: ['s-done', 'n-green'], now: ['s-now', 'n-peach'], pause: ['s-pause', 'n-amber'], stop: ['s-stop', 'n-red'] };
+function paintStepper(r) {
+  if (!r.el) return;
+  const terminalDone = r.status === 'done';
+  for (const stage of r.el.querySelectorAll('.stage[data-step]')) {
+    const step = stage.dataset.step;
+    const idx = STEP_ORDER.indexOf(step);
+    const numEl = stage.querySelector('.num');
+
+    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
+    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+
+    let kind = null; // 'done' | 'now' | 'pause' | 'stop' | null(pending)
+    if (terminalDone) {
+      kind = 'done';
+    } else if (idx < r.maxStepIdx) {
+      kind = 'done';
+    } else if (idx === r.maxStepIdx) {
+      if (r.pendingQuestion != null) kind = 'pause';
+      else if (r.status === 'stopped') kind = 'stop';
+      else if (['done', 'complete', 'passed'].includes(r.phaseStatus)) kind = 'done';
+      else kind = 'now';
+    }
+
+    if (kind) {
+      const [sCls, nCls] = STAGE_NUM[kind];
+      stage.classList.add(sCls);
+      if (numEl) numEl.classList.add(nCls);
+    } else if (numEl) {
+      numEl.classList.add('n-grey'); // pending
+    }
+
+    // Cycle badge on refine/review.
+    const cyEl = stage.querySelector('.cycle');
+    if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(step) && r.cycle) ? `#${r.cycle}` : '';
+  }
+}
+
+function paintRunCard(r) {
+  if (!r.el) return;
+
+  // Status pill: family class + text, preserving the leading .pdot.
+  const pill = r.el.querySelector('.pill-run');
+  if (pill) {
+    const { family, text } = statusPill(r);
+    pill.className = `pill-run ${family}`;
+    const txt = pill.querySelector('.pill-text');
+    if (txt) txt.textContent = text;
+    else pill.textContent = text;
+  }
+
+  // Foot chip.
+  const chip = r.el.querySelector('.chip');
+  if (chip) {
+    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Running';
+    if (r.pendingQuestion != null) {
+      const n = questionCount(r.pendingQuestion);
+      chip.textContent = `${phaseLabel} paused · ${n} question${n === 1 ? '' : 's'}`;
+    } else if (CYCLING_PHASES.has(r.phaseKey) && r.cycle) {
+      // Max cycles aren't carried on the client run model, so show the current
+      // cycle number without a misleading denominator.
+      chip.textContent = `${phaseLabel} cycle ${r.cycle}`;
+    } else {
+      chip.textContent = phaseLabel;
+    }
+  }
+
+  paintStepper(r);
+  r.el.classList.toggle('attention', r.pendingQuestion != null);
+}
+
+function questionCount(pq) {
+  if (!pq) return 0;
+  if (Array.isArray(pq.questions)) return pq.questions.length;
+  if (Array.isArray(pq.issues)) return pq.issues.length;
+  return 1;
+}
 
 function renderRunningView() {
-  /* stub — Task 3 renders one card per active run into #run-list */
+  const list = $('#run-list');
+  if (!list) return;
+  const live = liveRuns();
+  const seen = new Set();
+
+  for (const r of live) {
+    seen.add(r.runId);
+    if (!r.el) {
+      r.el = buildRunCard(r);
+      list.append(r.el);
+    }
+    paintRunCard(r);
+  }
+
+  // Remove cards whose run is no longer live.
+  [...list.children].forEach((c) => {
+    if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
+  });
+
+  // Empty state.
+  if (live.length === 0) {
+    list.innerHTML = '<div class="run-empty">No pipelines running — start one from New.</div>';
+  }
+
+  // Header counts.
+  const needs = live.filter((r) => r.pendingQuestion).length;
+  const sub = $('#running-sub');
+  if (sub) {
+    sub.textContent =
+      `${live.length} pipeline${live.length === 1 ? '' : 's'} executing · ${needs} need${needs === 1 ? 's' : ''} your input`;
+  }
+  const pill = $('#running-status-pill');
+  if (pill) {
+    pill.classList.toggle('hidden', needs === 0);
+    const txt = pill.querySelector('.pill-text');
+    const label = `${needs} need${needs === 1 ? 's' : ''} input`;
+    if (txt) txt.textContent = label;
+    else {
+      // Preserve a leading .pdot if present; replace only the trailing text.
+      const dot = pill.querySelector('.pdot');
+      pill.textContent = '';
+      if (dot) pill.appendChild(dot);
+      pill.append(document.createTextNode(' ' + label));
+    }
+  }
 }
 
 function updateNavCounts() {
   const c = $('#nav-running-count');
-  if (c) c.textContent = String(runs.size);
+  if (c) c.textContent = String(liveRuns().length);
 }
 
 // ---------------------------------------------------------------------------

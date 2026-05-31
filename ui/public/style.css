@@ -338,7 +338,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pill-run.blue{background:var(--blue-bg);color:var(--blue-ink);} .pill-run.blue .pdot{background:var(--blue);}
 .pill-run.amber{background:var(--amber-bg);color:var(--amber-ink);} .pill-run.amber .pdot{background:var(--amber);}
 .pill-run.violet{background:var(--violet-bg);color:var(--violet-ink);} .pill-run.violet .pdot{background:var(--violet);}
+.pill-run.green{background:var(--green-bg);color:var(--green-ink);} .pill-run.green .pdot{background:var(--green);}
+.pill-run.red{background:var(--red-bg);color:var(--red-ink);} .pill-run.red .pdot{background:var(--red);}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* empty state for the running list */
+.run-empty{color:var(--ink-3);padding:24px;text-align:center;}
 
 .run-foot{display:flex;align-items:center;gap:10px;}
 .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:7px 13px;border-radius:999px;}
