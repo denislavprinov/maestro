@@ -3,3 +3,4 @@ examples/sandbox
 ai-artifacts/
 *.log
 graphify-out/
+.maestro/
