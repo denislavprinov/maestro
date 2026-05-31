@@ -159,10 +159,43 @@
           </div>
           <ol id="steps" class="steps">
             <li class="step" data-step="preflight"><span class="num">1</span><span class="name">Preflight</span></li>
-            <li class="step" data-step="plan"><span class="num">2</span><span class="name">Plan</span></li>
-            <li class="step" data-step="refine"><span class="num">3</span><span class="name">Refine</span><em class="cycle" data-cycle></em></li>
-            <li class="step" data-step="implement"><span class="num">4</span><span class="name">Implement</span></li>
-            <li class="step" data-step="review"><span class="num">5</span><span class="name">Review</span><em class="cycle" data-cycle></em></li>
+
+            <li class="step" data-step="plan" data-role="planner">
+              <span class="num">2</span><span class="name">Plan</span>
+              <div class="step-config" data-role="planner">
+                <select class="step-model" data-role="planner" aria-label="Plan model"></select>
+                <select class="step-effort" data-role="planner" aria-label="Plan effort"></select>
+                <small class="step-current" data-role="planner"></small>
+              </div>
+            </li>
+
+            <li class="step" data-step="refine" data-role="refiner">
+              <span class="num">3</span><span class="name">Refine</span><em class="cycle" data-cycle></em>
+              <div class="step-config" data-role="refiner">
+                <select class="step-model" data-role="refiner" aria-label="Refine model"></select>
+                <select class="step-effort" data-role="refiner" aria-label="Refine effort"></select>
+                <small class="step-current" data-role="refiner"></small>
+              </div>
+            </li>
+
+            <li class="step" data-step="implement" data-role="implementer">
+              <span class="num">4</span><span class="name">Implement</span>
+              <div class="step-config" data-role="implementer">
+                <select class="step-model" data-role="implementer" aria-label="Implement model"></select>
+                <select class="step-effort" data-role="implementer" aria-label="Implement effort"></select>
+                <small class="step-current" data-role="implementer"></small>
+              </div>
+            </li>
+
+            <li class="step" data-step="review" data-role="reviewer">
+              <span class="num">5</span><span class="name">Review</span><em class="cycle" data-cycle></em>
+              <div class="step-config" data-role="reviewer">
+                <select class="step-model" data-role="reviewer" aria-label="Review model"></select>
+                <select class="step-effort" data-role="reviewer" aria-label="Review effort"></select>
+                <small class="step-current" data-role="reviewer"></small>
+              </div>
+            </li>
+
             <li class="step" data-step="done"><span class="num">6</span><span class="name">Done</span></li>
           </ol>
         </div>

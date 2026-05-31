@@ -12,9 +12,16 @@ const state = {
   runId: null, // currently-tracked run
   projectDir: '',
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
+  config: { steps: {}, customModels: [] }, // per-project model/effort selections
+  models: [], // predefined + custom, from /api/config
+  efforts: [], // effort levels, from /api/config
   pendingQuestion: null, // last unanswered question {id, kind, ...}
   status: 'idle',
 };
+
+// UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
+// server is authoritative — see loadConfig, which also receives data.steps.)
+const STEP_ROLES = ['planner', 'refiner', 'implementer', 'reviewer'];
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -260,6 +267,138 @@ function resetSteps() {
     if (cyEl) cyEl.textContent = '';
   });
 }
+
+// ---------------------------------------------------------------------------
+// Per-step model + effort config
+// ---------------------------------------------------------------------------
+async function loadConfig(projectDir) {
+  if (!projectDir) return;
+  try {
+    const res = await fetch(`/api/config?projectDir=${encodeURIComponent(projectDir)}`);
+    const data = await safeJson(res);
+    if (!res.ok) return;
+    state.config = data.config || { steps: {}, customModels: [] };
+    state.models = Array.isArray(data.models) ? data.models : [];
+    state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
+  } catch {
+    /* keep last-known config */
+  }
+  renderStepConfigs();
+}
+
+function modelById(id) {
+  return state.models.find((m) => m.id === id) || null;
+}
+
+function option(value, text) {
+  const o = document.createElement('option');
+  o.value = value;
+  o.textContent = text;
+  return o;
+}
+
+function renderStepConfigs() {
+  // Selectors are read-only while a run is active (config is loaded once at run
+  // start; edits apply to the NEXT run). See setRunStatus.
+  const locked = state.status === 'running' || state.status === 'starting' || state.status === 'waiting';
+
+  for (const role of STEP_ROLES) {
+    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+    const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
+    const caption = document.querySelector(`.step-current[data-role="${role}"]`);
+    if (!modelSel || !effortSel) continue;
+
+    const sel = state.config.steps[role] || {};
+
+    // Model dropdown: "(default model)" + every model + "+ Add model…".
+    modelSel.innerHTML = '';
+    modelSel.appendChild(option('', '(default model)'));
+    state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom ? ' ·custom' : ''))));
+    modelSel.appendChild(option('__add__', '+ Add model…'));
+    modelSel.value = sel.model || '';
+
+    // Effort dropdown: filtered to the selected model's supported efforts.
+    const model = modelById(modelSel.value);
+    effortSel.innerHTML = '';
+    effortSel.appendChild(option('', '(default effort)'));
+    (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
+    effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
+
+    modelSel.disabled = locked;
+    effortSel.disabled = locked || !model; // no model picked => effort is meaningless
+
+    if (caption) {
+      const mLabel = model ? model.label : 'default model';
+      caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`;
+    }
+  }
+}
+
+async function saveStep(role, model, effort) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, step: role, model, effort }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      renderStepConfigs(); // revert UI to the last persisted state
+      return;
+    }
+    state.config = data.config || state.config;
+    renderStepConfigs();
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+async function addModelFlow(role) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  const id = (window.prompt('New model id (e.g. claude-opus-4-8 or a fine-tune id):') || '').trim();
+  if (!id) { renderStepConfigs(); return; } // user cancelled -> restore selection
+  const label = (window.prompt('Display name (optional):', id) || '').trim();
+  try {
+    const res = await fetch('/api/config/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, id, label }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `add model: ${data.error || res.status}`, ts: Date.now() });
+      renderStepConfigs();
+      return;
+    }
+    state.models = Array.isArray(data.models) ? data.models : state.models;
+    await saveStep(role, id, ''); // select the new model for this step (effort reset)
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `add model error: ${e.message}`, ts: Date.now() });
+    renderStepConfigs();
+  }
+}
+
+// Delegated change handler for all step selects (markup is static; el.steps is
+// already cached in the `el` map as `steps: $('#steps')`).
+el.steps.addEventListener('change', (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLSelectElement)) return;
+  const role = t.dataset.role;
+  if (!role) return;
+
+  if (t.classList.contains('step-model')) {
+    if (t.value === '__add__') return addModelFlow(role);
+    // New model -> reset effort (old effort may be unsupported by the new model).
+    saveStep(role, t.value, '');
+  } else if (t.classList.contains('step-effort')) {
+    const model = (state.config.steps[role] || {}).model || '';
+    saveStep(role, model, t.value);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Log window
@@ -558,6 +697,7 @@ function setRunStatus(status) {
   state.status = status;
   el.runStatus.textContent = status;
   el.runStatus.className = 'badge ' + statusClass(status);
+  renderStepConfigs(); // lock during run, unlock when idle/done/error/stopped
 }
 
 function statusClass(status) {
@@ -694,8 +834,12 @@ function onProjectChanged() {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
     loadHistory(path);
+    loadConfig(path);
   } else {
     state.projectDir = '';
+    state.config = { steps: {}, customModels: [] };
+    state.models = [];
+    renderStepConfigs(); // clear the selectors
   }
 }
 

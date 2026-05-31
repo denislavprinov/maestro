@@ -18,6 +18,10 @@ import { randomUUID } from 'node:crypto';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { listPipelines, readPipeline } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
+import {
+  readConfig, setStep, addCustomModel, removeCustomModel, listModels,
+  AGENT_STEPS, EFFORTS,
+} from '../src/core/config.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -378,6 +382,60 @@ app.delete('/api/projects', async (req, res) => {
   if (!name.trim()) return badRequest(res, 'name is required');
   try {
     res.json({ projects: await removeProject(name) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Per-project model/effort config + custom-model registry. Validation lives in
+// src/core/config.mjs; these routes are thin delegation (mirror /api/projects).
+// ---------------------------------------------------------------------------
+app.get('/api/config', async (req, res) => {
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const [config, models] = await Promise.all([readConfig(projectDir), listModels(projectDir)]);
+    res.json({ config, models, steps: AGENT_STEPS, efforts: EFFORTS });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/config', async (req, res) => {
+  const body = req.body || {};
+  const projectDir = resolveProjectDir(body.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const config = await setStep(projectDir, body.step, { model: body.model, effort: body.effort });
+    res.json({ config });
+  } catch (err) {
+    // setStep throws only on validation (unknown step/model/effort) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+app.post('/api/config/models', async (req, res) => {
+  const body = req.body || {};
+  const projectDir = resolveProjectDir(body.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    await addCustomModel(projectDir, { id: body.id, label: body.label });
+    res.json({ models: await listModels(projectDir) });
+  } catch (err) {
+    // addCustomModel throws only on validation (empty/duplicate/shadow) -> 400.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+app.delete('/api/config/models', async (req, res) => {
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id.trim()) return badRequest(res, 'id is required');
+  try {
+    const config = await removeCustomModel(projectDir, id);
+    res.json({ config, models: await listModels(projectDir) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

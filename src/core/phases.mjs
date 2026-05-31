@@ -86,6 +86,7 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     allowedTools,
     permissionMode: c.permissionMode || 'acceptEdits',
     model: c.model,
+    effort: c.effort,          // per-role effort from the orchestrator
     bin: c.bin,
     mock: c.mock,
     signal: ctx.signal,

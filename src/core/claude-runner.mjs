@@ -36,6 +36,29 @@ import { dirname, join } from 'node:path';
 const DEFAULT_BIN = process.env.MAESTRO_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
 /**
+ * Translate a pipeline "effort" level into claude CLI argv additions. This is
+ * the ONE place that knows the CLI surface for effort.
+ *
+ * The flag NAME is read from MAESTRO_EFFORT_FLAG (default "--effort") so it can
+ * be retargeted to whatever the installed `claude` actually names it WITHOUT a
+ * code change. Empty effort adds nothing (the model's own default is used), so
+ * the default run path is never affected by the flag name.
+ *
+ * NOTE: "--effort" is an ASSUMED default, NOT a verified CLI contract. Confirm
+ * it against your installed CLI before relying on per-step effort (see the plan's
+ * verification section). If your CLI rejects an unknown flag, a run that sets an
+ * effort would fail fast with a non-zero exit; set MAESTRO_EFFORT_FLAG to fix it.
+ *
+ * @param {string|undefined} effort  one of EFFORTS (medium|high|xhigh|max)
+ * @returns {string[]}
+ */
+export function buildEffortArgs(effort) {
+  if (!effort) return [];
+  const flag = (process.env.MAESTRO_EFFORT_FLAG || '--effort').trim() || '--effort';
+  return [flag, String(effort)];
+}
+
+/**
  * Whether mock mode is active. Driven by MAESTRO_MOCK or an explicit opts.mock
  * passed through by the orchestrator (handled by caller mapping mock->env or
  * by passing systemPrompt/prompt markers; we also honor a `mock` field).
@@ -57,6 +80,7 @@ function mockEnabled(opts) {
  * @param {string[]} [o.allowedTools]    e.g. ["Read","Write","Edit","Bash"]
  * @param {string} [o.permissionMode]    e.g. "acceptEdits"
  * @param {string} [o.model]             optional model id
+ * @param {string} [o.effort]            optional reasoning effort
  * @param {(e:{type:string, raw?:any, text?:string})=>void} [o.onEvent]
  * @param {AbortSignal} [o.signal]
  * @param {string} [o.bin]               claude binary (default "claude")
@@ -71,6 +95,7 @@ export async function runClaude(o = {}) {
     allowedTools,
     permissionMode = 'acceptEdits',
     model,
+    effort,
     onEvent = () => {},
     signal,
     bin = DEFAULT_BIN,
@@ -93,6 +118,7 @@ export async function runClaude(o = {}) {
     allowedTools,
     permissionMode,
     model,
+    effort,
     onEvent,
     signal,
     bin,
@@ -101,7 +127,7 @@ export async function runClaude(o = {}) {
 
 // ── Real execution ───────────────────────────────────────────────────────────
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, onEvent, signal, bin }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin }) {
   return new Promise((resolveP, rejectP) => {
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
     if (systemPrompt) {
@@ -110,6 +136,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     if (model) {
       args.push('--model', model);
     }
+    for (const a of buildEffortArgs(effort)) args.push(a);
     if (Array.isArray(allowedTools) && allowedTools.length) {
       args.push('--allowedTools', allowedTools.join(','));
     }

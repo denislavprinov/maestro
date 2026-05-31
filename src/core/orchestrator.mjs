@@ -30,6 +30,7 @@ import {
   today,
 } from './artifacts.mjs';
 import { detectTools } from './preflight.mjs';
+import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 import {
   runPlannerClarify,
@@ -87,6 +88,7 @@ class Orchestrator extends EventEmitter {
     };
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
+    this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
 
     this.abort = new AbortController();
     this.pendingQuestion = null; // { id, resolve, reject, kind }
@@ -168,13 +170,15 @@ class Orchestrator extends EventEmitter {
 
       // 1) Load agent prompts + preflight tool detection (parallel; both safe).
       this._phase('preflight', 0, 'start');
-      const [agentPrompts, tools] = await Promise.all([
+      const [agentPrompts, tools, stepModels] = await Promise.all([
         this._loadAgentPrompts(),
         detectTools(this.projectDir),
+        resolveStepModels(this.projectDir, this.claude.model), // never throws
       ]);
       this.agentPrompts = agentPrompts;
       this.toolInstruction = tools.instruction || '';
       this.state.tools = tools;
+      this.stepModels = stepModels;
       this._log(
         'preflight',
         'info',
@@ -496,6 +500,10 @@ class Orchestrator extends EventEmitter {
   // ── context passed to phase runners ────────────────────────────────────────
 
   _phaseCtx(role) {
+    // resolveStepModels already folded in the global fallback, so step.model is
+    // the effective model; the `|| this.claude.model` is a defensive belt-and-
+    // braces for the (guarded) case where stepModels is null.
+    const step = (this.stepModels && this.stepModels[role]) || {};
     return {
       projectDir: this.projectDir,
       pipelineDir: this.pipeline.dir,
@@ -508,7 +516,8 @@ class Orchestrator extends EventEmitter {
       claudeOpts: {
         bin: this.claude.bin,
         permissionMode: this.claude.permissionMode,
-        model: this.claude.model,
+        model: step.model || this.claude.model, // per-role, falling back to global
+        effort: step.effort,                     // per-role effort (undefined when unset)
         mock: this.claude.mock,
       },
     };

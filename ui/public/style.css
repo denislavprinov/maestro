@@ -737,3 +737,22 @@ fieldset.source legend {
 .hint.err {
   color: var(--bad, #f85149);
 }
+
+/* per-step model/effort controls */
+.step-config {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+.step-config select {
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.step-config select:disabled { opacity: 0.6; cursor: not-allowed; }
+.step-current {
+  width: 100%;
+  color: var(--muted, #888);
+  font-size: 11px;
+}
