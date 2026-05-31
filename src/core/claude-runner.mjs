@@ -327,32 +327,33 @@ function inferRole(prompt, systemPrompt) {
 
 async function mockPlannerClarify(m, cycle, onEvent) {
   const out = m.MOCK_OUT;
-  // Round 1 asks one clarifying question; subsequent rounds report no further
-  // questions so the orchestrator's clarify loop terminates naturally (rather
-  // than only via its MAX_ROUNDS safety cap).
-  const payload =
-    cycle <= 1
-      ? {
-          questions: [
-            {
-              id: 'q1',
-              question:
-                'How should the feature handle invalid input — fail fast, coerce, or ignore?',
-              options: [
-                'Fail fast with a clear error',
-                'Coerce to a safe default',
-                'Ignore and continue',
-              ],
-              allowFreeText: true,
-            },
-          ],
-        }
-      : { questions: [] };
+  // Ask one question while no answers have been fed back; once the user's prior
+  // answers are present (MOCK_PRIOR > 0) report no further questions so the
+  // orchestrator's clarify loop terminates naturally. This mirrors the real fix:
+  // the loop converges because answers are returned to the planner.
+  const hasPrior = Number(m.MOCK_PRIOR || '0') > 0;
+  const payload = hasPrior
+    ? { questions: [] }
+    : {
+        questions: [
+          {
+            id: 'q1',
+            question:
+              'How should the feature handle invalid input — fail fast, coerce, or ignore?',
+            options: [
+              'Fail fast with a clear error',
+              'Coerce to a safe default',
+              'Ignore and continue',
+            ],
+            allowFreeText: true,
+          },
+        ],
+      };
   await emitLog(
     onEvent,
-    cycle <= 1
-      ? '[mock] planner asking one clarifying question'
-      : '[mock] planner has no further questions',
+    hasPrior
+      ? '[mock] planner has no further questions'
+      : '[mock] planner asking one clarifying question',
   );
   if (!out) return '[mock] planner-clarify: no MOCK_OUT given';
   await ensureDir(out);

@@ -109,26 +109,59 @@ function taskHeader(ctx, title) {
 }
 
 /**
+ * Build the clarify task prompt. When the user has already answered questions in
+ * an earlier round, those are injected so the planner never re-asks them.
+ * Exported for testing. Pure (no IO).
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ round?: number, priorAnswers?: Array<{id,question,choice}> }} [opts]
+ */
+export function buildClarifyPrompt(ctx, opts = {}) {
+  const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
+  const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
+  const outPath = joinPipeline(ctx.pipelineDir, 'clarify.json');
+  const role = 'planner-clarify';
+  const answered =
+    priorAnswers.length > 0
+      ? '## Already answered — DO NOT ask these again\n\n' +
+        'The user already answered the questions below in an earlier round. Do NOT re-ask, ' +
+        'rephrase, or split them. Ask ONLY genuinely new questions that are still material and ' +
+        'not implied by these answers. If nothing material remains open, write ' +
+        '{ "questions": [] } to the path below.\n\n' +
+        renderAnswers(priorAnswers) +
+        '\n'
+      : '';
+  return (
+    taskHeader(ctx, 'Clarify before planning') +
+    '\n## What to do\n\n' +
+    'Identify ONLY the few highest-impact decisions you cannot safely resolve from the task text ' +
+    'or the real codebase. For each, produce one conceptual question with exactly three options ' +
+    'and a free-text fallback. Prefer the smallest set of questions that unblocks a correct plan; ' +
+    'for low-impact details, pick a sensible default rather than asking. If you have no material ' +
+    'open questions, write { "questions": [] } to that same path.\n\n' +
+    `Write the clarify JSON to: ${outPath}\n\n` +
+    answered +
+    mockMarkers({
+      MOCK_ROLE: role,
+      MOCK_OUT: outPath,
+      MOCK_CYCLE: round,
+      MOCK_PRIOR: priorAnswers.length,
+    })
+  );
+}
+
+/**
  * Planner — clarify role. Writes clarify.json; returns { questions }.
  * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ round?: number }} [opts]  current clarify round (1-based); used by the
- *   offline mock so the clarify loop terminates naturally (questions on round 1,
- *   then none) instead of only via the orchestrator's safety cap.
+ * @param {{ round?: number, priorAnswers?: Array<{id,question,choice}> }} [opts]
+ *   `priorAnswers` are the Q&A already resolved in earlier rounds; injecting them
+ *   lets the planner ask only NEW questions, so the loop terminates naturally.
  */
 export async function runPlannerClarify(ctx, opts = {}) {
   const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
-  const outPath = joinPipeline(ctx.pipelineDir, 'clarify.json');
+  const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
   const role = 'planner-clarify';
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role);
-  const prompt =
-    taskHeader(ctx, 'Clarify before planning') +
-    '\n## What to do\n\n' +
-    'Identify every point where you would otherwise ASSUME something about this task. For each, ' +
-    'produce one conceptual question with exactly three options and a free-text fallback. Write ' +
-    'the questions as JSON to the path below. If you have no open questions, write ' +
-    '{ "questions": [] } to that same path.\n\n' +
-    `Write the clarify JSON to: ${outPath}\n\n` +
-    mockMarkers({ MOCK_ROLE: role, MOCK_OUT: outPath, MOCK_CYCLE: round });
+  const prompt = buildClarifyPrompt(ctx, { round, priorAnswers });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
 

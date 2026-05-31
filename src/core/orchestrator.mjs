@@ -62,6 +62,7 @@ const AGENT_FILES = {
  * @param {string} [opts.title]
  * @param {number} [opts.maxRefineCycles=5]
  * @param {number} [opts.maxReviewCycles=5]
+ * @param {number} [opts.maxClarifyCycles=3]
  * @param {object} [opts.claude]  { bin?, permissionMode="acceptEdits", model?, mock? }
  * @param {string} [opts.agentsDir]
  * @param {string} [opts.pipelineId]
@@ -79,6 +80,7 @@ class Orchestrator extends EventEmitter {
     this.projectDir = resolve(this.opts.projectDir || process.cwd());
     this.maxRefineCycles = numOr(this.opts.maxRefineCycles, 5);
     this.maxReviewCycles = numOr(this.opts.maxReviewCycles, 5);
+    this.maxClarifyCycles = numOr(this.opts.maxClarifyCycles, 3);
     this.claude = {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
@@ -295,12 +297,16 @@ class Orchestrator extends EventEmitter {
   async _clarifyLoop() {
     const collected = [];
     let round = 0;
-    // Guard against a pathological agent that never stops asking.
-    const MAX_ROUNDS = 12;
-    while (round < MAX_ROUNDS) {
+    // Guard against a pathological agent that never stops asking. Configurable
+    // via maxClarifyCycles (default 3); also the natural exit is questions === 0.
+    const maxRounds = this.maxClarifyCycles;
+    while (round < maxRounds) {
       round += 1;
       this._phase('clarify', round, 'start');
-      const { questions } = await runPlannerClarify(this._phaseCtx('planner'), { round });
+      const { questions } = await runPlannerClarify(this._phaseCtx('planner'), {
+        round,
+        priorAnswers: collected,
+      });
       this._checkAbort();
       if (!Array.isArray(questions) || questions.length === 0) {
         this._phase('clarify', round, 'done');
@@ -312,9 +318,10 @@ class Orchestrator extends EventEmitter {
       const answer = await this._ask({ id, kind: 'clarify', questions });
       this._checkAbort();
       const answers = normalizeClarifyAnswer(answer, questions);
-      // Persist this round's Q&A and accumulate.
-      await this._writeClarifyAnswers(questions, answers);
-      for (const a of answers) collected.push(a);
+      // Persist this round's Q&A and reuse the enriched (question-text-bearing)
+      // result for the fed-back prompt + the later plan phase.
+      const enriched = await this._writeClarifyAnswers(questions, answers);
+      for (const a of enriched) collected.push(a);
       await appendAudit(
         this.pipeline.dir,
         `Clarify round ${round}: answered ${answers.length} question(s).`,
@@ -651,6 +658,7 @@ class Orchestrator extends EventEmitter {
       choice: a.choice,
     }));
     await writeClarifyAnswers(this.pipeline.dir, { answers: enriched });
+    return enriched;
   }
 
   _deriveBaseName(promptText, title) {
