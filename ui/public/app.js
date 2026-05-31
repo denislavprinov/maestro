@@ -275,6 +275,8 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     phaseKey: 'preflight',
     cycle: 0,
     phaseStatus: '',
+    costByStage: {},   // { stageKey: usd } for the live stepper
+    totalCostUsd: 0,   // pipeline total for the card meta line
     pendingQuestion,
     configSnapshot: null,
     logLines: [],
@@ -334,9 +336,39 @@ function maybeResume(r) {
   clearQpanel(r);
 }
 
+// Format a USD amount. null/NaN -> '' (caller decides the default). A positive
+// sub-cent value -> '<$0.01' so genuine spend is never hidden as a flat $0.00.
+// 0 -> '$0.00' (a truthful mock zero, never blanked).
+function fmtUsd(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '';
+  if (v > 0 && v < 0.01) return '<$0.01';
+  return '$' + v.toFixed(2);
+}
+
+// Roll saved per-step costs up into UI stage buckets. normalizePhase folds
+// clarify->plan, refine#1+refine#2->refine, implement+fixes->implement, etc.
+// A stage is keyed IFF its step carries a costUsd field (i.e. a result event was
+// attributed to it) — so an executed-but-zero phase (mock) buckets as 0 and
+// renders $0.00, while a phase that never ran (field absent) stays blank.
+// Negative/NaN are dropped defensively. Returns { stageKey: number }.
+function costByStage(steps) {
+  const out = {};
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s || s.costUsd == null) continue; // field absent => phase never recorded a cost
+    const c = Number(s.costUsd);
+    if (!Number.isFinite(c) || c < 0) continue; // ignore bogus; KEEP zero
+    const key = normalizePhase(s.phase);
+    if (key) out[key] = (out[key] || 0) + c;
+  }
+  return out;
+}
+
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (Array.isArray(msg.steps)) r.costByStage = costByStage(msg.steps);
+  if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
   if (msg.phase) {
     const key = normalizePhase(msg.phase);
     if (key) {
@@ -1509,6 +1541,8 @@ function buildHistCard(projectDir, p) {
   }
   const whenEl = node.querySelector('.h-meta small');
   if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
+  const totalEl = node.querySelector('.hist-total');
+  if (totalEl) totalEl.textContent = typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '';
 
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');
@@ -1561,6 +1595,11 @@ async function loadHistDetail(projectDir, id, detail) {
     const stale = detail.querySelector('.detail-error');
     if (stale) stale.remove();
     paintHistStepper(detail, data.state);
+    if (typeof data.state.totalCostUsd === 'number') {
+      const card = detail.closest('.hist-card');
+      const totalEl = card && card.querySelector('.hist-total');
+      if (totalEl) totalEl.textContent = fmtUsd(data.state.totalCostUsd);
+    }
   } catch (e) {
     detail.dataset.loaded = ''; // allow a retry on the next expand
     let note = detail.querySelector('.detail-error');
@@ -1612,6 +1651,12 @@ function paintHistStepper(detail, st) {
     // NOT fabricate separate refine/review counts (no data source for them).
     const cyEl = stage.querySelector('.cycle');
     if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(stage.dataset.step) && st.cycle) ? `#${st.cycle}` : '';
+
+    const costEl = stage.querySelector('.cost'); // COST: per-stage figure
+    if (costEl) {
+      const c = costByStage(st.steps)[stage.dataset.step];
+      costEl.textContent = c != null ? fmtUsd(c) : '';
+    }
   }
 }
 
@@ -1737,7 +1782,7 @@ function buildRunCard(r) {
 
   const titleEl = node.querySelector('.run-title');
   if (titleEl) titleEl.textContent = r.title;
-  const metaEl = node.querySelector('.run-meta');
+  const metaEl = node.querySelector('.rm-text');
   if (metaEl) metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}`;
 
   // Stage sublabels: only meaningful for a run THIS tab started (we have the
@@ -1817,6 +1862,12 @@ function paintStepper(r) {
     // Cycle badge on refine/review.
     const cyEl = stage.querySelector('.cycle');
     if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(step) && r.cycle) ? `#${r.cycle}` : '';
+
+    const costEl = stage.querySelector('.cost');
+    if (costEl) {
+      const c = (r.costByStage || {})[step];
+      costEl.textContent = c != null ? fmtUsd(c) : '';
+    }
   }
 }
 
@@ -1850,6 +1901,8 @@ function paintRunCard(r) {
   }
 
   paintStepper(r);
+  const totalEl = r.el.querySelector('.run-cost');
+  if (totalEl) totalEl.textContent = fmtUsd(r.totalCostUsd || 0); // always shows (mock => $0.00)
   r.el.classList.toggle('attention', r.pendingQuestion != null);
 }
 

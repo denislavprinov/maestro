@@ -506,3 +506,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .topnav a:hover{background:var(--field);color:var(--ink);}
   .topnav a.active{background:var(--ink);color:#fff;}
 }
+
+/* ---------- per-phase + per-pipeline cost ---------- */
+.stage .lbl .cost{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--ink-2);font-style:normal;margin-top:2px;}
+.stage .lbl .cost:empty{display:none;}
+.stage.active .lbl .cost{color:rgba(255,255,255,.82);}
+.run-meta .run-cost{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
+.run-meta .run-cost:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
+.h-meta .hist-total{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
+.h-meta .hist-total:empty{display:none;}

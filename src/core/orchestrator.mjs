@@ -112,6 +112,7 @@ class Orchestrator extends EventEmitter {
       tools: null,
       checkpointRef: null,
       pipelineDir: null,
+      totalCostUsd: 0, // cumulative actual spend (sum of steps[].costUsd)
     };
   }
 
@@ -526,6 +527,16 @@ class Orchestrator extends EventEmitter {
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */
   _onAgentEvent(role, e) {
     if (!e) return;
+    // Capture actual spend before anything returns early. The runner tags the
+    // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
+    // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
+    // (non-JSON line) — `.type` on it is just undefined, so this never throws.
+    // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
+    const cost = e.costUsd != null
+      ? Number(e.costUsd)
+      : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd) : NaN);
+    if (Number.isFinite(cost)) this._recordCost(cost);
+
     const text = (e.text || '').trim();
     if (text) {
       this._log(role, 'info', text);
@@ -700,6 +711,28 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Attribute a dollar cost to the step currently executing and roll it into
+   * the pipeline total. The active step is identified by the live (phase,cycle)
+   * — the SAME key _recordStep uses — because a `result` event always arrives
+   * between that phase's 'start' and 'done' markers. Records the figure even when
+   * it is 0 (so mock runs DISPLAY a truthful $0.00 rather than a blank); only
+   * NaN/negative are ignored. Multiple results on one step accumulate. Emits a
+   * 'state' snapshot so a live UI updates, and persists so history (state.json)
+   * carries the figure.
+   * @param {number} costUsd
+   */
+  _recordCost(costUsd) {
+    if (!Number.isFinite(costUsd) || costUsd < 0) return;
+    this.state.totalCostUsd = roundUsd((this.state.totalCostUsd || 0) + costUsd);
+    const key = this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase;
+    const step = this.state.steps.find((s) => s.key === key);
+    if (step) step.costUsd = roundUsd((step.costUsd || 0) + costUsd);
+    this.state.updatedAt = new Date().toISOString();
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
   _setStatus(status) {
     this.state.status = status;
     this.state.updatedAt = new Date().toISOString();
@@ -738,6 +771,11 @@ class Orchestrator extends EventEmitter {
 function numOr(v, d) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : d;
+}
+
+/** Round a USD amount to 4 decimals (tenth-of-a-cent) to avoid float drift. */
+function roundUsd(n) {
+  return Math.round((Number(n) || 0) * 1e4) / 1e4;
 }
 
 function isAbort(err) {

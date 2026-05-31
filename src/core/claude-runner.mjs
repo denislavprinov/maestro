@@ -196,7 +196,13 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       const text = extractText(evt);
       if (evt?.type === 'assistant' && text) assistantText += text;
       if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
-      safeEmit(onEvent, { type: evt?.type || 'event', raw: evt, text: text || undefined });
+      const cost = extractResultCost(evt);
+      safeEmit(onEvent, {
+        type: evt?.type || 'event',
+        raw: evt,
+        text: text || undefined,
+        ...(cost != null ? { costUsd: cost } : {}),
+      });
     });
 
     child.stderr.on('data', (d) => {
@@ -250,6 +256,24 @@ function extractText(evt) {
   }
   if (typeof content === 'string') return content;
   return '';
+}
+
+/**
+ * Pull the ACTUAL dollar cost out of a stream-json `result` event. Claude Code
+ * reports spend for the headless invocation as `total_cost_usd` on the terminal
+ * result event (older builds: `cost_usd`). Returns a finite number (INCLUDING 0),
+ * or null when the event is not a cost-bearing result (so callers can simply skip
+ * null). A genuine zero must survive: `?? ` only falls through on null/undefined,
+ * never on 0.
+ * @param {any} evt
+ * @returns {number|null}
+ */
+export function extractResultCost(evt) {
+  if (!evt || typeof evt !== 'object' || evt.type !== 'result') return null;
+  const raw = evt.total_cost_usd ?? evt.cost_usd; // accept either spelling; keeps 0
+  if (raw == null) return null;                   // no cost field present
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 }
 
 // ── Mock execution ───────────────────────────────────────────────────────────
@@ -337,6 +361,10 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
   }
 
   abortIfNeeded(signal);
+  // No model was called, so the truthful spend is $0. Emit a result event the
+  // orchestrator attributes to the current phase, so mock/demo runs still show
+  // a (zero) per-phase and total cost in the UI.
+  safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
   await emitLog(onEvent, `[mock] done role=${role}`);
   return { text, exitCode: 0 };
 }

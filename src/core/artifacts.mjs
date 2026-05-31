@@ -287,6 +287,7 @@ export async function listPipelines(projectDir) {
       title: state?.title ?? ent.name,
       status: state?.status ?? 'unknown',
       startedAt: state?.startedAt ?? null,
+      totalCostUsd: typeof state?.totalCostUsd === 'number' ? state.totalCostUsd : null,
       mtime,
     });
   }
