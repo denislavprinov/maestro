@@ -319,7 +319,18 @@ function onPhase(r, msg) {
   const cyc = msg.cycle ? ` #${msg.cycle}` : '';
   const st = msg.status ? ` (${msg.status})` : '';
   onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
+  maybeResume(r);
   paintRunCard(r);
+}
+
+// A submitted answer is only confirmed resumed when the next phase/state event
+// for this run arrives (the server returns 200 even for a stale id, so HTTP
+// success is not proof). Clear the pending question + panel here.
+function maybeResume(r) {
+  if (!r._answering) return;
+  r._answering = false;
+  r.pendingQuestion = null;
+  clearQpanel(r);
 }
 
 function onState(r, msg) {
@@ -334,6 +345,7 @@ function onState(r, msg) {
     }
   }
   if (msg.cycle) r.cycle = msg.cycle;
+  maybeResume(r);
   paintRunCard(r);
 }
 
@@ -544,13 +556,338 @@ function fmtTime(ts) {
 }
 
 // ---------------------------------------------------------------------------
-// Questions (clarify) and gates. Task 4 builds the full inline qpanel content;
-// here we just store the pending question + repaint (which toggles .attention
-// and paints the paused stepper via paintRunCard).
+// Questions (clarify) and gates. The full question/gate UI is built INLINE into
+// each run card's .qpanel slot (no global question card). onQuestion stores the
+// pending question, builds the panel, and repaints (paintRunCard toggles
+// .attention + paints the paused stepper).
 // ---------------------------------------------------------------------------
 function onQuestion(r, msg) {
   r.pendingQuestion = msg;
+  // A new question supersedes any half-finished answer attempt.
+  r._answering = false;
+  if (r.el) renderQpanel(r);
   paintRunCard(r);
+}
+
+// The `?` glyph used in the panel head. Built fresh each call (a node can only
+// live in one place in the DOM).
+function questionIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '17');
+  svg.setAttribute('height', '17');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M9.1 9a3 3 0 1 1 4.6 2.5c-.9.6-1.7 1.2-1.7 2.3');
+  path.setAttribute('stroke-linecap', 'round');
+  const circle = document.createElementNS(NS, 'circle');
+  circle.setAttribute('cx', '12');
+  circle.setAttribute('cy', '17.5');
+  circle.setAttribute('r', '.5');
+  circle.setAttribute('fill', 'currentColor');
+  circle.setAttribute('stroke-width', '1.4');
+  svg.append(path, circle);
+  return svg;
+}
+
+// Filter a clarify question's options down to the real ones (the contract pads
+// to 3 slots with '' — drop empty/whitespace).
+function realOptions(q) {
+  const opts = Array.isArray(q && q.options) ? q.options : [];
+  return opts.filter((o) => typeof o === 'string' && o.trim() !== '');
+}
+
+// Build the inline question/gate panel into r.el's .qpanel from r.pendingQuestion,
+// un-hide it, and wire its inputs. Idempotent: re-building replaces the content.
+function renderQpanel(r) {
+  if (!r.el) return;
+  const panel = r.el.querySelector('.qpanel');
+  if (!panel) return;
+  const pq = r.pendingQuestion;
+  panel.innerHTML = '';
+  if (!pq) {
+    panel.classList.add('hidden');
+    return;
+  }
+
+  const isGate = pq.kind === 'gate' || Array.isArray(pq.issues);
+
+  // ----- head -----
+  const head = document.createElement('div');
+  head.className = 'qpanel-head';
+  head.appendChild(questionIcon());
+  const title = document.createElement('b');
+  if (isGate) {
+    title.textContent = 'Cycle gate';
+  } else {
+    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
+    title.textContent = `${phaseLabel} needs your input`;
+  }
+  head.appendChild(title);
+  if (!isGate) {
+    const n = realQuestions(pq).length;
+    const count = document.createElement('span');
+    count.className = 'qcount';
+    count.textContent = `${n} question${n === 1 ? '' : 's'}`;
+    head.appendChild(count);
+  }
+  panel.appendChild(head);
+
+  if (isGate) renderGateBody(r, panel, pq);
+  else renderClarifyBody(r, panel, pq);
+
+  panel.classList.remove('hidden');
+}
+
+// Clarify questions with at least a question string. (questions may be [] when
+// the planner had nothing to ask — handled separately with a note.)
+function realQuestions(pq) {
+  return (Array.isArray(pq && pq.questions) ? pq.questions : []).filter(
+    (q) => q && typeof q.question === 'string' && q.question.trim() !== ''
+  );
+}
+
+function renderClarifyBody(r, panel, pq) {
+  const questions = realQuestions(pq);
+
+  // r._answers maps a stable per-question key -> chosen value (option text or
+  // free-text or ''). Rebuilt each render so it tracks the current markup.
+  r._answers = [];
+
+  if (questions.length === 0) {
+    const note = document.createElement('div');
+    note.className = 'gate-intro';
+    note.textContent =
+      'No specific questions — you can submit an empty answer to let the pipeline proceed.';
+    panel.appendChild(note);
+  }
+
+  questions.forEach((q, i) => {
+    const block = document.createElement('div');
+    block.className = 'qblock';
+
+    const text = document.createElement('div');
+    text.className = 'qtext';
+    const qn = document.createElement('span');
+    qn.className = 'qn';
+    qn.textContent = String(i + 1);
+    text.appendChild(qn);
+    text.appendChild(document.createTextNode(q.question));
+    block.appendChild(text);
+
+    const opts = realOptions(q);
+    const slot = { id: q.id, question: q.question, choice: '' };
+    r._answers.push(slot);
+
+    const optsWrap = document.createElement('div');
+    optsWrap.className = 'qopts';
+    const free = document.createElement('input');
+    free.className = 'qfree';
+    free.type = 'text';
+    free.placeholder = 'Or type your own answer…';
+
+    opts.forEach((optText) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'qopt';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.textContent = optText;
+      btn.addEventListener('click', () => {
+        // Select this option, clear siblings + the free-text field.
+        optsWrap.querySelectorAll('.qopt').forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle('sel', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
+        free.value = '';
+        free.classList.remove('has');
+        slot.choice = optText;
+      });
+      optsWrap.appendChild(btn);
+    });
+    if (opts.length) block.appendChild(optsWrap);
+
+    // Free-text input: typing clears any option selection and becomes the choice.
+    free.addEventListener('input', () => {
+      const v = free.value;
+      free.classList.toggle('has', v.trim() !== '');
+      if (v.trim() !== '') {
+        optsWrap.querySelectorAll('.qopt').forEach((b) => {
+          b.classList.remove('sel');
+          b.setAttribute('aria-pressed', 'false');
+        });
+      }
+      slot.choice = v;
+    });
+    block.appendChild(free);
+
+    panel.appendChild(block);
+  });
+
+  // ----- foot: submit -----
+  const foot = document.createElement('div');
+  foot.className = 'qpanel-foot';
+  const submit = document.createElement('button');
+  submit.type = 'button';
+  submit.className = 'btn-go';
+  const NS = 'http://www.w3.org/2000/svg';
+  const play = document.createElementNS(NS, 'svg');
+  play.setAttribute('width', '14');
+  play.setAttribute('height', '14');
+  play.setAttribute('viewBox', '0 0 24 24');
+  play.setAttribute('fill', 'currentColor');
+  const tri = document.createElementNS(NS, 'path');
+  tri.setAttribute('d', 'M6 4l14 8-14 8V4Z');
+  play.appendChild(tri);
+  submit.appendChild(play);
+  submit.appendChild(document.createTextNode('Submit answers & resume'));
+  foot.appendChild(submit);
+  panel.appendChild(foot);
+}
+
+function renderGateBody(r, panel, pq) {
+  const issues = Array.isArray(pq.issues) ? pq.issues : [];
+
+  const intro = document.createElement('div');
+  intro.className = 'gate-intro';
+  intro.textContent = issues.length
+    ? 'This cycle reached its limit with open issues. Approve another cycle to keep iterating, or continue with what you have.'
+    : 'This cycle reached its limit. Approve another cycle to keep iterating, or continue with what you have.';
+  panel.appendChild(intro);
+
+  if (issues.length) {
+    const list = document.createElement('ul');
+    list.className = 'issues';
+    issues.forEach((iss) => {
+      const sev = String((iss && iss.severity) || 'suggestion').toLowerCase();
+      const li = document.createElement('li');
+      li.className = `issue sev-${sev}`;
+
+      const ihead = document.createElement('div');
+      ihead.className = 'issue-head';
+      const sevEl = document.createElement('span');
+      sevEl.className = 'issue-sev';
+      sevEl.textContent = sev;
+      const titleEl = document.createElement('span');
+      titleEl.className = 'issue-title';
+      titleEl.textContent = (iss && iss.title) || '(untitled issue)';
+      ihead.append(sevEl, titleEl);
+      li.appendChild(ihead);
+
+      if (iss && iss.detail) {
+        const det = document.createElement('div');
+        det.className = 'issue-detail';
+        det.textContent = iss.detail;
+        li.appendChild(det);
+      }
+      if (iss && iss.location) {
+        const loc = document.createElement('div');
+        loc.className = 'issue-loc';
+        loc.textContent = iss.location;
+        li.appendChild(loc);
+      }
+      list.appendChild(li);
+    });
+    panel.appendChild(list);
+  }
+
+  const foot = document.createElement('div');
+  foot.className = 'qpanel-foot gate-actions';
+  const cont = document.createElement('button');
+  cont.type = 'button';
+  cont.className = 'btn gate-continue';
+  cont.textContent = "Don't approve another cycle and continue";
+  const another = document.createElement('button');
+  another.type = 'button';
+  another.className = 'btn btn-primary gate-another';
+  another.textContent = 'I approve another cycle';
+  foot.append(cont, another);
+  panel.appendChild(foot);
+}
+
+// Gather the clarify answers from the live model slots and POST them.
+function submitAnswer(r) {
+  const answers = (r._answers || []).map((s) => ({
+    id: s.id,
+    question: s.question,
+    choice: typeof s.choice === 'string' ? s.choice.trim() : '',
+  }));
+  postAnswer(r, { answers });
+}
+
+// POST /api/answer for a run's pending question. On a transport/HTTP error we
+// log to the card and re-enable the panel; on 200 we DON'T assume the run
+// resumed (the server returns 200 even for a stale id) — we disable the panel,
+// show a "Resuming…" affordance, set r._answering, and KEEP r.pendingQuestion.
+// The panel is cleared only when the next phase/state event confirms resume.
+async function postAnswer(r, payload) {
+  if (!r || !r.pendingQuestion) return;
+  // Never post for a dead run.
+  if (r._finished || isTerminalStatus(r.status)) return;
+  const id = r.pendingQuestion.id;
+  const runId = r.runId;
+
+  setPanelBusy(r, true);
+  r._answering = true;
+
+  try {
+    const res = await fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId, id, payload }),
+    });
+    if (!res.ok) {
+      const err = await safeJson(res);
+      r._answering = false;
+      setPanelBusy(r, false);
+      onLog(r, { source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
+      return;
+    }
+    // 200: keep pendingQuestion; wait for the next phase/state to confirm resume.
+  } catch (e) {
+    r._answering = false;
+    setPanelBusy(r, false);
+    onLog(r, { source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+function isTerminalStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return s === 'done' || s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed' || s === 'complete' || s === 'completed';
+}
+
+// Disable/enable the panel's interactive controls and reflect a "Resuming…"
+// state on the primary button while an answer is in flight / awaiting resume.
+function setPanelBusy(r, busy) {
+  if (!r.el) return;
+  const panel = r.el.querySelector('.qpanel');
+  if (!panel) return;
+  panel.querySelectorAll('button, input').forEach((node) => {
+    node.disabled = busy;
+  });
+  const primary = panel.querySelector('.btn-go, .gate-another');
+  if (primary && busy && !primary.dataset.label) {
+    primary.dataset.label = primary.textContent;
+    primary.textContent = 'Resuming…';
+  } else if (primary && !busy && primary.dataset.label) {
+    primary.textContent = primary.dataset.label;
+    delete primary.dataset.label;
+  }
+}
+
+// Empty + hide a run's qpanel and drop its attention ring. Used on resume and
+// from finishRun's terminal path.
+function clearQpanel(r) {
+  if (!r.el) return;
+  const panel = r.el.querySelector('.qpanel');
+  if (panel) {
+    panel.innerHTML = '';
+    panel.classList.add('hidden');
+  }
+  r.el.classList.remove('attention');
 }
 
 // ---------------------------------------------------------------------------
@@ -568,15 +905,11 @@ function finishRun(r, status) {
   r._finished = true;
   r.status = status;
   r.pendingQuestion = null;
+  r._answering = false;
 
   // Clear the card's qpanel + attention before it drops out.
   if (r.el) {
-    const q = r.el.querySelector('.qpanel');
-    if (q) {
-      q.innerHTML = '';
-      q.classList.add('hidden');
-    }
-    r.el.classList.remove('attention');
+    clearQpanel(r);
     // Paint the terminal stepper one last time while the card still exists.
     paintStepper(r);
   }
@@ -1005,6 +1338,20 @@ if (runListEl) {
       const on = !sw.classList.contains('on');
       sw.classList.toggle('on', on);
       sw.setAttribute('aria-checked', String(on));
+      return;
+    }
+
+    // qpanel actions. Resolve the run per-card via the enclosing .run-card so
+    // delegation works for any dynamically-built card.
+    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another');
+    if (qbtn) {
+      const card = qbtn.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      const r = runId && runs.get(runId);
+      if (!r) return;
+      if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
+      else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
+      else submitAnswer(r);
     }
   });
 
@@ -1237,6 +1584,15 @@ function buildRunCard(r) {
   // Hydrate the log from any events that arrived before the card existed.
   const logEl = node.querySelector('.log');
   if (logEl) for (const rec of r.logLines) logEl.appendChild(buildLogLine(rec));
+
+  // A2: a card built from a hello-seeded pending question (mid-pause reload, the
+  // original `question` event may be past the replay buffer) must render the
+  // panel immediately from r.pendingQuestion — independent of any replayed
+  // event. r.el must be set before renderQpanel reads it.
+  if (r.pendingQuestion != null) {
+    r.el = node;
+    renderQpanel(r);
+  }
 
   return node;
 }
