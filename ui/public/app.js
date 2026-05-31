@@ -59,6 +59,7 @@ const el = {
 
   history: $('#history'),
   refreshHistory: $('#refresh-history'),
+  navHistoryCount: $('#nav-history-count'),
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
@@ -1194,7 +1195,8 @@ el.projectDelete.addEventListener('click', async () => {
     state.projects = Array.isArray(data.projects) ? data.projects : [];
     if (localStorage.getItem(LAST_PROJECT_KEY) === name) localStorage.removeItem(LAST_PROJECT_KEY);
     state.projectDir = '';
-    el.history.innerHTML = '<li class="empty">Select a project to load history.</li>';
+    el.history.innerHTML = '';
+    el.history.appendChild(histEmpty('Select a project to load history.'));
     renderProjectOptions('');
   } catch (e) {
     setFormMsg(`Delete error: ${e.message}`, 'err');
@@ -1414,52 +1416,188 @@ async function loadHistory(projectDir) {
       renderHistoryError(data.error || `HTTP ${res.status}`);
       return;
     }
-    renderHistory(projectDir, data.pipelines || []);
+    renderHistory(projectDir, data.pipelines || [], data.live || []);
   } catch (e) {
     renderHistoryError(e.message);
   }
 }
 
-function renderHistory(projectDir, pipelines) {
+// Render the #history container as expandable .hist-card DIVs (never <li>).
+// Merges the disk `pipelines` with the in-memory `live` runs (deduped by id) so
+// an active/just-finished run surfaces even before it's written to disk.
+function renderHistory(projectDir, pipelines, live = []) {
   el.history.innerHTML = '';
-  if (!pipelines.length) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = 'No saved pipelines yet for this folder.';
-    el.history.appendChild(li);
+
+  // Merge: start from disk records, append any live entry whose id isn't present.
+  const records = [...(Array.isArray(pipelines) ? pipelines : [])];
+  const seen = new Set(records.map((p) => p && p.id).filter(Boolean));
+  for (const lr of Array.isArray(live) ? live : []) {
+    if (!lr) continue;
+    const id = lr.id || lr.runId;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    // Normalize a live entry into a record shape the card builder understands.
+    records.push({ id, title: lr.title, status: lr.status || 'running', live: true, startedAt: lr.startedAt });
+  }
+
+  if (el.navHistoryCount) el.navHistoryCount.textContent = String(records.length);
+
+  if (!records.length) {
+    el.history.appendChild(histEmpty('No saved pipelines yet for this folder.'));
     return;
   }
-  pipelines.forEach((p) => {
-    const li = document.createElement('li');
-    li.className = 'history-item';
 
-    const title = document.createElement('div');
-    title.className = 'h-title';
-    title.textContent = p.title || p.id || '(untitled)';
-
-    const meta = document.createElement('div');
-    meta.className = 'h-meta';
-    const status = document.createElement('span');
-    status.className = 'h-status ' + statusClass(p.status);
-    status.textContent = p.status || 'unknown';
-    const when = document.createElement('span');
-    when.textContent = fmtDate(p.startedAt || p.mtime);
-    const idSpan = document.createElement('span');
-    idSpan.textContent = p.id || '';
-    meta.append(status, when, idSpan);
-
-    li.append(title, meta);
-    li.addEventListener('click', () => viewPipeline(projectDir, p.id, p.title));
-    el.history.appendChild(li);
+  records.forEach((p) => {
+    el.history.appendChild(buildHistCard(projectDir, p));
   });
+}
+
+// One row of the history empty/error state — a DIV (never an <li>).
+function histEmpty(text) {
+  const div = document.createElement('div');
+  div.className = 'hist-empty';
+  div.textContent = text;
+  return div;
+}
+
+// Map a pipeline status to { cls, text } for the collapsed-card badge.
+function historyBadge(p) {
+  const s = String(p.status || '').toLowerCase();
+  if (s === 'done' || s === 'complete' || s === 'completed') return { cls: 'badge green', text: 'DONE' };
+  if (s === 'stopped' || s === 'aborted') return { cls: 'badge red', text: 'STOPPED' };
+  if (s === 'error' || s === 'failed') return { cls: 'badge red', text: 'ERROR' };
+  if (p.live || s === 'running' || s === 'starting') return { cls: 'badge running', text: 'RUNNING' };
+  return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
+}
+
+// Build one expandable history card from a (disk or live) record. The collapsed
+// card shows only list-feed data (badge/title/timestamp); the tinted stepper is
+// lazily fetched + rendered on first expand.
+function buildHistCard(projectDir, p) {
+  const tpl = $('#hist-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  const id = p.id || '';
+  node.dataset.pipelineId = id;
+
+  const badge = node.querySelector('.badge');
+  if (badge) {
+    const { cls, text } = historyBadge(p);
+    badge.className = cls;
+    badge.textContent = text;
+  }
+
+  const titleEl = node.querySelector('.h-meta b');
+  const title = p.title || id || '(untitled)';
+  if (titleEl) {
+    titleEl.textContent = title;
+    // Title click opens the saved-markdown viewer (distinct from expand).
+    titleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      viewPipeline(projectDir, id, p.title);
+    });
+  }
+  const whenEl = node.querySelector('.h-meta small');
+  if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
+
+  const head = node.querySelector('.hist-head');
+  const detail = node.querySelector('.hist-detail');
+  if (head && detail) {
+    const toggle = () => toggleHistCard(projectDir, id, head, detail);
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  }
+
+  return node;
+}
+
+// Expand/collapse a history card. On the FIRST expand, lazily fetch the saved
+// state and render the tinted stepper, caching it so re-expand doesn't refetch.
+function toggleHistCard(projectDir, id, head, detail) {
+  const expanded = head.getAttribute('aria-expanded') === 'true';
+  if (expanded) {
+    head.setAttribute('aria-expanded', 'false');
+    detail.hidden = true;
+    return;
+  }
+  head.setAttribute('aria-expanded', 'true');
+  detail.hidden = false;
+  if (detail.dataset.loaded === '1') return; // cached — don't refetch
+  detail.dataset.loaded = '1';
+  loadHistDetail(projectDir, id, detail);
+}
+
+// Fetch GET /api/runs/:id and tint this card's stepper from data.state. On
+// failure, show a small inline notice and allow a retry on the next expand.
+async function loadHistDetail(projectDir, id, detail) {
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`);
+    const data = await safeJson(res);
+    if (!res.ok || !data || !data.state) {
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    paintHistStepper(detail, data.state);
+  } catch (e) {
+    detail.dataset.loaded = ''; // allow a retry on the next expand
+    let note = detail.querySelector('.detail-error');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'detail-error';
+      detail.appendChild(note);
+    }
+    note.textContent = `Could not load details: ${e.message}`;
+  }
+}
+
+// Tint the 6-stage stepper inside a history card's .hist-detail from a saved
+// state ({ phase, status, cycle }). Driven by the reached phase, not live events.
+function paintHistStepper(detail, st) {
+  const status = String(st.status || '').toLowerCase();
+  const key = normalizePhase(st.phase);
+  const reached = key ? STEP_ORDER.indexOf(key) : -1;
+  const isDone = status === 'done' || status === 'complete' || status === 'completed';
+
+  for (const stage of detail.querySelectorAll('.stage[data-step]')) {
+    const idx = STEP_ORDER.indexOf(stage.dataset.step);
+    const numEl = stage.querySelector('.num');
+    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
+    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+
+    let kind = null; // 'done' | 'stop' | null(pending)
+    if (isDone) {
+      kind = 'done'; // DONE: every stage complete (incl. the Done step).
+    } else if (idx < reached) {
+      kind = 'done'; // stages before the reached step completed.
+    } else if (idx === reached) {
+      // STOPPED/ERROR halt at the reached step; otherwise mark it reached/done.
+      kind = (status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed') ? 'stop' : 'done';
+    }
+    // idx > reached and idx === doneIdx (when not done) stay pending.
+
+    if (kind === 'done') {
+      stage.classList.add('s-done');
+      if (numEl) numEl.classList.add('n-green');
+    } else if (kind === 'stop') {
+      stage.classList.add('s-stop');
+      if (numEl) numEl.classList.add('n-red');
+    } else if (numEl) {
+      numEl.classList.add('n-grey'); // pending
+    }
+
+    // Single saved `cycle` scalar — show on refine/review only if present. We do
+    // NOT fabricate separate refine/review counts (no data source for them).
+    const cyEl = stage.querySelector('.cycle');
+    if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(stage.dataset.step) && st.cycle) ? `#${st.cycle}` : '';
+  }
 }
 
 function renderHistoryError(message) {
   el.history.innerHTML = '';
-  const li = document.createElement('li');
-  li.className = 'empty';
-  li.textContent = `Could not load history: ${message}`;
-  el.history.appendChild(li);
+  el.history.appendChild(histEmpty(`Could not load history: ${message}`));
 }
 
 async function viewPipeline(projectDir, id, title) {
