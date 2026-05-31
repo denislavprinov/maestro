@@ -62,3 +62,17 @@ test('maxClarifyCycles defaults to 3 and is overridable', () => {
   assert.equal(createOrchestrator({}).maxClarifyCycles, 3);
   assert.equal(createOrchestrator({ maxClarifyCycles: 2 }).maxClarifyCycles, 2);
 });
+
+import { normalizeClarify } from '../src/core/protocol.mjs';
+
+test('normalizeClarify caps questions at MAX_CLARIFY_QUESTIONS (4)', () => {
+  const many = {
+    questions: Array.from({ length: 9 }, (_, i) => ({
+      id: `q${i}`,
+      question: `Question ${i}?`,
+      options: ['a', 'b', 'c'],
+    })),
+  };
+  const out = normalizeClarify(many);
+  assert.equal(out.questions.length, 4);
+});

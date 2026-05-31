@@ -126,12 +126,17 @@ function firstIndexOfEither(text, a, b) {
   return Math.min(ia, ib);
 }
 
+// Hard cap so a single clarify round can never overwhelm the user, regardless of
+// what the planner emits. Tunable; pairs with the prompt guidance in
+// agents/maestro-planner.md.
+const MAX_CLARIFY_QUESTIONS = 4;
+
 /**
  * Coerce arbitrary parsed data into the canonical clarify shape:
  *   { questions: [ { id, question, options:[s,s,s], allowFreeText:true } ] }
- * Always returns at least { questions: [] }.
+ * Always returns at least { questions: [] }. Caps at MAX_CLARIFY_QUESTIONS.
  */
-function normalizeClarify(data) {
+export function normalizeClarify(data) {
   if (!data || typeof data !== 'object') return { questions: [] };
   const list = Array.isArray(data.questions) ? data.questions : [];
   const questions = [];
@@ -147,7 +152,7 @@ function normalizeClarify(data) {
     while (options.length < 3) options.push('');
     questions.push({ id, question, options, allowFreeText: true });
   }
-  return { questions };
+  return { questions: questions.slice(0, MAX_CLARIFY_QUESTIONS) };
 }
 
 /**
