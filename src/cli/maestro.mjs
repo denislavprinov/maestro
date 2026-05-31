@@ -148,7 +148,7 @@ Options:
                            (comma-separated; repeatable)
   --max-refine <N>         Max refine cycles before gating (must be >=1; default 5)
   --max-review <N>         Max review cycles before gating (must be >=1; default 5)
-  --max-clarify <N>        Max clarify rounds before moving to planning (>=1; default 3)
+  --max-clarify <N>        Max clarify rounds before moving to planning (must be >=1; default 3)
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode (default acceptEdits)
   --mock                   Offline mock mode (no claude, no tokens)
