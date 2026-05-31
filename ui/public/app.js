@@ -683,12 +683,21 @@ function renderClarifyBody(r, panel, pq) {
     const slot = { id: q.id, question: q.question, choice: '' };
     r._answers.push(slot);
 
+    // allowFreeText === false => options-only (no free-text input). Absent or
+    // true keeps the input. When suppressed, slot.choice can only be set by an
+    // option click; if none is picked it stays '' (submit yields '' gracefully).
+    const showFree = q.allowFreeText !== false;
+
     const optsWrap = document.createElement('div');
     optsWrap.className = 'qopts';
-    const free = document.createElement('input');
-    free.className = 'qfree';
-    free.type = 'text';
-    free.placeholder = 'Or type your own answer…';
+
+    let free = null;
+    if (showFree) {
+      free = document.createElement('input');
+      free.className = 'qfree';
+      free.type = 'text';
+      free.placeholder = 'Or type your own answer…';
+    }
 
     opts.forEach((optText) => {
       const btn = document.createElement('button');
@@ -697,14 +706,16 @@ function renderClarifyBody(r, panel, pq) {
       btn.setAttribute('aria-pressed', 'false');
       btn.textContent = optText;
       btn.addEventListener('click', () => {
-        // Select this option, clear siblings + the free-text field.
+        // Select this option, clear siblings + the free-text field (if present).
         optsWrap.querySelectorAll('.qopt').forEach((b) => {
           const on = b === btn;
           b.classList.toggle('sel', on);
           b.setAttribute('aria-pressed', String(on));
         });
-        free.value = '';
-        free.classList.remove('has');
+        if (free) {
+          free.value = '';
+          free.classList.remove('has');
+        }
         slot.choice = optText;
       });
       optsWrap.appendChild(btn);
@@ -712,18 +723,20 @@ function renderClarifyBody(r, panel, pq) {
     if (opts.length) block.appendChild(optsWrap);
 
     // Free-text input: typing clears any option selection and becomes the choice.
-    free.addEventListener('input', () => {
-      const v = free.value;
-      free.classList.toggle('has', v.trim() !== '');
-      if (v.trim() !== '') {
-        optsWrap.querySelectorAll('.qopt').forEach((b) => {
-          b.classList.remove('sel');
-          b.setAttribute('aria-pressed', 'false');
-        });
-      }
-      slot.choice = v;
-    });
-    block.appendChild(free);
+    if (free) {
+      free.addEventListener('input', () => {
+        const v = free.value;
+        free.classList.toggle('has', v.trim() !== '');
+        if (v.trim() !== '') {
+          optsWrap.querySelectorAll('.qopt').forEach((b) => {
+            b.classList.remove('sel');
+            b.setAttribute('aria-pressed', 'false');
+          });
+        }
+        slot.choice = v;
+      });
+      block.appendChild(free);
+    }
 
     panel.appendChild(block);
   });
@@ -826,6 +839,10 @@ function submitAnswer(r) {
 // The panel is cleared only when the next phase/state event confirms resume.
 async function postAnswer(r, payload) {
   if (!r || !r.pendingQuestion) return;
+  // Re-entrancy guard: an answer is already in flight for this run. Without
+  // this a synthetic/double click (or a re-triggered handler) could fire a
+  // second POST before maybeResume clears _answering.
+  if (r._answering) return;
   // Never post for a dead run.
   if (r._finished || isTerminalStatus(r.status)) return;
   const id = r.pendingQuestion.id;
@@ -855,6 +872,9 @@ async function postAnswer(r, payload) {
   }
 }
 
+// Single source of truth for "this run is over". The server's terminal statuses
+// are done|error|stopped; the remaining synonyms are accepted defensively. Used
+// by liveRuns (to exclude finished runs) and postAnswer (to refuse a late POST).
 function isTerminalStatus(status) {
   const s = String(status || '').toLowerCase();
   return s === 'done' || s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed' || s === 'complete' || s === 'completed';
@@ -933,15 +953,6 @@ function onDone(r, msg) {
 
 function onError(r) {
   finishRun(r, 'error');
-}
-
-function statusClass(status) {
-  const s = String(status || '').toLowerCase();
-  if (s === 'running' || s === 'starting') return 'running';
-  if (s === 'done' || s === 'complete' || s === 'completed' || s === 'success') return 'done';
-  if (s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed') return 'error';
-  if (s === 'waiting') return 'waiting';
-  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,6 +1551,11 @@ async function loadHistDetail(projectDir, id, detail) {
     if (!res.ok || !data || !data.state) {
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
+    // A prior failed expand may have left a "Could not load details…" note in
+    // this card. On a successful retry, clear it so the stepper isn't shown
+    // alongside a stale error.
+    const stale = detail.querySelector('.detail-error');
+    if (stale) stale.remove();
     paintHistStepper(detail, data.state);
   } catch (e) {
     detail.dataset.loaded = ''; // allow a retry on the next expand
@@ -1662,10 +1678,15 @@ function fmtDate(v) {
 // also clear pendingQuestion, so a lingering question can't keep it live.
 // The `!r._finished` guard ensures a run that has been through finishRun can
 // never re-enter the live list — even if an out-of-order event or a future
-// hello upserts it with a live `status` again.
+// hello upserts it with a live `status` again. The terminal exclusion routes
+// through isTerminalStatus so the done|error|stopped definition lives in one
+// place (shared with postAnswer's guard).
 function liveRuns() {
   return [...runs.values()].filter(
-    (r) => !r._finished && (r.status === 'starting' || r.status === 'running' || r.pendingQuestion != null)
+    (r) =>
+      !r._finished &&
+      !isTerminalStatus(r.status) &&
+      (r.status === 'starting' || r.status === 'running' || r.pendingQuestion != null)
   );
 }
 

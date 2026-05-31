@@ -442,7 +442,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-row .h-meta small{color:var(--ink-3);font-size:12px;}
 .hist-row .hash{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);}
 
-/* status badge — shared family colors (app.js statusClass: running/done/error/waiting) */
+/* status badge — shared family colors (app.js historyBadge: green/red/running) */
 .badge{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;letter-spacing:.06em;
   text-transform:uppercase;padding:5px 10px;border-radius:8px;flex:0 0 auto;white-space:nowrap;
   background:var(--field);color:var(--ink-3);}
@@ -468,19 +468,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-detail .stages.compact{margin:0;}
 .hist-detail .detail-error{color:var(--red-ink);font-size:12.5px;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
-
-/* history list (old markup: ul#history > li.history-item) */
-.history{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:360px;overflow-y:auto;}
-.history .empty{color:var(--ink-3);font-size:12.5px;padding:6px 2px;}
-.history-item{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border:1px solid var(--line);
-  border-radius:var(--r-ctrl);background:var(--field);cursor:pointer;transition:.15s;}
-.history-item:hover{background:#fff;box-shadow:var(--shadow-soft);}
-.history-item .h-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.history-item .h-meta{display:flex;gap:8px;font-size:11.5px;color:var(--ink-3);}
-.h-status{text-transform:uppercase;letter-spacing:.04em;}
-.h-status.done{color:var(--green-ink);}
-.h-status.error,.h-status.stopped{color:var(--red-ink);}
-.h-status.running{color:var(--peach-ink);}
 
 /* ---------- Saved-markdown viewer ---------- */
 .viewer{font-family:var(--mono);font-size:12.5px;line-height:1.7;background:#FBFBF9;border:1px solid var(--line);
