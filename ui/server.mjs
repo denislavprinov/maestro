@@ -12,11 +12,12 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { listPipelines, readPipeline } from '../src/core/artifacts.mjs';
+import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -181,11 +182,9 @@ function badRequest(res, message) {
   res.status(400).json({ error: message });
 }
 
+// Single source of truth for path normalization lives in the core registry.
 function resolveProjectDir(input) {
-  if (!input || typeof input !== 'string' || !input.trim()) return null;
-  let p = input.trim();
-  if (p.startsWith('~')) p = path.join(process.env.HOME || process.env.USERPROFILE || '', p.slice(1));
-  return path.resolve(p);
+  return normalizeProjectPath(input);
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +349,41 @@ app.post('/api/install', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Project registry: GET list / POST add / DELETE remove. Thin delegation to
+// src/core/projects.mjs (which owns validation + persistence).
+// ---------------------------------------------------------------------------
+app.get('/api/projects', async (_req, res) => {
+  try {
+    res.json({ projects: await listProjects() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/projects', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const projects = await addProject({ name: body.name, path: body.path });
+    res.json({ projects });
+  } catch (err) {
+    // addProject only throws on validation (empty/duplicate/not-a-directory), so
+    // a thrown error here is a client error -> 400. (A rare write-time I/O error
+    // would also surface as 400; acceptable for this single-user local tool.)
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+app.delete('/api/projects', async (req, res) => {
+  const name = typeof req.query.name === 'string' ? req.query.name : '';
+  if (!name.trim()) return badRequest(res, 'name is required');
+  try {
+    res.json({ projects: await removeProject(name) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Install logic (mirrors scripts/install.mjs): copy agents/*.md and
 // skills/maestro/** into <projectDir>/.claude/...
 // ---------------------------------------------------------------------------
@@ -480,14 +514,19 @@ app.use((req, res, next) => {
   });
 });
 
-server.on('error', (err) => {
-  console.error(`[maestro-ui] server error: ${err && err.message ? err.message : err}`);
-});
+// Only bind a port when run directly (`node ui/server.mjs`). When imported by a
+// test, skip listening so the test can mount `app` on its own ephemeral port.
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  server.on('error', (err) => {
+    console.error(`[maestro-ui] server error: ${err && err.message ? err.message : err}`);
+  });
 
-server.listen(PORT, () => {
-  const url = `http://localhost:${PORT}`;
-  console.log(`[maestro-ui] listening on ${url}`);
-  console.log(`[maestro-ui] WebSocket on ws://localhost:${PORT}/ws`);
-});
+  server.listen(PORT, () => {
+    const url = `http://localhost:${PORT}`;
+    console.log(`[maestro-ui] listening on ${url}`);
+    console.log(`[maestro-ui] WebSocket on ws://localhost:${PORT}/ws`);
+  });
+}
 
 export { app, server, runs };
