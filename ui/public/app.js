@@ -1,7 +1,7 @@
 // maestro UI client. Vanilla ESM, no framework, no build step.
 
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const $ = (sel, root = document) => (root || document).querySelector(sel);
+const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel)];
 
 // ---------------------------------------------------------------------------
 // App state
@@ -57,18 +57,7 @@ const el = {
   startBtn: $('#start-btn'),
   formMsg: $('#form-msg'),
 
-  runStatus: $('#run-status'),
-  stopBtn: $('#stop-btn'),
-  steps: $('#steps'),
-
-  questionCard: $('#question-card'),
-  questionTitle: $('#question-title'),
-  questionKind: $('#question-kind'),
-  questionBody: $('#question-body'),
-
-  log: $('#log'),
-  autoscroll: $('#autoscroll'),
-  clearLog: $('#clear-log'),
+  pipelineConfig: $('#pipeline-config'),
 
   history: $('#history'),
   refreshHistory: $('#refresh-history'),
@@ -298,9 +287,10 @@ function option(value, text) {
 }
 
 function renderStepConfigs() {
-  // Selectors are read-only while a run is active (config is loaded once at run
-  // start; edits apply to the NEXT run). See setRunStatus.
-  const locked = state.status === 'running' || state.status === 'starting' || state.status === 'waiting';
+  // Config always edits the NEXT run, so selectors are never locked. (The
+  // multi-run engine in Task 3 owns per-run status; there is no global run
+  // status to gate on anymore.)
+  const locked = false;
 
   for (const role of STEP_ROLES) {
     const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
@@ -382,9 +372,9 @@ async function addModelFlow(role) {
   }
 }
 
-// Delegated change handler for all step selects (markup is static; el.steps is
-// already cached in the `el` map as `steps: $('#steps')`).
-el.steps.addEventListener('change', (e) => {
+// Delegated change handler for all step selects. The selects live in the
+// #pipeline-config block (cached as el.pipelineConfig); each carries data-role.
+el.pipelineConfig.addEventListener('change', (e) => {
   const t = e.target;
   if (!(t instanceof HTMLSelectElement)) return;
   const role = t.dataset.role;
@@ -404,6 +394,9 @@ el.steps.addEventListener('change', (e) => {
 // Log window
 // ---------------------------------------------------------------------------
 function appendLog({ source, level, text, ts }) {
+  // The global log surface was removed; per-card logging arrives in Task 3.
+  // Guard so any stray call (e.g. from a WS message) cannot throw.
+  if (!el.log) return;
   if (text === undefined || text === null) return;
   const line = document.createElement('div');
   line.className = 'log-line lvl-' + (level || 'info');
@@ -465,6 +458,9 @@ function onState(msg) {
 function onQuestion(msg) {
   state.pendingQuestion = msg;
   setRunStatus('waiting');
+  // The global question card was removed; per-run qpanel rendering is Task 3.
+  // Bail before touching the (gone) question DOM so a real WS question can't throw.
+  if (!el.questionCard) return;
   if (msg.kind === 'gate') {
     renderGate(msg);
   } else {
@@ -474,6 +470,8 @@ function onQuestion(msg) {
 }
 
 function showQuestionCard(show) {
+  // Global question card removed; per-run qpanel arrives in Task 3.
+  if (!el.questionCard) return;
   el.questionCard.classList.toggle('hidden', !show);
   if (show) el.questionCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -674,7 +672,7 @@ function onDone(msg) {
   setRunStatus(msg.status || 'done');
   markAllDoneUpTo('done');
   showQuestionCard(false);
-  el.stopBtn.disabled = true;
+  if (el.stopBtn) el.stopBtn.disabled = true;
   el.startBtn.disabled = false;
   appendLog({
     source: 'system',
@@ -688,16 +686,15 @@ function onDone(msg) {
 
 function onError(msg) {
   setRunStatus('error');
-  el.stopBtn.disabled = true;
+  if (el.stopBtn) el.stopBtn.disabled = true;
   el.startBtn.disabled = false;
   appendLog({ source: 'system', level: 'error', text: `error: ${msg.message || 'unknown error'}`, ts: Date.now() });
 }
 
 function setRunStatus(status) {
+  // The global run-status badge was removed; per-run status lives on each card
+  // in Task 3. Keep state.status for any legacy readers and no-op the (gone) DOM.
   state.status = status;
-  el.runStatus.textContent = status;
-  el.runStatus.className = 'badge ' + statusClass(status);
-  renderStepConfigs(); // lock during run, unlock when idle/done/error/stopped
 }
 
 function statusClass(status) {
@@ -718,6 +715,49 @@ function syncSourceToggle() {
   el.markdownPane.classList.toggle('hidden', val !== 'markdown');
 }
 el.sourceRadios.forEach((r) => r.addEventListener('change', syncSourceToggle));
+
+// Segmented Task-source toggle. The .seg buttons are the visible control; the
+// hidden radios (input[name="source"]) remain the source of truth read at submit.
+$$('#source-seg button[data-src]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const src = btn.dataset.src;
+    $$('#source-seg button[data-src]').forEach((b) => {
+      const on = b === btn;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    const radio = el.sourceRadios.find((r) => r.value === src);
+    if (radio) radio.checked = true;
+    syncSourceToggle();
+  });
+});
+
+// Mock switch. The visible .switch mirrors the hidden #mock checkbox, which is
+// what the submit handler reads (el.mock.checked).
+const mockSwitch = $('#mock-switch');
+function toggleMock() {
+  const on = !el.mock.checked;
+  el.mock.checked = on;
+  mockSwitch.classList.toggle('on', on);
+  mockSwitch.setAttribute('aria-checked', String(on));
+}
+if (mockSwitch) {
+  mockSwitch.addEventListener('click', toggleMock);
+  mockSwitch.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      toggleMock();
+    }
+  });
+}
+
+// File-picker buttons trigger their (hidden) <input type=file>.
+$$('.pick[data-pick]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.pick === 'md') el.mdFile.click();
+    else if (btn.dataset.pick === 'extras') el.extras.click();
+  });
+});
 
 el.mdFile.addEventListener('change', async () => {
   const f = el.mdFile.files && el.mdFile.files[0];
@@ -1001,14 +1041,14 @@ function beginRun(runId, projectDir) {
   state.runId = runId;
   state.projectDir = projectDir;
   state.pendingQuestion = null;
-  // fresh canvas
-  el.log.innerHTML = '';
+  // fresh canvas (global log/stepper removed; per-card rendering arrives in Task 3)
+  if (el.log) el.log.innerHTML = '';
   resetSteps();
   showQuestionCard(false);
   hideViewer();
   setRunStatus('starting');
   setActiveStep('preflight');
-  el.stopBtn.disabled = false;
+  if (el.stopBtn) el.stopBtn.disabled = false;
 
   appendLog({ source: 'system', level: 'system', text: `run ${runId} started in ${projectDir}`, ts: Date.now() });
 
@@ -1028,31 +1068,10 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Stop
+// Stop / clear-log: the global Stop button and Live-log clear control were
+// removed in the shell rewrite. Per-card Stop and per-card log clearing arrive
+// in Task 3 (wired against each run card's own controls).
 // ---------------------------------------------------------------------------
-el.stopBtn.addEventListener('click', async () => {
-  if (!state.runId) return;
-  el.stopBtn.disabled = true;
-  try {
-    const res = await fetch('/api/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId: state.runId }),
-    });
-    if (!res.ok) {
-      const err = await safeJson(res);
-      appendLog({ source: 'ui', level: 'error', text: `stop failed: ${err.error || res.status}`, ts: Date.now() });
-      el.stopBtn.disabled = false;
-    } else {
-      appendLog({ source: 'ui', level: 'system', text: 'stop requested', ts: Date.now() });
-      setRunStatus('stopped');
-      showQuestionCard(false);
-    }
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `stop error: ${e.message}`, ts: Date.now() });
-    el.stopBtn.disabled = false;
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Install agents
@@ -1080,13 +1099,6 @@ el.installBtn.addEventListener('click', async () => {
   } finally {
     el.installBtn.disabled = false;
   }
-});
-
-// ---------------------------------------------------------------------------
-// Log controls
-// ---------------------------------------------------------------------------
-el.clearLog.addEventListener('click', () => {
-  el.log.innerHTML = '';
 });
 
 // ---------------------------------------------------------------------------
@@ -1180,6 +1192,14 @@ function hideViewer() {
   el.viewerCard.classList.add('hidden');
 }
 el.viewerClose.addEventListener('click', hideViewer);
+// Close the modal on backdrop click (overlay itself, not its inner card)...
+el.viewerCard.addEventListener('click', (e) => {
+  if (e.target === el.viewerCard) hideViewer();
+});
+// ...and on Escape, when it's open.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !el.viewerCard.classList.contains('hidden')) hideViewer();
+});
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -1200,10 +1220,57 @@ function fmtDate(v) {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-run engine (stubbed — full per-card rendering arrives in Task 3)
+// ---------------------------------------------------------------------------
+const runs = new Map();
+
+function renderRunningView() {
+  /* stub — Task 3 renders one card per active run into #run-list */
+}
+
+function updateNavCounts() {
+  const c = $('#nav-running-count');
+  if (c) c.textContent = String(runs.size);
+}
+
+// ---------------------------------------------------------------------------
+// Router: sidebar nav (+ responsive top-nav) toggle between the three views.
+// ---------------------------------------------------------------------------
+const views = $$('.view');
+const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
+const VIEW_NAMES = ['new', 'running', 'history'];
+
+function showView(name) {
+  views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
+  navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
+  if (name === 'running') renderRunningView();
+  if (name === 'history') {
+    const d = selectedProjectPath();
+    if (d) loadHistory(d);
+  }
+}
+
+// Nav clicks only update the hash; the single hashchange listener drives
+// showView so each navigation runs it exactly once (no double /api/runs fetch).
+navLinks.forEach((a) =>
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    location.hash = a.dataset.nav;
+  })
+);
+
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (VIEW_NAMES.includes(h)) showView(h);
+});
+
+// ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
 syncSourceToggle();
 setWsStatus(false);
-setRunStatus('idle');
 loadProjects();
 connectWS();
+const bootHash = location.hash.slice(1);
+showView(VIEW_NAMES.includes(bootHash) ? bootHash : 'new');
+updateNavCounts();

@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
-    "@fontsource/poppins": "^5.2.7"
+    "@fontsource/poppins": "^5.2.7",
+    "jsdom": "^29.1.1"
   }
 }
