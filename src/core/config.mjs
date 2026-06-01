@@ -13,14 +13,17 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 
-/** The four agent steps, in pipeline order. Drives the UI + orchestrator. */
-export const AGENT_STEPS = [
-  { key: 'planner', label: 'Plan' },
-  { key: 'refiner', label: 'Refine' },
-  { key: 'implementer', label: 'Implement' },
-  { key: 'reviewer', label: 'Review' },
-];
+/**
+ * The agent steps, in pipeline order — now DERIVED from the agent registry
+ * (agents/*.meta.json) rather than hardcoded, so adding an agent needs no edit
+ * here. The original four roles keep their legacy short labels via
+ * registryToSteps's LEGACY_LABELS, so this stays byte-identical for them while
+ * also surfacing the two new agents. Drives the UI + orchestrator + per-step
+ * config keys (STEP_KEYS, sanitizeSteps, resolveStepModels all read this).
+ */
+export const AGENT_STEPS = registryToSteps(loadAgentRegistry());
 
 const STEP_KEYS = new Set(AGENT_STEPS.map((s) => s.key));
 
