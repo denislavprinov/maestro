@@ -193,3 +193,58 @@ test('POST /api/run rejects an unknown workflowId -> 400', async () => {
   assert.equal(r.status, 400, 'an unknown workflow is a client error before the run starts');
   await rm(projectDir, { recursive: true, force: true });
 });
+
+test('PATCH /api/config sets a node model+effort and a feedback cycle count', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-rc-'));
+  const wfId = 'wf_quickfix';
+
+  let r = await fetch(`${base}/api/config`, {
+    method: 'PATCH', headers: JSONH,
+    body: JSON.stringify({
+      projectDir, workflowId: wfId,
+      nodes: { s1_0: { model: 'claude-opus-4-8', effort: 'high' } },
+      feedbacks: { fb_0: { maxCycles: 3 } },
+      activeWorkflowId: wfId,
+    }),
+  });
+  assert.equal(r.status, 200);
+
+  // GET reflects the run-config under config.workflows[wfId] + activeWorkflowId.
+  r = await fetch(`${base}/api/config?${new URLSearchParams({ projectDir })}`);
+  const j = await r.json();
+  assert.deepEqual(j.config.workflows[wfId].nodes.s1_0, { model: 'claude-opus-4-8', effort: 'high' });
+  assert.equal(j.config.workflows[wfId].feedbacks.fb_0.maxCycles, 3);
+  assert.equal(j.config.activeWorkflowId, wfId);
+
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+test('PATCH /api/config preserves legacy steps alongside workflows', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-rc-'));
+  // Set a legacy per-role step via the existing POST route.
+  await fetch(`${base}/api/config`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, step: 'reviewer', model: 'claude-opus-4-8', effort: 'max' }),
+  });
+  // Then a run-config node via PATCH.
+  await fetch(`${base}/api/config`, {
+    method: 'PATCH', headers: JSONH,
+    body: JSON.stringify({
+      projectDir, workflowId: 'wf_default',
+      nodes: { s0_0: { model: 'claude-sonnet-4-6', effort: 'high' } },
+    }),
+  });
+  const j = await (await fetch(`${base}/api/config?${new URLSearchParams({ projectDir })}`)).json();
+  // Both coexist (backward-compatible: legacy steps untouched).
+  assert.deepEqual(j.config.steps.reviewer, { model: 'claude-opus-4-8', effort: 'max' });
+  assert.deepEqual(j.config.workflows.wf_default.nodes.s0_0, { model: 'claude-sonnet-4-6', effort: 'high' });
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+test('PATCH /api/config without projectDir -> 400', async () => {
+  const r = await fetch(`${base}/api/config`, {
+    method: 'PATCH', headers: JSONH,
+    body: JSON.stringify({ workflowId: 'wf_default', nodes: {} }),
+  });
+  assert.equal(r.status, 400);
+});

@@ -21,6 +21,7 @@ import { listProjects, addProject, removeProject, normalizeProjectPath } from '.
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
+  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
 } from '../src/core/config.mjs';
 import {
   DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
@@ -445,7 +446,11 @@ app.get('/api/config', async (req, res) => {
   const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
-    const [config, models] = await Promise.all([readConfig(projectDir), listModels(projectDir)]);
+    // readRunConfig returns the full per-project config: legacy steps/customModels
+    // PLUS the run-config workflows{} (node model/effort, feedback cycles) and
+    // activeWorkflowId. It is a superset of readConfig, so the client keeps using
+    // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
+    const [config, models] = await Promise.all([readRunConfig(projectDir), listModels(projectDir)]);
     res.json({ config, models, steps: AGENT_STEPS, efforts: EFFORTS });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -461,6 +466,49 @@ app.post('/api/config', async (req, res) => {
     res.json({ config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/config -> write run-config: per-node model/effort, per-feedback
+// cycle counts, and the active workflow id. Keyed by workflowId + node/feedback
+// instance ids (see RunConfig in the design). Legacy per-role `steps` are
+// written via POST /api/config and are left untouched here. NOTE: the run-config
+// setters do NOT reject unknown models/efforts, and setFeedbackCycles COERCES
+// maxCycles to >= 1 (it never throws) — so the try/catch below guards I/O, not
+// validation. (Optional hardening: validate model/effort in setNodeModel via
+// listModels + EFFORTS, mirroring setStep at config.mjs:141-153.)
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
+// ---------------------------------------------------------------------------
+app.patch('/api/config', async (req, res) => {
+  const body = req.body || {};
+  const projectDir = resolveProjectDir(body.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  const workflowId = typeof body.workflowId === 'string' ? body.workflowId.trim() : '';
+  try {
+    if (body.nodes && typeof body.nodes === 'object') {
+      if (!workflowId) return badRequest(res, 'workflowId is required to set node config');
+      for (const [nodeId, sel] of Object.entries(body.nodes)) {
+        await setNodeModel(projectDir, workflowId, nodeId, {
+          model: sel && sel.model, effort: sel && sel.effort,
+        });
+      }
+    }
+    if (body.feedbacks && typeof body.feedbacks === 'object') {
+      if (!workflowId) return badRequest(res, 'workflowId is required to set feedback config');
+      for (const [fbId, sel] of Object.entries(body.feedbacks)) {
+        await setFeedbackCycles(projectDir, workflowId, fbId, sel && sel.maxCycles);
+      }
+    }
+    if (typeof body.activeWorkflowId === 'string' && body.activeWorkflowId.trim()) {
+      await setActiveWorkflow(projectDir, body.activeWorkflowId.trim());
+    }
+    const config = await readRunConfig(projectDir);
+    res.json({ config });
+  } catch (err) {
+    // The config.mjs setters throw only on validation (unknown model/effort,
+    // maxCycles < 1) -> client error, mirroring POST /api/config.
     return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
