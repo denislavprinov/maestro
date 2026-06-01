@@ -627,3 +627,24 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ro-flow .strip{flex:0 0 58px;align-self:stretch;margin:40px 0;}
 .ro-flow .col{pointer-events:none;}
 .ro-flow .node{width:218px;}
+
+/* Parallel step cell: nodes stack vertically and share one step number. */
+.stages.compact .stage.parallel{align-items:flex-start;}
+.stages.compact .stage.parallel .pnodes{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.stages.compact .stage.parallel .stage-node{display:flex;flex-direction:column;line-height:1.15;
+  padding-left:9px;border-left:2px solid var(--line-2);}
+.stages.compact .stage.parallel .stage-node b{font-weight:600;font-size:13px;}
+.stages.compact .stage.parallel .stage-node .cycle,
+.stages.compact .stage.parallel .stage-node .dur,
+.stages.compact .stage.parallel .stage-node .cost{font-family:var(--mono);font-size:10.5px;font-style:normal;color:var(--ink-2);}
+.stage .lbl .cycle:empty,.stage .lbl .dur:empty,.stage .stage-node em:empty{display:none;}
+
+/* Node color accent (mirrors the composer's .acc swatches) on the label edge.
+   Cover ALL six registry colors — the default implementer is amber. */
+.stages.compact .stage .lbl.acc-violet,.stages.compact .stage .stage-node.acc-violet{box-shadow:inset 3px 0 0 -1px var(--violet);}
+.stages.compact .stage .lbl.acc-green, .stages.compact .stage .stage-node.acc-green {box-shadow:inset 3px 0 0 -1px var(--green);}
+.stages.compact .stage .lbl.acc-peach, .stages.compact .stage .stage-node.acc-peach {box-shadow:inset 3px 0 0 -1px var(--peach);}
+.stages.compact .stage .lbl.acc-blue,  .stages.compact .stage .stage-node.acc-blue  {box-shadow:inset 3px 0 0 -1px var(--blue);}
+.stages.compact .stage .lbl.acc-amber, .stages.compact .stage .stage-node.acc-amber {box-shadow:inset 3px 0 0 -1px var(--amber);}
+.stages.compact .stage .lbl.acc-red,   .stages.compact .stage .stage-node.acc-red   {box-shadow:inset 3px 0 0 -1px var(--red);}
+.stages.compact .stage .lbl[class*="acc-"]{padding-left:8px;}
