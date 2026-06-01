@@ -16,7 +16,7 @@ The frontend is vanilla HTML/CSS/JS — no framework, no build step.
 ## What it is
 
 You give the orchestrator a **project folder** and a **prompt** (or a markdown brief).
-A deterministic state machine then runs four agents in sequence, looping until the work
+A deterministic state machine then runs the agents of the selected workflow in sequence, looping until the work
 clears quality gates:
 
 1. **Planner** writes an initial plan (with code snippets) and, instead of *assuming*
@@ -135,7 +135,7 @@ Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 
 ---
 
-## The 4 agents
+## The agents
 
 | Agent | File | Role |
 | --- | --- | --- |
@@ -143,6 +143,14 @@ Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 | Plan Refiner | `agents/maestro-plan-refiner.md` | Reviews + refines the plan (and its code snippets); writes `-vN`; emits a severity-tagged review per cycle. |
 | Implementer | `agents/maestro-implementer.md` | Follows the latest plan with no deviation; TDD red-green-refactor; also runs in "fix" mode against a review. |
 | Code Reviewer | `agents/maestro-code-reviewer.md` | Reviews the git diff; writes review markdown + JSON; hands back to the implementer to fix. |
+
+Maestro now ships **6 runnable agents** and the agent system is **data-driven**:
+each agent is a prompt (`agents/maestro-<role>.md`) plus a metadata sidecar
+(`agents/<key>.meta.json`), so new agents drop in without engine edits. Beyond
+the four above, it adds **Manual Tests Checklist** (drafts manual test cases) and
+**Manual web UI testing** (runs them against the live web UI via Playwright and
+emits a pass/fail verdict). To add your own, see
+[`docs/ADDING-AGENTS.md`](docs/ADDING-AGENTS.md).
 
 ---
 
@@ -159,6 +167,24 @@ Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 
 A run is "blocked" only by `critical` or `major` issues; `minor`/`suggestion` issues do
 not hold up the loop.
+
+## Pipeline Composer
+
+The phases above are the **default** pipeline. The **Pipeline Composer** (a view
+in the web UI) lets you compose your own: drag agents onto a canvas to build
+**sequential steps**, **parallel groups** (a step with more than one agent runs
+concurrently), and **feedback loops** (an agent that emits a verdict can loop
+back to an earlier step until it passes or hits a cycle cap). Save a layout by
+name and it becomes selectable from **New Pipeline**, where you also pick each
+agent's model/effort and each loop's cycle count.
+
+The engine is data-driven: it executes whatever workflow you select. The default
+workflow reproduces exactly the `Plan → Refine → Implement → Review` behavior
+described above, and **Reset to default** on the canvas redraws it. Workflow
+topology is saved globally under `~/.maestro/workflows/`; per-project
+model/effort/cycle choices live in `<projectDir>/.maestro/config.json`.
+
+To add a new agent to the palette, see [`docs/ADDING-AGENTS.md`](docs/ADDING-AGENTS.md).
 
 ---
 
@@ -191,7 +217,7 @@ The exact JSON shapes are specified in `docs/ARCHITECTURE.md` §5.
 src/core/        protocol, artifacts, preflight, claude-runner, phases, orchestrator
 src/cli/         orchestrate.mjs (CLI entry)
 scripts/         install.mjs (copy agents + skill into a target project)
-agents/          the four agent system prompts
+agents/          agent prompts + .meta.json sidecars (data-driven set)
 skills/          orchestrate/SKILL.md (the /maestro skill)
 ui/              server.mjs + public/ (single-page web UI)
 docs/            ARCHITECTURE.md (single source of truth)
