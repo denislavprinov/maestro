@@ -19,6 +19,49 @@ import { resolveRunConfig } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 
 /**
+ * Default feedback cycle count when run-config does not override it. Matches the
+ * orchestrator's maxRefineCycles/maxReviewCycles default of 5 so DEFAULT_WORKFLOW
+ * reproduces today's gate timing.
+ */
+const DEFAULT_MAX_CYCLES = 5;
+
+/** Default location of the agent prompt markdown files (mirrors orchestrator.mjs). */
+const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
+
+/**
+ * Read an agent prompt file and pull its declared tools from YAML frontmatter.
+ * Returns { prompt, tools }. A missing file => { prompt:'', tools:[] } (fails
+ * safe; the orchestrator already tolerates an empty agent body). The frontmatter
+ * `tools:` line is a comma-separated list (matches agents/*.md convention).
+ * @param {string} agentsDir
+ * @param {string|null} agentFile
+ * @returns {Promise<{prompt:string, tools:string[]}>}
+ */
+async function loadAgentFile(agentsDir, agentFile) {
+  if (!agentFile) return { prompt: '', tools: [] };
+  let text = '';
+  try {
+    text = await readFile(join(agentsDir, agentFile), 'utf8');
+  } catch {
+    return { prompt: '', tools: [] };
+  }
+  return { prompt: text, tools: parseFrontmatterTools(text) };
+}
+
+/** Extract a comma-separated `tools:` list from leading --- YAML frontmatter. */
+function parseFrontmatterTools(text) {
+  const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
+  if (!m) return [];
+  const line = m[1].split(/\r?\n/).find((l) => /^tools\s*:/.test(l));
+  if (!line) return [];
+  return line
+    .replace(/^tools\s*:/, '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
  * The built-in default workflow: the CURRENT pipeline Plan -> Refine -> Implement
  * -> Review, with the two feedback loops that reproduce today's _refineLoop and
  * _reviewLoop (orchestrator.mjs:331-459):
@@ -159,4 +202,63 @@ export async function deleteWorkflow(id) {
     return false;
   }
 }
-export function resolveWorkflow(_projectDir, _workflowId, _registry) { throw new Error('not implemented'); } // Task 6
+/**
+ * Merge a workflow template + the project's run-config + the agent registry into
+ * an ExecutablePlan the dispatcher runs:
+ *   { id, name, steps:[[Node]], feedbacks:[{id,from,to,maxCycles,gate}] }
+ *   Node = { nodeId, key, uiPhase, runnerType, agentFile, agentPrompt, model, effort, tools, loopSource }
+ * model/effort come from run-config (undefined when unset; the orchestrator folds
+ * in the global fallback at dispatch). maxCycles defaults to DEFAULT_MAX_CYCLES.
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @param {Record<string,object>} registry  loadAgentRegistry() output
+ * @param {string} [agentsDir]  override for tests; defaults to ../../agents
+ * @returns {Promise<object>} ExecutablePlan
+ * @throws {Error} when the workflow id is unknown
+ */
+export async function resolveWorkflow(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR) {
+  const tpl = await readWorkflow(workflowId);
+  if (!tpl) throw new Error(`workflow not found: ${workflowId}`);
+  const reg = registry && typeof registry === 'object' ? registry : {};
+  const { nodes: nodeCfg, feedbacks: fbCfg } = await resolveRunConfig(projectDir, workflowId);
+  // CONV-4: map each agent key to the UI stepper bucket the live view understands,
+  // so the dispatcher can emit a real `'phase'` per node (the two new agents get
+  // their own buckets, added to the UI's STEP_ORDER in Phase 6 Task 7).
+  const UI_PHASE = {
+    planner: 'plan', refiner: 'refine', implementer: 'implement', reviewer: 'review',
+    manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web',
+  };
+
+  const steps = [];
+  for (const group of tpl.steps) {
+    const resolvedGroup = [];
+    for (const node of group) {
+      const meta = reg[node.key] || {};
+      const { prompt, tools } = await loadAgentFile(agentsDir, meta.agentFile ?? null);
+      const sel = nodeCfg[node.id] || {};
+      resolvedGroup.push({
+        nodeId: node.id,
+        key: node.key,
+        uiPhase: UI_PHASE[node.key] || node.key,   // CONV-4: live-UI stepper bucket
+        runnerType: meta.runnerType || 'producer',
+        agentFile: meta.agentFile ?? null,
+        agentPrompt: prompt,
+        model: sel.model,            // undefined unless configured (folded later)
+        effort: sel.effort,          // undefined unless configured
+        tools,
+        loopSource: !!meta.loopSource,
+      });
+    }
+    steps.push(resolvedGroup);
+  }
+
+  const feedbacks = (Array.isArray(tpl.feedbacks) ? tpl.feedbacks : []).map((fb) => ({
+    id: fb.id,
+    from: fb.from,
+    to: fb.to,
+    maxCycles: Number(fbCfg[fb.id]?.maxCycles) > 0 ? Number(fbCfg[fb.id].maxCycles) : DEFAULT_MAX_CYCLES,
+    gate: 'hasBlocking',
+  }));
+
+  return { id: tpl.id, name: tpl.name, steps, feedbacks };
+}

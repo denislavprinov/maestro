@@ -14,6 +14,7 @@ import {
   deleteWorkflow,
   resolveWorkflow,
 } from '../src/core/workflows.mjs';
+import { setNodeModel, setFeedbackCycles } from '../src/core/config.mjs';
 
 // Each test gets its own ~/.maestro via MAESTRO_HOME so the global store is
 // isolated and nothing touches the developer's real home dir.
@@ -146,4 +147,79 @@ test('deleteWorkflow refuses to delete the built-in default (returns false, leav
   assert.equal(await deleteWorkflow('wf_default'), false);
   const still = await readWorkflow('wf_default');
   assert.equal(still.id, 'wf_default'); // DEFAULT_WORKFLOW is always present
+});
+
+// Inline fake registry mirroring Phase 1's AgentMeta shape. agentFile values are
+// the REAL agent prompt files on disk so prompt + tools load is exercised.
+const REGISTRY = {
+  planner: { key: 'planner', runnerType: 'producer', agentFile: 'maestro-planner.md', loopSource: false },
+  refiner: { key: 'refiner', runnerType: 'producer', agentFile: 'maestro-plan-refiner.md', loopSource: false },
+  implementer: { key: 'implementer', runnerType: 'producer', agentFile: 'maestro-implementer.md', loopSource: false },
+  reviewer: { key: 'reviewer', runnerType: 'verifier', agentFile: 'maestro-code-reviewer.md', loopSource: true },
+};
+
+test('resolveWorkflow(default) yields a 4-step ExecutablePlan with prompts and default cycles', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  assert.equal(plan.id, 'wf_default');
+  assert.equal(plan.steps.length, 4);
+  const flat = plan.steps.flat();
+  assert.deepEqual(flat.map((n) => n.key), ['planner', 'refiner', 'implementer', 'reviewer']);
+  // Each node carries the resolved runner + a non-empty agentPrompt from its file.
+  for (const n of flat) {
+    assert.ok(['producer', 'verifier'].includes(n.runnerType), `runnerType for ${n.key}`);
+    assert.ok(typeof n.agentPrompt === 'string' && n.agentPrompt.length > 0, `prompt for ${n.key}`);
+    assert.ok('model' in n && 'effort' in n, 'model/effort fields present');
+    assert.ok(Array.isArray(n.tools), 'tools array present');
+  }
+  // loopSource flows through from the registry.
+  assert.equal(flat.find((n) => n.key === 'reviewer').loopSource, true);
+  assert.equal(flat.find((n) => n.key === 'planner').loopSource, false);
+  // Feedbacks carry the gate + a default maxCycles of 5 (orchestrator parity).
+  assert.equal(plan.feedbacks.length, 2);
+  for (const f of plan.feedbacks) {
+    assert.equal(f.gate, 'hasBlocking');
+    assert.equal(f.maxCycles, 5);
+  }
+});
+
+test('resolveWorkflow overlays per-project model/effort and feedback cycles', async () => {
+  await freshHome();
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_default', 's2_0', { model: 'claude-opus-4-8', effort: 'high' });
+  await setFeedbackCycles(p, 'wf_default', 'fb_review', 2);
+  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  const impl = plan.steps.flat().find((n) => n.nodeId === 's2_0');
+  assert.equal(impl.model, 'claude-opus-4-8');
+  assert.equal(impl.effort, 'high');
+  const reviewFb = plan.feedbacks.find((f) => f.id === 'fb_review');
+  assert.equal(reviewFb.maxCycles, 2);
+});
+
+test('resolveWorkflow resolves a saved template (incl. a parallel step)', async () => {
+  await freshHome();
+  const p = await freshProject();
+  await writeWorkflow({
+    id: 'wf_par',
+    name: 'Parallel',
+    steps: [
+      [{ id: 'n_plan', key: 'planner' }],
+      [{ id: 'n_impl', key: 'implementer' }, { id: 'n_refine', key: 'refiner' }], // parallel group
+      [{ id: 'n_rev', key: 'reviewer' }],
+    ],
+    feedbacks: [{ id: 'fb_r', from: 'n_rev', to: 'n_impl' }],
+  });
+  const plan = await resolveWorkflow(p, 'wf_par', REGISTRY);
+  assert.equal(plan.steps.length, 3);
+  assert.equal(plan.steps[1].length, 2); // the parallel group survives
+  assert.deepEqual(plan.steps[1].map((n) => n.nodeId).sort(), ['n_impl', 'n_refine']);
+  assert.equal(plan.feedbacks[0].from, 'n_rev');
+  assert.equal(plan.feedbacks[0].to, 'n_impl');
+});
+
+test('resolveWorkflow throws for an unknown workflow id', async () => {
+  await freshHome();
+  const p = await freshProject();
+  await assert.rejects(() => resolveWorkflow(p, 'wf_missing', REGISTRY), /wf_missing|not found|unknown/i);
 });
