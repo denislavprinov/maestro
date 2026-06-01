@@ -32,13 +32,10 @@ import {
 import { detectTools } from './preflight.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
-import {
-  runPlannerClarify,
-  runPlannerPlan,
-  runRefiner,
-  runImplementer,
-  runReviewer,
-} from './phases.mjs';
+import { runPlannerClarify } from './phases.mjs';
+import { runners as defaultRunners } from './runners.mjs';
+import { resolveWorkflow } from './workflows.mjs';
+import { loadAgentRegistry } from './agent-registry.mjs';
 
 /**
  * Default location of the agent prompt markdown files, relative to this module.
@@ -89,6 +86,10 @@ class Orchestrator extends EventEmitter {
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
+    // Which saved workflow topology to run (default reproduces today's pipeline) and
+    // the runner registry the dispatcher consults (overridable for tests).
+    this.workflowId = this.opts.workflowId || 'wf_default';
+    this._runners = this.opts.runners || defaultRunners;
 
     this.abort = new AbortController();
     this.pendingQuestion = null; // { id, resolve, reject, kind }
@@ -217,43 +218,15 @@ class Orchestrator extends EventEmitter {
       const answers = await this._clarify();
       this._checkAbort();
 
-      // 5) Planner plan.
-      const planFilePath = planPath(this.projectDir, this.baseName, 1, this.planDatePrefix);
-      this._phase('plan', 0, 'start');
-      const planResult = await runPlannerPlan(this._phaseCtx('planner'), {
-        answers,
-        planFilePath,
-        baseName: this.baseName,
-      });
-      const currentPlanPath = planResult?.planPath || planFilePath;
-      this._artifact('plan', currentPlanPath);
-      await appendAudit(this.pipeline.dir, `Plan written: \`${rel(this.projectDir, currentPlanPath)}\`.`);
-      this._phase('plan', 0, 'done');
-      this._checkAbort();
-
-      // 6) Refine loop.
-      const finalPlanPath = await this._refineLoop(currentPlanPath);
-      this._checkAbort();
-
-      // 7) Implement.
-      this._phase('implement', 0, 'start');
-      const impl = await runImplementer(this._phaseCtx('implementer'), {
-        planPath: finalPlanPath,
-        mode: 'implement',
-      });
-      // Stage the implementer's output so newly-created (untracked) files appear
-      // in `git diff` for the reviewer. Without this, brand-new feature files are
-      // invisible to a plain `git diff`/`git diff HEAD`.
-      await this._stageWorkingTree();
-      await appendAudit(
-        this.pipeline.dir,
-        `Implementation complete: ${oneLine(impl?.summary) || 'done'}.`,
-      );
-      this._phase('implement', 0, 'done');
-      this._checkAbort();
-
-      // 8) Review loop (review -> fix -> review ...).
-      await this._reviewLoop(finalPlanPath);
+      // 5) Resolve the workflow topology + per-project run-config -> ExecutablePlan,
+      //    then dispatch it. The default workflow (wf_default) routes through the
+      //    SAME dispatcher and reproduces today's Plan->Refine->Implement->Review
+      //    (the planner PLAN node is the first dispatched step; clarify above is a
+      //    pre-step, not a plan node).
+      const registry = await loadAgentRegistry();
+      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
+      await appendAudit(this.pipeline.dir, `Workflow: **${plan.name}** (${plan.id}).`);
+      await this._dispatch(plan, { answers });
       this._checkAbort();
 
       // 9) Done.
@@ -319,6 +292,187 @@ class Orchestrator extends EventEmitter {
     await appendAudit(this.pipeline.dir, `Clarify: answered ${answers.length} question(s).`);
     this._phase('clarify', 1, 'done');
     return enriched;
+  }
+
+  // ── data-driven dispatcher ─────────────────────────────────────────────────
+
+  /**
+   * Walk the resolved plan's steps in order. A single-node step runs directly; a
+   * multi-node step runs concurrently (Promise.all). After each step completes,
+   * check active feedback loops whose `from` step just ran: if the loop's `from`
+   * node returned blocking issues and the loop's cycle < maxCycles, rewind the
+   * pointer to the loop's `to` step (incrementing the loop cycle) and re-run
+   * forward. When a loop's cycles are exhausted, gate the user (continue/stop)
+   * exactly as the legacy _reviewLoop did.
+   *
+   * Per-loop state lives in `loopState[fb.id] = { cycle }`; the per-step run cycle
+   * passed to nodes is bumped while a loop is replaying through that step (so a
+   * node's artifacts/keys are unique per re-run), defaulting to 1.
+   * @param {object} plan ExecutablePlan
+   * @param {{answers?:Array}} runArgs
+   */
+  async _dispatch(plan, runArgs = {}) {
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    const feedbacks = Array.isArray(plan?.feedbacks) ? plan.feedbacks : [];
+    // Map: source step index -> feedbacks originating there. `from` resolves to the
+    // index of the step containing the from-node; `to` is a step index (tolerate a
+    // node id or a numeric index).
+    const nodeStepIndex = new Map();
+    steps.forEach((group, i) => group.forEach((n) => nodeStepIndex.set(n.nodeId, i)));
+    const toIndex = (ref) =>
+      typeof ref === 'number' ? ref : (nodeStepIndex.has(ref) ? nodeStepIndex.get(ref) : Number(ref) || 0);
+    const fbByFrom = new Map();
+    for (const fb of feedbacks) {
+      const fromIdx = toIndex(fb.from);
+      if (!fbByFrom.has(fromIdx)) fbByFrom.set(fromIdx, []);
+      fbByFrom.get(fromIdx).push({ ...fb, fromIdx, toIdx: toIndex(fb.to), maxCycles: numOr(fb.maxCycles, 1) });
+    }
+    const loopState = {}; // fb.id -> { cycle }
+    // The active run cycle per step index while a loop is replaying through it.
+    const stepCycle = new Array(steps.length).fill(1);
+
+    // Shared run state threaded between nodes (the plan/checklist/review paths).
+    const io = {
+      planPath: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix),
+      checklistPath: join(this.pipeline.dir, 'manual-tests-checklist.md'),
+      answers: runArgs.answers || [],
+    };
+
+    let i = 0;
+    while (i < steps.length) {
+      this._checkAbort();
+      const cycle = stepCycle[i];
+      await this._runStep(steps[i], i, cycle, io);
+      // Stage 5a: walk only. The generic feedback loop (rewind on a blocked
+      // `from` node, gate at maxCycles) lands in Stage 5b.
+      i += 1;
+    }
+    // Silence unused-binding lint until 5b wires the loop (kept here on purpose so
+    // the 5b diff is purely additive in _dispatch's body).
+    void fbByFrom; void loopState; void stepCycle;
+  }
+
+  /**
+   * Run one step. Single node -> direct; >1 node -> Promise.all (PARALLEL).
+   * Returns an array of { node, result } in node order.
+   */
+  async _runStep(group, stepIndex, cycle, io) {
+    // CONV-6: each node reads a FROZEN snapshot of the inbound IO; nodes never
+    // mutate shared state concurrently. Results merge back in node order after all
+    // nodes settle, so the outcome is independent of completion timing.
+    const snapshot = Object.freeze({ ...io });
+    const results = group.length === 1
+      ? [await this._runNode(group[0], stepIndex, cycle, snapshot)]
+      : await Promise.all(group.map((node) => this._runNode(node, stepIndex, cycle, snapshot)));
+    let stageNeeded = false;
+    for (const { node, result } of results) {
+      this._afterNode(node, result, io);                 // deterministic, node order
+      if (node.runnerType === 'producer' && node.key === 'implementer') stageNeeded = true;
+    }
+    // CONV-6: stage ONCE, AWAITED, after the step's producers — so a following
+    // reviewer's `git diff` sees newly-written files (legacy _reviewLoop staged
+    // after every implement pass).
+    if (stageNeeded) await this._stageWorkingTree();
+    return results;
+  }
+
+  /**
+   * Execute a single plan node through its runnerType, threading the shared IO
+   * paths in/out. Records the node step (parallel-safe) and tags all emits.
+   */
+  async _runNode(node, stepIndex, cycle, io) {
+    this._nodeStep(node, stepIndex, cycle, 'start');
+    // Per-cycle artifact paths so loop re-runs never clobber prior outputs.
+    const ctx = this._nodeCtx(node, { stepIndex, cycle });
+    Object.assign(ctx, this._nodeIo(node, cycle, io));
+    let result;
+    try {
+      const runner = this._runners[node.runnerType];
+      if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
+      result = await runner(ctx);
+    } finally {
+      this._nodeStep(node, stepIndex, cycle, 'done');
+    }
+    // CONV-6: no shared-IO mutation here — _runStep merges results in node order.
+    return { node, result };
+  }
+
+  /** Compute the per-node IO fields the runners read, from the shared run state. */
+  _nodeIo(node, cycle, io) {
+    switch (node.key) {
+      case 'planner':
+        return { planFilePath: io.planPath, baseName: this.baseName, answers: io.answers };
+      case 'refiner': {
+        const outPlanPath = planPath(this.projectDir, this.baseName, cycle + 1, this.planDatePrefix);
+        return {
+          inPlanPath: io.planPath,
+          outPlanPath,
+          reviewJsonPath: join(this.pipeline.dir, `refine-review-cycle${cycle}.json`),
+          cycle,
+        };
+      }
+      case 'implementer':
+        return {
+          planPath: io.planPath,
+          reviewPath: io.reviewMdPath,
+          mode: io.reviewMdPath ? 'fix' : 'implement',
+          cycle,
+        };
+      case 'manualTestsChecklist':
+        return { planPath: io.planPath, checklistPath: io.checklistPath };
+      case 'reviewer':
+        return {
+          planPath: io.planPath,
+          reviewMdPath: reviewPath(this.projectDir, this.baseName, this.planDatePrefix),
+          reviewJsonPath: join(this.pipeline.dir, `impl-review-cycle${cycle}.json`),
+          cycle,
+        };
+      case 'manualWebUiTesting':
+        return {
+          checklistPath: io.checklistPath,
+          reviewMdPath: join(this.pipeline.dir, `webui-review-cycle${cycle}.md`),
+          reviewJsonPath: join(this.pipeline.dir, `webui-review-cycle${cycle}.json`),
+          cycle,
+        };
+      default:
+        return { cycle };
+    }
+  }
+
+  /** Fold a node's result back into shared run state + emit artifacts. */
+  _afterNode(node, result, io) {
+    if (!result) return;
+    if (result.planPath) { io.planPath = result.planPath; this._artifact('plan', result.planPath); }
+    if (result.outPlanPath) { io.planPath = result.outPlanPath; this._artifact('plan', result.outPlanPath); }
+    if (result.checklistPath) { io.checklistPath = result.checklistPath; this._artifact('checklist', result.checklistPath); }
+    if (result.review) {
+      // CONV-5: remember the review md so a loop rewind runs the implementer in
+      // `fix` mode against it (see _nodeIo 'implementer').
+      io.reviewMdPath = result.reviewMdPath ?? io.reviewMdPath;
+    }
+    // CONV-6: working-tree staging is awaited ONCE per step in _runStep (not here),
+    // so parallel producers can't race git and the reviewer always sees new files.
+  }
+
+  /** True if the loop's `from` node returned a blocking verdict (CONV-3). */
+  _loopFired(fb, results) {
+    const review = this._reviewOf(results, fb.from);
+    return review ? hasBlocking(review) : false;
+  }
+
+  /**
+   * CONV-3: the verdict of the loop's ORIGINATING node, resolved by `nodeId`,
+   * REGARDLESS of runnerType — so a producer self-loop (the refiner `s1_0->s1_0`)
+   * gates on its own review, reproducing the legacy `_refineLoop`. `loopSource` is
+   * a validation/UI hint, not the runtime gate selector. Falls back to synthesizing
+   * a review from a blocked status when the node exposed issues but no full review.
+   */
+  _reviewOf(results, fromNodeId) {
+    const r = results.find((x) => x.node.nodeId === fromNodeId);
+    if (!r) return null;
+    return r.result?.review || (r.result?.status === 'blocked'
+      ? { issues: (r.result.issues || []).map((i) => ({ severity: i.severity || 'major' })), summary: r.result.summary || '' }
+      : null);
   }
 
   /**

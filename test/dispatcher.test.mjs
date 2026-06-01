@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { createOrchestrator, createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
 
 const tmpDirs = [];
 async function makeTmpDir() {
@@ -49,4 +49,52 @@ test('cost is attributed to the node step key, not the live phase', () => {
   assert.equal(st.steps.find((s) => s.key === keyA).costUsd, 0.02);
   assert.equal(st.steps.find((s) => s.key === keyB).costUsd, 0.05);
   assert.equal(st.totalCostUsd, 0.07);
+});
+
+// ── dispatcher: parallel walk + generic feedback loop ──────────────────────────
+
+// Build a minimally-initialized orchestrator ready to dispatch: pipeline dir +
+// prompts stubbed, git/preflight skipped. We call _dispatch directly.
+async function primed(projectDir) {
+  const orch = makeOrch({ projectDir, prompt: 'demo', auto: true, claude: { mock: true } });
+  orch.pipeline = { id: 'p1', dir: projectDir, promptText: 'demo' };
+  orch.state.id = 'p1';
+  orch.state.pipelineDir = projectDir;
+  orch.baseName = 'feature';
+  orch.agentPrompts = {};
+  orch.toolInstruction = '';
+  orch.checkpointRef = null;
+  orch._setStatus('running');
+  return orch;
+}
+
+test('parallel step: both nodes run, both emit (tagged), both complete', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primed(dir);
+  const ran = [];
+  const emits = [];
+  orch.on('log', (l) => { if (l.nodeId) emits.push(l.nodeId); });
+  // Stub the registry the dispatcher consults.
+  orch._runners = {
+    producer: async (ctx) => {
+      ran.push(ctx.node.nodeId);
+      ctx.onEvent({ type: 'assistant', text: `did ${ctx.node.nodeId}`, raw: {} });
+      return { status: 'ok', summary: ctx.node.nodeId };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  const plan = {
+    id: 'wf_x', name: 'X',
+    steps: [[
+      { nodeId: 'a', key: 'implementer', runnerType: 'producer' },
+      { nodeId: 'b', key: 'implementer', runnerType: 'producer' },
+    ]],
+    feedbacks: [],
+  };
+  await orch._dispatch(plan);
+  assert.deepEqual(ran.sort(), ['a', 'b'], 'both parallel nodes ran');
+  assert.deepEqual([...new Set(emits)].sort(), ['a', 'b'], 'both emitted node-tagged events');
+  const st = orch.getState();
+  assert.ok(st.steps.find((s) => s.nodeId === 'a' && s.status === 'done'));
+  assert.ok(st.steps.find((s) => s.nodeId === 'b' && s.status === 'done'));
 });
