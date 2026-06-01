@@ -563,14 +563,21 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .node .nmeta{min-width:0;flex:1;}
 .node .nmeta b{display:block;font-weight:600;font-size:13.5px;line-height:1.2;letter-spacing:-.01em;}
 .node .nmeta small{display:block;color:var(--ink-3);font-size:11px;margin-top:1px;}
-.node .nx,.node .loop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
+.node .nx,.node .loop,.node .selfloop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
 .node .nx{top:-9px;right:-9px;width:22px;height:22px;color:var(--ink-3);font-size:12px;}
 .node .loop{right:-10px;bottom:-10px;width:25px;height:25px;}
-.node:hover .nx,.node:hover .loop{opacity:1;}
+.node .selfloop{top:-10px;left:-10px;width:25px;height:25px;}
+.node:hover .nx,.node:hover .loop,.node:hover .selfloop{opacity:1;}
 .node .nx:hover{color:var(--red-ink);border-color:var(--red);}
 .node .loop svg{width:13px;height:13px;stroke:var(--ink-2);stroke-width:2;}
 .node .loop:hover{border-color:var(--amber);}
 .node .loop:hover svg{stroke:var(--amber-ink);}
+.node .selfloop svg{width:14px;height:14px;stroke:var(--ink-2);stroke-width:2;}
+.node .selfloop:hover{border-color:var(--violet);}
+.node .selfloop:hover svg{stroke:var(--violet-ink);}
+/* active self-cycle: always visible, violet ring (mirrors the lit toggle in the mockup) */
+.node .selfloop.on{opacity:1;background:var(--violet-bg);border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-bg);}
+.node .selfloop.on svg{stroke:var(--violet-ink);}
 .node.linking{outline:2px solid var(--amber);outline-offset:3px;}
 .node.linking .loop{opacity:1;border-color:var(--amber);background:var(--amber-bg);}
 .node.link-target{outline:2px dashed var(--amber);outline-offset:3px;cursor:pointer;}

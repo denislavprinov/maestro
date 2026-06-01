@@ -58,8 +58,6 @@ const AGENT_FILES = {
  * @param {string} [opts.promptFile]
  * @param {string[]} [opts.extras]
  * @param {string} [opts.title]
- * @param {number} [opts.maxRefineCycles=5]
- * @param {number} [opts.maxReviewCycles=5]
  * @param {object} [opts.claude]  { bin?, permissionMode="acceptEdits", model?, mock? }
  * @param {string} [opts.agentsDir]
  * @param {string} [opts.pipelineId]
@@ -75,8 +73,6 @@ class Orchestrator extends EventEmitter {
     super();
     this.opts = opts || {};
     this.projectDir = resolve(this.opts.projectDir || process.cwd());
-    this.maxRefineCycles = numOr(this.opts.maxRefineCycles, 5);
-    this.maxReviewCycles = numOr(this.opts.maxReviewCycles, 5);
     this.claude = {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',

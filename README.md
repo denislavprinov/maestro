@@ -72,7 +72,7 @@ Or use a markdown brief as the prompt:
 npm run cli -- --project /path/to/your/project --file ./brief.md --title "Search feature"
 ```
 
-Useful flags: `--max-refine N`, `--max-review N`, `--model <m>`,
+Useful flags: `--model <m>`,
 `--permission-mode <m>`, `--yes`/`--non-interactive` (auto-answer clarify with the
 first option and gates with "continue"). See `docs/ARCHITECTURE.md` §4.1 for the full
 list.
@@ -159,11 +159,14 @@ emits a pass/fail verdict). To add your own, see
 - **Clarify** — planner asks one round of conceptual questions (up to four) before
   planning; answers are persisted and appended to the plan.
 - **Refine loop** — Refiner runs repeatedly. It stops when no `critical`/`major` issues
-  remain. Past `--max-refine` (default 5) cycles it asks you to **continue** or approve
+  remain. Past the loop's **max cycles** (default 5) it asks you to **continue** or approve
   **another** cycle, escalating indefinitely.
 - **Review loop** — Reviewer -> Implementer(fix) -> Reviewer ... stops when no
-  `critical`/`major` issues remain. Past `--max-review` (default 5) cycles it asks the
+  `critical`/`major` issues remain. Past the loop's **max cycles** (default 5) it asks the
   same continue/another gate.
+
+Each feedback loop's max-cycle count is set per loop in the New Pipeline window's
+**Pipeline configuration** (default 5), not via a CLI flag.
 
 A run is "blocked" only by `critical` or `major` issues; `minor`/`suggestion` issues do
 not hold up the loop.

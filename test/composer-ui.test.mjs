@@ -32,6 +32,12 @@ test('topology() reindexes node ids to s{step}_{member} and remaps feedbacks', (
   assert.deepEqual(out.feedbacks, [{ id: 'fb_0', from: 's2_0', to: 's1_0' }]);
 });
 
+test('topology() preserves a same-node self-loop (from===to) — the self-cycle toggle', () => {
+  const steps = [[{ id: 'n1', key: 'refiner' }]];
+  const out = topology(steps, [{ from: 'n1', to: 'n1' }]);
+  assert.deepEqual(out.feedbacks, [{ id: 'fb_0', from: 's0_0', to: 's0_0' }]);
+});
+
 test('topology() drops a feedback whose endpoint no longer exists', () => {
   const steps = [[{ id: 'a', key: 'planner' }], [{ id: 'b', key: 'reviewer' }]];
   const feedbacks = [{ from: 'b', to: 'a' }, { from: 'b', to: 'ghost' }];
@@ -131,6 +137,17 @@ test('defaultTopologyFromTemplate() converts a server template to a canvas model
     { from: 'L1', to: 'L0' },
     { from: 'L3', to: 'L2' },
   ]);
+});
+
+test('defaultTopologyFromTemplate() keeps a same-node self-loop and rewires it to the fresh local id', () => {
+  const tpl = {
+    id: 'wf_default', name: 'Default',
+    steps: [[{ id: 's1_0', key: 'refiner' }]],
+    feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }],
+  };
+  let n = 0;
+  const model = defaultTopologyFromTemplate(tpl, (key) => ({ id: `L${n++}`, key }));
+  assert.deepEqual(model.feedbacks, [{ from: 'L0', to: 'L0' }]);
 });
 
 test('defaultTopologyFromTemplate() tolerates a missing/empty template', () => {

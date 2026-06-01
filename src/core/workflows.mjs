@@ -19,9 +19,8 @@ import { resolveRunConfig } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 
 /**
- * Default feedback cycle count when run-config does not override it. Matches the
- * orchestrator's maxRefineCycles/maxReviewCycles default of 5 so DEFAULT_WORKFLOW
- * reproduces today's gate timing.
+ * Default feedback cycle count when run-config does not override it. DEFAULT_WORKFLOW's
+ * feedback loops fall back to this (5), reproducing today's gate timing.
  */
 const DEFAULT_MAX_CYCLES = 5;
 
@@ -69,7 +68,7 @@ function parseFrontmatterTools(text) {
  *   - review -> implement (s3_0 -> s2_0): on blocking review issues, run an
  *     implementer fix pass (the 'to' step) then re-review.
  * Default cycle counts come from run-config resolution (resolveRunConfig falls
- * back to DEFAULT_MAX_CYCLES = 5, matching orchestrator maxRefine/maxReviewCycles).
+ * back to DEFAULT_MAX_CYCLES = 5).
  * NOT persisted to the user store; always present; readWorkflow('wf_default')
  * returns it.
  * @type {{id:string,name:string,version:number,steps:Array<Array<{id:string,key:string}>>,feedbacks:Array<{id:string,from:string,to:string}>,createdAt:string,updatedAt:string}}

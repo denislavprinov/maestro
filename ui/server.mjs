@@ -217,7 +217,7 @@ function resolveProjectDir(input) {
 
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
-// body: { projectDir, prompt?, promptMarkdown?, title?, maxRefine?, maxReview?, mock? }
+// body: { projectDir, prompt?, promptMarkdown?, title?, mock? }
 // ---------------------------------------------------------------------------
 app.post('/api/run', async (req, res) => {
   try {
@@ -240,8 +240,6 @@ app.post('/api/run', async (req, res) => {
       }
     }
 
-    const maxRefineCycles = clampInt(body.maxRefine, 5);
-    const maxReviewCycles = clampInt(body.maxReview, 5);
     const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
 
     // Optional workflowId selects a saved (or built-in default) topology. The
@@ -264,8 +262,6 @@ app.post('/api/run', async (req, res) => {
       prompt: effectivePrompt,
       title,
       extras,
-      maxRefineCycles,
-      maxReviewCycles,
       agentsDir: AGENTS_DIR,
       workflowId,
       claude: { permissionMode: 'acceptEdits', mock },
@@ -688,12 +684,6 @@ async function copyDir(srcDir, destDir, baseForRel, copiedOut) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-function clampInt(v, fallback) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 1) return fallback;
-  return Math.floor(n);
-}
-
 /**
  * Decode uploaded extra files ([{ name, dataBase64 }]) to a per-run temp dir and
  * return absolute paths. Filenames are reduced to their basename to prevent

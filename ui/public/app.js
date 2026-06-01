@@ -59,8 +59,6 @@ const el = {
   mdFileName: $('#mdFileName'),
   extras: $('#extras'),
   extrasNote: $('#extrasNote'),
-  maxRefine: $('#maxRefine'),
-  maxReview: $('#maxReview'),
   mock: $('#mock'),
   installBtn: $('#install-btn'),
   startBtn: $('#start-btn'),
@@ -545,12 +543,15 @@ async function deleteWorkflow(id) {
 // Pure serialization lives in composer-core.mjs; this is DOM wiring only.
 // Manual-only behaviors (no jsdom layout / no HTML5 DnD): paintWires geometry,
 // drag pills onto strips/cols, hover-loop link mode, read-only preview paint.
-// SELF-LOOP NOTE: the default's refine loop is a SAME-NODE self-loop (fb_refine
-// s1_0->s1_0). The mockup's loops always spanned distinct nodes, so the bezier/arc
-// path degenerates to a near-invisible zero-width spike for from===to. When porting
-// paintWires, special-case `fb.from === fb.to` (or same-column endpoints) to draw a
-// small lateral lobe with its delete-X offset clear of the node, and add "Reset shows
-// a visible refine self-loop on the Refine node" to the manual checklist below.
+// SELF-LOOP NOTE: a SAME-NODE self-loop (fb.from===fb.to, e.g. the default's
+// fb_refine s1_0->s1_0) is created/removed via the node's top-left self-cycle
+// toggle (.selfloop), NOT the bottom-right link button — that one only draws edges
+// to DISTINCT nodes (composerAddFeedback still rejects from===to). paintWires
+// special-cases from===to to draw a small violet lobe beneath the node with NO
+// delete-X (the toggle owns removal; cross-node amber loops keep their X). Manual
+// checklist: Reset shows the Refine node with its self-cycle toggle lit (violet ring)
+// and a violet self-loop arc beneath it; clicking the toggle removes both, clicking
+// again restores them.
 // ---------------------------------------------------------------------------
 const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
 const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
@@ -635,15 +636,19 @@ function composerBuildPalette(pal) {
 /* ---- node ---- */
 function composerNodeEl(a) {
   const ag = composerAgent(a.key);
+  const selfOn = composer.feedbacks.some((f) => f.from === a.id && f.to === a.id);
   const d = document.createElement('div');
   d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
   d.innerHTML =
+    `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
     `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>` +
     `<div class="nx" title="Remove agent">✕</div>` +
     `<div class="loop" title="Draw a feedback loop from this agent">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
+  d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
   d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
   d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
   d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { composerAddFeedback(composer.linkFrom, a.id); composerExitLink(); } });
@@ -715,6 +720,15 @@ function composerAddFeedback(from, to) {
   if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
   composerRefresh();
 }
+// Self-cycle toggle: add/remove a SAME-NODE feedback (from===to). The composer's
+// link button rejects from===to, so this is the only way to set a self-loop. It
+// re-runs the step on its own blocking issues (the default's fb_refine).
+function composerToggleSelf(id) {
+  const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
+  if (i >= 0) composer.feedbacks.splice(i, 1);
+  else composer.feedbacks.push({ from: id, to: id });
+  composerRefresh();
+}
 
 /* ---- feedback linking mode ---- */
 function composerToggleLink(id) { if (composer.linkFrom === id) composerExitLink(); else composerEnterLink(id); }
@@ -749,7 +763,8 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
   let s = `<defs>` +
     `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
-    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker></defs>`;
+    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
+    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
   for (let i = 0; i < steps.length - 1; i++) {
     steps[i].forEach((a) => {
       steps[i + 1].forEach((b) => {
@@ -765,6 +780,14 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
   feedbacks.forEach((fb, idx) => {
     const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
+    if (fb.from === fb.to) {
+      // same-node self-cycle: a small violet lobe hanging beneath the node. No
+      // delete-X — the node's top-left self-cycle toggle owns add/remove.
+      const cx = ra.x + ra.w / 2, baseY = ra.y + ra.h;
+      const sx = cx - 15, tx = cx + 11, rail = baseY + 34;
+      s += `<path d="M${sx} ${baseY} C ${sx - 22} ${rail}, ${tx + 22} ${rail}, ${tx} ${baseY}" fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      return;
+    }
     const p = posOf(fb.from);
     const below = p.len > 1 && p.i === p.len - 1;
     let sx, sy, tx, ty, rail, mx, my;
@@ -2167,8 +2190,6 @@ el.form.addEventListener('submit', async (e) => {
     projectDir,
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
-    maxRefine: Number(el.maxRefine.value) || 5,
-    maxReview: Number(el.maxReview.value) || 5,
     mock: el.mock.checked,
   };
 
