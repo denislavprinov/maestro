@@ -126,3 +126,24 @@ test('readWorkflow returns null for a missing id; listWorkflows is [] on an empt
   assert.equal(await readWorkflow('wf_nope'), null);
   assert.deepEqual(await listWorkflows(), []);
 });
+
+test('deleteWorkflow removes a saved template and returns true', async () => {
+  await freshHome();
+  const saved = await writeWorkflow({ id: 'wf_del', name: 'Del', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  assert.equal(await deleteWorkflow(saved.id), true);
+  assert.equal(await readWorkflow(saved.id), null);
+  const files = await readdir(workflowsDir());
+  assert.ok(!files.includes('wf_del.json'));
+});
+
+test('deleteWorkflow returns false for a missing id', async () => {
+  await freshHome();
+  assert.equal(await deleteWorkflow('wf_ghost'), false);
+});
+
+test('deleteWorkflow refuses to delete the built-in default (returns false, leaves it readable)', async () => {
+  await freshHome();
+  assert.equal(await deleteWorkflow('wf_default'), false);
+  const still = await readWorkflow('wf_default');
+  assert.equal(still.id, 'wf_default'); // DEFAULT_WORKFLOW is always present
+});

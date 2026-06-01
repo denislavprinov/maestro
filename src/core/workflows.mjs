@@ -142,5 +142,21 @@ export async function listWorkflows() {
   return out;
 }
 
-export function deleteWorkflow(_id) { return false; }      // Task 3
+/**
+ * Delete a saved template by id. Refuses to delete the built-in DEFAULT_WORKFLOW
+ * (returns false). Returns false when the file does not exist; true on removal.
+ * @param {string} id
+ * @returns {Promise<boolean>}
+ */
+export async function deleteWorkflow(id) {
+  if (id === DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
+  const file = workflowFile(id);
+  if (!existsSync(file)) return false;
+  try {
+    await unlink(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
 export function resolveWorkflow(_projectDir, _workflowId, _registry) { throw new Error('not implemented'); } // Task 6
