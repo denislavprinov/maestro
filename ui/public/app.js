@@ -921,6 +921,76 @@ function option(value, text) {
   return o;
 }
 
+// ---------------------------------------------------------------------------
+// New-Pipeline workflow config: PURE helpers (no DOM, no fetch). These flatten a
+// workflow's topology + the per-project run-config into row data the renderers
+// paint. Exposed on window.__np so jsdom unit tests can exercise them directly.
+// ---------------------------------------------------------------------------
+
+// Flatten workflow.steps[][] into an ordered list of node rows, joining each
+// node's role `key` to its registry metadata (label/color) and overlaying the
+// run-config's saved {model,effort} for that node-instance id. Order = outer
+// (sequential) then inner (parallel) — exactly the dispatch order.
+function buildNodeConfigRows(workflow, registry, runConfig) {
+  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
+  const reg = registry || {};
+  const nodes = (runConfig && runConfig.nodes) || {};
+  const rows = [];
+  steps.forEach((group, stepIndex) => {
+    const members = Array.isArray(group) ? group : [];
+    members.forEach((node) => {
+      if (!node || !node.id) return;
+      const meta = reg[node.key] || null;
+      const saved = nodes[node.id] || {};
+      rows.push({
+        nodeId: node.id,
+        key: node.key,
+        label: (meta && meta.displayName) || node.key || node.id,
+        color: (meta && meta.color) || '',
+        stepIndex,
+        parallel: members.length > 1,
+        model: typeof saved.model === 'string' ? saved.model : '',
+        effort: typeof saved.effort === 'string' ? saved.effort : '',
+      });
+    });
+  });
+  return rows;
+}
+
+// Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
+// overlaying the run-config's saved maxCycles (default 3 when unset).
+function buildFeedbackRows(workflow, runConfig) {
+  const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
+  const saved = (runConfig && runConfig.feedbacks) || {};
+  return fbs.map((fb) => {
+    const rc = saved[fb.id] || {};
+    const n = Number(rc.maxCycles);
+    return {
+      fbId: fb.id,
+      from: fb.from,
+      to: fb.to,
+      maxCycles: Number.isFinite(n) && n >= 1 ? n : 3,
+    };
+  });
+}
+
+// First effort a model supports (used to seed a node's effort caption when none
+// is saved). '' when the model is unknown or advertises no efforts.
+function defaultEffortFor(modelId) {
+  const m = modelById(modelId);
+  return m && Array.isArray(m.efforts) && m.efforts.length ? m.efforts[0] : '';
+}
+
+// Test hook: expose the pure helpers (and a couple of collaborators the tests
+// reuse) without leaking them into the app's runtime contract.
+if (typeof window !== 'undefined') {
+  window.__np = Object.assign(window.__np || {}, {
+    buildNodeConfigRows,
+    buildFeedbackRows,
+    defaultEffortFor,
+  });
+}
+
 function renderStepConfigs() {
   // Config always edits the NEXT run, so selectors are never locked. (The
   // multi-run engine in Task 3 owns per-run status; there is no global run
