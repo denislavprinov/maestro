@@ -156,47 +156,67 @@
                 <!-- Pipeline configuration -->
                 <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
                   <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
-                  <div class="hint" style="margin:0 0 6px">Model and reasoning effort per stage.</div>
+                  <div class="hint" style="margin:0 0 6px">Choose a workflow, then set model and reasoning effort per agent.</div>
 
-                  <div class="stage-cfg">
-                    <div class="acc violet"></div>
-                    <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
+                  <!-- Workflow picker (Default + saved). app.js populates from GET /api/workflows. -->
+                  <div class="field" style="margin-bottom:14px">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
                     </div>
-                    <small class="step-current" data-role="planner"></small>
                   </div>
 
-                  <div class="stage-cfg">
-                    <div class="acc green"></div>
-                    <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
+                  <!-- Default-workflow stages: the original four rows, shown when the
+                       Default workflow is selected (backward-compat). -->
+                  <div id="wf-default-stages">
+                    <div class="stage-cfg">
+                      <div class="acc violet"></div>
+                      <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="planner"></small>
                     </div>
-                    <small class="step-current" data-role="refiner"></small>
+
+                    <div class="stage-cfg">
+                      <div class="acc green"></div>
+                      <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="refiner"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc peach"></div>
+                      <div class="meta"><b>Implement</b><small>write the code</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="implementer"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc blue"></div>
+                      <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="reviewer"></small>
+                    </div>
                   </div>
 
-                  <div class="stage-cfg">
-                    <div class="acc peach"></div>
-                    <div class="meta"><b>Implement</b><small>write the code</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
-                    </div>
-                    <small class="step-current" data-role="implementer"></small>
-                  </div>
+                  <!-- Per-node pickers for a non-default (saved) workflow. app.js fills this. -->
+                  <div id="wf-node-config" class="hidden"></div>
 
-                  <div class="stage-cfg">
-                    <div class="acc blue"></div>
-                    <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
-                    </div>
-                    <small class="step-current" data-role="reviewer"></small>
-                  </div>
+                  <!-- Per-feedback cycle-count inputs. app.js fills this. -->
+                  <div id="wf-feedback-config" class="hidden"></div>
                 </div>
 
                 <!-- Mock -->

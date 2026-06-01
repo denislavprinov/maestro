@@ -107,3 +107,17 @@ test('buildNodeConfigRows on the Default 4-step topology yields the original fou
   assert.deepEqual(rows.map((r) => r.key), ['planner', 'refiner', 'implementer', 'reviewer']);
   assert.deepEqual(rows.map((r) => r.label), ['Plan', 'Refine', 'Implement', 'Review']);
 });
+
+import { readFileSync as _rf } from 'node:fs';
+const indexHtml = _rf(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+
+test('index.html exposes the workflow select + dynamic node/feedback containers', () => {
+  assert.ok(indexHtml.includes('id="workflowSelect"'), 'missing #workflowSelect');
+  assert.ok(indexHtml.includes('id="wf-default-stages"'), 'missing #wf-default-stages wrapper');
+  assert.ok(indexHtml.includes('id="wf-node-config"'), 'missing #wf-node-config container');
+  assert.ok(indexHtml.includes('id="wf-feedback-config"'), 'missing #wf-feedback-config container');
+  // the original four hardcoded stage rows must remain (Default backward-compat)
+  for (const role of ['planner', 'refiner', 'implementer', 'reviewer']) {
+    assert.ok(indexHtml.includes(`data-role="${role}"`), `lost default stage row for ${role}`);
+  }
+});
