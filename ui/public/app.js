@@ -2164,6 +2164,7 @@ el.form.addEventListener('submit', async (e) => {
   const body = {
     projectDir,
     title: title || undefined,
+    workflowId: state.workflowId || 'wf_default',
     maxRefine: Number(el.maxRefine.value) || 5,
     maxReview: Number(el.maxReview.value) || 5,
     mock: el.mock.checked,
@@ -2227,7 +2228,7 @@ el.form.addEventListener('submit', async (e) => {
 // subscribe would double-replay this run's buffer on the next hello.
 function beginRun(runId, projectDir, title) {
   const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
-  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models }));
+  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models, workflowId: state.workflowId }));
   hideViewer();
   updateNavCounts();
   showView('running');

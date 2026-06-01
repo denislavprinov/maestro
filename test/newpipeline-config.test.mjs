@@ -313,3 +313,49 @@ test('selecting a workflow persists it as the active workflow', async () => {
   assert.ok(body, 'active workflow not persisted');
   assert.equal(body.projectDir, PROJECT);
 });
+
+test('submitting the run posts the selected workflowId (default by default)', async () => {
+  const runs = [];
+  const base = workflowFetch();
+  const { window } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/api/run') && opts && opts.method === 'POST') {
+        runs.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'r1' }) });
+      }
+      return base(url);
+    },
+  });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  // default selected
+  window.document.querySelector('#prompt').value = 'do a thing';
+  window.document.querySelector('#run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].workflowId, 'wf_default');
+  assert.equal(runs[0].prompt, 'do a thing');
+});
+
+test('submitting after selecting a saved workflow posts that workflowId', async () => {
+  const runs = [];
+  const base = workflowFetch();
+  const { window } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/api/run') && opts && opts.method === 'POST') {
+        runs.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'r2' }) });
+      }
+      return base(url);
+    },
+  });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  window.document.querySelector('#prompt').value = 'ship it';
+  window.document.querySelector('#run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].workflowId, 'wf_x');
+});
