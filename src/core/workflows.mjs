@@ -16,6 +16,7 @@ import { randomBytes } from 'node:crypto';
 
 import { maestroHome } from './projects.mjs';
 import { resolveRunConfig } from './config.mjs';
+import { slugify } from './artifacts.mjs';
 
 /**
  * The built-in default workflow: the CURRENT pipeline Plan -> Refine -> Implement
@@ -58,8 +59,88 @@ function workflowFile(id) {
   return join(workflowsDir(), `${id}.json`);
 }
 
-export function listWorkflows() { return []; }            // Task 2
-export function readWorkflow(_id) { return null; }         // Task 2
-export function writeWorkflow(_tpl) { throw new Error('not implemented'); } // Task 2
+/** Atomically write the JSON store file. Creates ~/.maestro/workflows on demand. */
+async function writeRaw(id, tpl) {
+  await mkdir(workflowsDir(), { recursive: true });
+  const file = workflowFile(id);
+  const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(tmp, JSON.stringify(tpl, null, 2) + '\n', 'utf8');
+  await rename(tmp, file);
+}
+
+/** Read + shallow-validate one stored template. Missing/corrupt => null. */
+async function readRaw(id) {
+  try {
+    const data = JSON.parse(await readFile(workflowFile(id), 'utf8'));
+    if (!data || typeof data !== 'object' || !Array.isArray(data.steps)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a template atomically. Stamps a wf_<slug> id (from the name) when
+ * missing, version 1, createdAt (preserved across re-saves) and a fresh
+ * updatedAt. Returns the stored object. Never mutates the input.
+ * @param {object} tpl { id?, name, steps, feedbacks }
+ * @returns {Promise<object>}
+ */
+export async function writeWorkflow(tpl) {
+  const now = new Date().toISOString();
+  const name = (tpl && typeof tpl.name === 'string' && tpl.name.trim()) || 'Untitled';
+  const id = (tpl && typeof tpl.id === 'string' && tpl.id.trim()) || `wf_${slugify(name)}`;
+  // Preserve the original createdAt if this id already exists (re-save).
+  const existing = await readRaw(id);
+  const createdAt =
+    (tpl && typeof tpl.createdAt === 'string' && tpl.createdAt) ||
+    existing?.createdAt ||
+    now;
+  const stored = {
+    id,
+    name,
+    version: 1,
+    steps: Array.isArray(tpl?.steps) ? tpl.steps : [],
+    feedbacks: Array.isArray(tpl?.feedbacks) ? tpl.feedbacks : [],
+    createdAt,
+    updatedAt: now,
+  };
+  await writeRaw(id, stored);
+  return stored;
+}
+
+/**
+ * Read a template by id. Returns the built-in DEFAULT_WORKFLOW for "wf_default";
+ * otherwise the stored template, or null when absent/corrupt.
+ * @param {string} id
+ * @returns {Promise<object|null>}
+ */
+export async function readWorkflow(id) {
+  if (id === DEFAULT_WORKFLOW.id) return DEFAULT_WORKFLOW;
+  return readRaw(id);
+}
+
+/**
+ * List user templates (NOT DEFAULT_WORKFLOW — callers prepend it), newest first
+ * by createdAt. Missing store => []. Never throws.
+ * @returns {Promise<object[]>}
+ */
+export async function listWorkflows() {
+  let names;
+  try {
+    names = await readdir(workflowsDir());
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names) {
+    if (!f.endsWith('.json')) continue;
+    const tpl = await readRaw(f.slice(0, -'.json'.length));
+    if (tpl && tpl.id !== DEFAULT_WORKFLOW.id) out.push(tpl);
+  }
+  out.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  return out;
+}
+
 export function deleteWorkflow(_id) { return false; }      // Task 3
 export function resolveWorkflow(_projectDir, _workflowId, _registry) { throw new Error('not implemented'); } // Task 6
