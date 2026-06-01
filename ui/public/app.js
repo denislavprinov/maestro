@@ -346,6 +346,22 @@ function fmtUsd(n) {
   return '$' + v.toFixed(2);
 }
 
+// Exact tenth-of-a-cent dollar string for tooltips (the backend tracks 4 dp,
+// the visible chip is rounded to 2). '' for non-finite input.
+function fmtUsd4(n) {
+  const v = Number(n);
+  return Number.isFinite(v) ? '$' + v.toFixed(4) : '';
+}
+
+// Tooltip text for any cost figure: marks it as Claude Code's client-side
+// estimate (not a bill) and reveals the exact value. '' when there's no number.
+function estTitle(n) {
+  const exact = fmtUsd4(n);
+  return exact
+    ? `Estimated cost ${exact} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`
+    : '';
+}
+
 // Roll saved per-step costs up into UI stage buckets. normalizePhase folds
 // clarify->plan, refine#1+refine#2->refine, implement+fixes->implement, etc.
 // A stage is keyed IFF its step carries a costUsd field (i.e. a result event was
@@ -1542,7 +1558,10 @@ function buildHistCard(projectDir, p) {
   const whenEl = node.querySelector('.h-meta small');
   if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
   const totalEl = node.querySelector('.hist-total');
-  if (totalEl) totalEl.textContent = typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '';
+  if (totalEl) {
+    totalEl.textContent = typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '';
+    totalEl.title = typeof p.totalCostUsd === 'number' ? estTitle(p.totalCostUsd) : '';
+  }
 
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');
@@ -1598,7 +1617,10 @@ async function loadHistDetail(projectDir, id, detail) {
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
       const totalEl = card && card.querySelector('.hist-total');
-      if (totalEl) totalEl.textContent = fmtUsd(data.state.totalCostUsd);
+      if (totalEl) {
+        totalEl.textContent = fmtUsd(data.state.totalCostUsd);
+        totalEl.title = estTitle(data.state.totalCostUsd);
+      }
     }
   } catch (e) {
     detail.dataset.loaded = ''; // allow a retry on the next expand
@@ -1656,6 +1678,7 @@ function paintHistStepper(detail, st) {
     if (costEl) {
       const c = costByStage(st.steps)[stage.dataset.step];
       costEl.textContent = c != null ? fmtUsd(c) : '';
+      costEl.title = c != null ? estTitle(c) : '';
     }
   }
 }
@@ -1867,6 +1890,7 @@ function paintStepper(r) {
     if (costEl) {
       const c = (r.costByStage || {})[step];
       costEl.textContent = c != null ? fmtUsd(c) : '';
+      costEl.title = c != null ? estTitle(c) : '';
     }
   }
 }
@@ -1902,7 +1926,10 @@ function paintRunCard(r) {
 
   paintStepper(r);
   const totalEl = r.el.querySelector('.run-cost');
-  if (totalEl) totalEl.textContent = fmtUsd(r.totalCostUsd || 0); // always shows (mock => $0.00)
+  if (totalEl) {
+    totalEl.textContent = fmtUsd(r.totalCostUsd || 0); // always shows (mock => $0.00)
+    totalEl.title = estTitle(r.totalCostUsd || 0);
+  }
   r.el.classList.toggle('attention', r.pendingQuestion != null);
 }
 

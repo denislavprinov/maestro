@@ -49,6 +49,20 @@ test('history card shows the pipeline total next to the date', async () => {
   assert.equal(total.textContent, '$0.42');
 });
 
+test('the history total is tooltip-labelled as an estimate with the exact value', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => url.includes('/api/runs?')
+      ? runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.42 }])
+      : null,
+  });
+  ctx.selectProject(); ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const total = ctx.window.document.querySelector('#history .hist-card .hist-total');
+  assert.equal(total.textContent, '$0.42', 'visible figure unchanged');
+  assert.match(total.title, /[Ee]stimat/, 'tooltip marks it as an estimate');
+  assert.match(total.title, /\$0\.4200/, 'tooltip shows the exact 4-dp value');
+});
+
 test('expanding a card paints per-phase cost from saved steps (refine cycles summed)', async () => {
   const state = {
     phase: 'done', status: 'done', cycle: 2, totalCostUsd: 0.30,
