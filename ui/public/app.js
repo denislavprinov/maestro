@@ -21,6 +21,14 @@ const state = {
 // server is authoritative — see loadConfig, which also receives data.steps.)
 const STEP_ROLES = ['planner', 'refiner', 'implementer', 'reviewer'];
 
+import {
+  topology,
+  metaLine,
+  distinctAgents,
+  defaultTopologyFromTemplate,
+  mergePalette,
+} from './composer-core.mjs';
+
 // ---------------------------------------------------------------------------
 // Elements
 // ---------------------------------------------------------------------------
@@ -464,6 +472,77 @@ async function loadConfig(projectDir) {
     /* keep last-known config */
   }
   renderStepConfigs();
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline Composer — /api/workflows + /api/agents client wrappers
+// ---------------------------------------------------------------------------
+async function fetchAgents() {
+  try {
+    const res = await fetch('/api/agents');
+    if (!res.ok) return null;
+    return await safeJson(res);
+  } catch {
+    return null; // composer falls back to the embedded registry
+  }
+}
+
+async function listWorkflows() {
+  try {
+    const res = await fetch('/api/workflows');
+    const data = await safeJson(res);
+    if (!res.ok) return [];
+    return Array.isArray(data.workflows) ? data.workflows : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getWorkflow(id) {
+  try {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return await safeJson(res);
+  } catch {
+    return null;
+  }
+}
+
+async function saveWorkflow({ name, steps, feedbacks }) {
+  const res = await fetch('/api/workflows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, steps, feedbacks }),
+  });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
+  return data.workflow;
+}
+
+async function deleteWorkflow(id) {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `delete failed (${res.status})`);
+  return true;
+}
+
+// Replaced by the full composer module in the next task.
+let _composerStubInit = false;
+function initComposer() {
+  if (_composerStubInit) return;
+  _composerStubInit = true;
+  const palette = document.getElementById('composer-palette');
+  if (!palette) return;
+  fetchAgents().then((res) => {
+    palette.innerHTML = '';
+    mergePalette(res).forEach((ag) => {
+      const p = document.createElement('div');
+      p.className = 'agent-pill';
+      p.dataset.key = ag.key;
+      p.textContent = ag.displayName;
+      palette.appendChild(p);
+    });
+  });
 }
 
 function modelById(id) {
@@ -2071,7 +2150,7 @@ function updateNavCounts() {
 // ---------------------------------------------------------------------------
 const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
-const VIEW_NAMES = ['new', 'running', 'history'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer'];
 
 function showView(name) {
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -2081,6 +2160,7 @@ function showView(name) {
     const d = selectedProjectPath();
     if (d) loadHistory(d);
   }
+  if (name === 'composer') initComposer();
 }
 
 // Nav clicks only update the hash; the single hashchange listener drives
