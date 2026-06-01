@@ -1,6 +1,8 @@
 // test/agent-registry.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
@@ -69,4 +71,39 @@ test('registryToSteps appends the two new agents with their display names', () =
   assert.equal(steps.length, 6);
   assert.deepEqual(steps[4], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist' });
   assert.deepEqual(steps[5], { key: 'manualWebUiTesting', label: 'Manual web UI testing' });
+});
+
+test('every agentFile points at an existing prompt under agents/', () => {
+  const reg = loadAgentRegistry();
+  const agentsDir = new URL('../agents/', import.meta.url).pathname;
+  for (const m of Object.values(reg)) {
+    assert.ok(m.agentFile, `${m.key} has no agentFile`);
+    assert.ok(
+      existsSync(join(agentsDir, m.agentFile)),
+      `missing prompt file for ${m.key}: ${m.agentFile}`,
+    );
+  }
+});
+
+test('original four agentFiles match the orchestrator AGENT_FILES map', () => {
+  const reg = loadAgentRegistry();
+  // Mirror of orchestrator.mjs:48-53 (the hardcoded map a later phase replaces).
+  const LEGACY_AGENT_FILES = {
+    planner: 'maestro-planner.md',
+    refiner: 'maestro-plan-refiner.md',
+    implementer: 'maestro-implementer.md',
+    reviewer: 'maestro-code-reviewer.md',
+  };
+  for (const [key, file] of Object.entries(LEGACY_AGENT_FILES)) {
+    assert.equal(reg[key].agentFile, file, `agentFile mismatch for ${key}`);
+  }
+});
+
+test('exactly the two verifiers are loopSources; producers are not', () => {
+  const reg = loadAgentRegistry();
+  const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
+  assert.deepEqual(loopSources, ['manualWebUiTesting', 'reviewer']);
+  for (const m of Object.values(reg)) {
+    if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
+  }
 });
