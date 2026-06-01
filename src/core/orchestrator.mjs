@@ -1028,11 +1028,6 @@ function firstLine(text) {
   return '';
 }
 
-function oneLine(text) {
-  if (!text) return '';
-  return String(text).replace(/\s+/g, ' ').trim().slice(0, 160);
-}
-
 function rel(base, p) {
   if (!p) return '';
   const b = resolve(base);
