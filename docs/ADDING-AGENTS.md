@@ -162,10 +162,14 @@ and returns:
   status: "ok" | "blocked",      // "blocked" when a verifier found critical/major issues
   issues?: [{ severity, title, detail, location }],
   summary?: string,
-  cost?: number,                 // forwarded to cost tracking
-  artifacts?: Array              // paths produced
+  review?: object,               // the raw protocol.mjs verdict (verifiers + the refiner)
+  // plus any output paths the dispatcher folds back into shared run IO, e.g.
+  // planPath / outPlanPath / checklistPath / reviewMdPath (see _afterNode)
 }
 ```
+
+> Cost/duration are not part of this result — the orchestrator attributes them
+> from the agent's runtime `'result'` events, tagged per `nodeId` (CONV-4).
 
 **Only add a runner if you need genuinely new behavior** the two types can't
 express. The shape to add:
