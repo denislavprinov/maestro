@@ -228,8 +228,8 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   const reg = registry && typeof registry === 'object' ? registry : {};
   const { nodes: nodeCfg, feedbacks: fbCfg } = await resolveRunConfig(projectDir, workflowId);
   // CONV-4: map each agent key to the UI stepper bucket the live view understands,
-  // so the dispatcher can emit a real `'phase'` per node (the two new agents get
-  // their own buckets, added to the UI's STEP_ORDER in Phase 6 Task 7).
+  // so the dispatcher can emit a real `'phase'` per node (every node gets its own
+  // stepper cell via the snapshotted manifest; see buildStepperManifest).
   const UI_PHASE = {
     planner: 'plan', refiner: 'refine', implementer: 'implement', reviewer: 'review',
     manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web',

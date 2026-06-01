@@ -246,8 +246,6 @@ function currentView() {
 // ---------------------------------------------------------------------------
 // Steps tracker
 // ---------------------------------------------------------------------------
-// Canonical order of phases for "everything before current => done".
-const STEP_ORDER = ['preflight', 'plan', 'refine', 'implement', 'review', 'manual-checklist', 'manual-web', 'done'];
 
 // Normalize a core phase name to one of our tracker step keys.
 // Order matters: more specific phases ("refine", "review", "implement") are
@@ -527,20 +525,6 @@ function liveStepMs(step, now, live = true) {
   return live && step?.runningSince != null ? base + Math.max(0, now - step.runningSince) : base;
 }
 
-// Roll per-step activeMs up into UI stage buckets, mirroring costByStage.
-// A step WITHOUT an activeMs field stays absent (blank); activeMs:0 buckets as 0.
-// live=true (Running) adds the running tail; live=false (History) uses finalized only.
-function durByStage(steps, now = Date.now(), live = true) {
-  const out = {};
-  for (const s of Array.isArray(steps) ? steps : []) {
-    if (!s || s.activeMs == null) continue;
-    if (!Number.isFinite(Number(s.activeMs))) continue;
-    const key = normalizePhase(s.phase);
-    if (key) out[key] = (out[key] || 0) + liveStepMs(s, now, live);
-  }
-  return out;
-}
-
 // Live total = sum of all steps' live ms (finalized + running tails). Running only.
 function liveTotalMs(steps, now = Date.now()) {
   let sum = 0;
@@ -550,31 +534,13 @@ function liveTotalMs(steps, now = Date.now()) {
   return sum;
 }
 
-// Roll saved per-step costs up into UI stage buckets. normalizePhase folds
-// clarify->plan, refine#1+refine#2->refine, implement+fixes->implement, etc.
-// A stage is keyed IFF its step carries a costUsd field (i.e. a result event was
-// attributed to it) — so an executed-but-zero phase (mock) buckets as 0 and
-// renders $0.00, while a phase that never ran (field absent) stays blank.
-// Negative/NaN are dropped defensively. Returns { stageKey: number }.
-function costByStage(steps) {
-  const out = {};
-  for (const s of Array.isArray(steps) ? steps : []) {
-    if (!s || s.costUsd == null) continue; // field absent => phase never recorded a cost
-    const c = Number(s.costUsd);
-    if (!Number.isFinite(c) || c < 0) continue; // ignore bogus; KEEP zero
-    const key = normalizePhase(s.phase);
-    if (key) out[key] = (out[key] || 0) + c;
-  }
-  return out;
-}
-
 // A step's stepper bucket key: its node id when present (new runs), else the
 // normalized phase (legacy runs, whose default-manifest node ids ARE uiPhases).
 function stepBucketKey(s) {
   return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : normalizePhase(s && s.phase);
 }
 
-// Per-node active-ms, mirroring durByStage but keyed by stepBucketKey.
+// Per-node active-ms bucket, keyed by stepBucketKey.
 function durByNode(steps, now = Date.now(), live = true) {
   const out = {};
   for (const s of Array.isArray(steps) ? steps : []) {
@@ -585,7 +551,7 @@ function durByNode(steps, now = Date.now(), live = true) {
   return out;
 }
 
-// Per-node cost, mirroring costByStage but keyed by stepBucketKey.
+// Per-node cost bucket, keyed by stepBucketKey.
 function costByNode(steps) {
   const out = {};
   for (const s of Array.isArray(steps) ? steps : []) {
@@ -2876,7 +2842,6 @@ function startedLabel(startedAt) {
 }
 
 const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
-const CYCLING_PHASES = new Set(['refine', 'review']);
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
 function statusPill(r) {
@@ -2930,9 +2895,6 @@ function buildRunCard(r) {
   return node;
 }
 
-// Map each agent role's snapshot (model label + effort) onto the matching
-// stage's sublabel. The card steps use phase keys; map them to config roles.
-const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer', 'manual-checklist': 'manualTestsChecklist', 'manual-web': 'manualWebUiTesting' };
 // Map each node's snapshot (model label + effort) onto its stage sublabel, keyed
 // by node id. The snapshot's node config lives under workflows[workflowId].nodes.
 function fillStageSublabels(node, snap) {
@@ -3159,11 +3121,11 @@ const _timerTick = setInterval(() => {
     const now = Date.now();
     const timeEl = r.el.querySelector('.run-time');
     if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, now));
-    const durs = durByStage(r.steps, now);
-    for (const stage of r.el.querySelectorAll('.stage[data-step]')) {
-      const durEl = stage.querySelector('.dur');
+    const durs = durByNode(r.steps, now, true);
+    for (const el of r.el.querySelectorAll('.stage[data-node-id], .stage-node[data-node-id]')) {
+      const durEl = el.querySelector('.dur');
       if (!durEl) continue;
-      const d = durs[stage.dataset.step];
+      const d = durs[el.dataset.nodeId];
       durEl.textContent = d != null ? fmtDuration(d) : '';
     }
   }
