@@ -15,6 +15,9 @@ const state = {
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
+  workflowId: 'wf_default', // currently selected workflow in New Pipeline
+  agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
+  workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -475,7 +478,12 @@ async function loadConfig(projectDir) {
   } catch {
     /* keep last-known config */
   }
-  renderStepConfigs();
+  // Seed the active workflow from per-project run-config (activeWorkflowId),
+  // then populate the dropdown + render the chosen workflow's config. This
+  // supersedes the bare renderStepConfigs() call: the default branch still calls
+  // renderStepConfigs() internally for backward-compat.
+  if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
+  await loadWorkflowsInto(state.workflowId);
 }
 
 // ---------------------------------------------------------------------------
@@ -993,6 +1001,7 @@ if (typeof window !== 'undefined') {
     buildFeedbackRows,
     defaultEffortFor,
     renderModelEffortPair,
+    renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
   });
 }
@@ -1035,6 +1044,184 @@ function renderStepConfigs() {
     if (!modelSel || !effortSel) continue;
     renderModelEffortPair(modelSel, effortSel, caption, state.config.steps[role] || {});
   }
+}
+
+// ---------------------------------------------------------------------------
+// New-Pipeline workflow selector. Populates #workflowSelect from
+// GET /api/workflows; on change, renders per-node model/effort pickers + per-
+// feedback cycle inputs for the chosen workflow (or the legacy default stages).
+// ---------------------------------------------------------------------------
+
+// --- API wrappers (existing fetch()/safeJson style) ---
+async function listWorkflowsApi() {
+  try {
+    const res = await fetch('/api/workflows');
+    const data = await safeJson(res);
+    return res.ok && Array.isArray(data.workflows) ? data.workflows : [];
+  } catch { return []; }
+}
+
+async function getWorkflowApi(id) {
+  if (state.workflowCache[id]) return state.workflowCache[id];
+  try {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+    const data = await safeJson(res);
+    if (!res.ok || !data || !Array.isArray(data.steps)) return null;
+    state.workflowCache[id] = data;
+    return data;
+  } catch { return null; }
+}
+
+async function getAgentsApi() {
+  if (Object.keys(state.agents).length) return state.agents;
+  try {
+    const res = await fetch('/api/agents');
+    const data = await safeJson(res);
+    const list = res.ok && Array.isArray(data.agents) ? data.agents : [];
+    state.agents = Object.fromEntries(list.map((a) => [a.key, a]));
+    return state.agents;
+  } catch { return state.agents; }
+}
+
+// Fill #workflowSelect with Default + saved names, preserving/falling back to
+// the active selection (state.workflowId), then render that workflow's config.
+async function loadWorkflowsInto(selectId) {
+  const sel = el.workflowSelect;
+  if (!sel) return;
+  const workflows = await listWorkflowsApi();
+  const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
+  const want = selectId || state.workflowId || 'wf_default';
+  sel.innerHTML = '';
+  list.forEach((wf) => sel.appendChild(option(wf.id, wf.name || wf.id)));
+  // Fall back to default if the wanted id is gone (e.g. a deleted workflow).
+  state.workflowId = list.some((wf) => wf.id === want) ? want : 'wf_default';
+  sel.value = state.workflowId;
+  await renderWorkflowConfig(state.workflowId);
+}
+
+// Render the config UI for one workflow. Default -> show the legacy 4 stage rows
+// and hide the dynamic containers. Saved -> fetch topology + registry, render a
+// node row per node and a cycle input per feedback.
+async function renderWorkflowConfig(workflowId) {
+  const isDefault = !workflowId || workflowId === 'wf_default';
+  if (el.wfDefaultStages) el.wfDefaultStages.classList.toggle('hidden', !isDefault);
+  if (el.wfNodeConfig) el.wfNodeConfig.classList.toggle('hidden', isDefault);
+  if (el.wfFeedbackConfig) el.wfFeedbackConfig.classList.toggle('hidden', isDefault);
+
+  if (isDefault) {
+    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '';
+    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
+    renderStepConfigs(); // legacy per-role rows
+    return;
+  }
+
+  const [wf, registry] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
+  if (!wf) {
+    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '<div class="hint">Could not load this workflow.</div>';
+    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
+    return;
+  }
+  const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
+  renderNodeRows(buildNodeConfigRows(wf, registry, runConfig));
+  renderFeedbackRows(buildFeedbackRows(wf, runConfig));
+}
+
+// Build one .stage-cfg row per node into #wf-node-config, keyed by data-node-id.
+// Mirrors the legacy markup (acc bar + meta + picks + caption) so it reuses the
+// existing .stage-cfg styles and renderModelEffortPair.
+function renderNodeRows(rows) {
+  const host = el.wfNodeConfig;
+  if (!host) return;
+  host.innerHTML = '';
+  rows.forEach((row) => {
+    const card = document.createElement('div');
+    card.className = 'stage-cfg';
+
+    const acc = document.createElement('div');
+    acc.className = 'acc' + (row.color ? ' ' + row.color : '');
+    card.appendChild(acc);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const b = document.createElement('b');
+    b.textContent = row.label;
+    const small = document.createElement('small');
+    small.textContent = row.parallel ? `Step ${row.stepIndex + 1} · parallel` : `Step ${row.stepIndex + 1}`;
+    meta.append(b, small);
+    card.appendChild(meta);
+
+    const picks = document.createElement('div');
+    picks.className = 'picks';
+    const mWrap = document.createElement('div');
+    mWrap.className = 'select-wrap';
+    const modelSel = document.createElement('select');
+    modelSel.className = 'step-model select';
+    modelSel.dataset.nodeId = row.nodeId;
+    modelSel.setAttribute('aria-label', `${row.label} model`);
+    mWrap.appendChild(modelSel);
+    const eWrap = document.createElement('div');
+    eWrap.className = 'select-wrap';
+    const effortSel = document.createElement('select');
+    effortSel.className = 'step-effort select';
+    effortSel.dataset.nodeId = row.nodeId;
+    effortSel.setAttribute('aria-label', `${row.label} effort`);
+    eWrap.appendChild(effortSel);
+    picks.append(mWrap, eWrap);
+    card.appendChild(picks);
+
+    const caption = document.createElement('small');
+    caption.className = 'step-current';
+    caption.dataset.nodeId = row.nodeId;
+    card.appendChild(caption);
+
+    renderModelEffortPair(modelSel, effortSel, caption, { model: row.model, effort: row.effort });
+    host.appendChild(card);
+  });
+}
+
+// Build one cycle-count input per feedback into #wf-feedback-config, keyed by
+// data-fb-id. Shows the loop's direction (to <- from) as a label.
+function renderFeedbackRows(rows) {
+  const host = el.wfFeedbackConfig;
+  if (!host) return;
+  host.innerHTML = '';
+  if (!rows.length) return;
+
+  const h = document.createElement('div');
+  h.className = 'hint';
+  h.style.margin = '10px 0 6px';
+  h.textContent = 'Feedback loops — max cycles before gating to you.';
+  host.appendChild(h);
+
+  rows.forEach((row) => {
+    const field = document.createElement('div');
+    field.className = 'field';
+    field.style.marginBottom = '10px';
+
+    const label = document.createElement('label');
+    label.textContent = `Loop ${row.to} ← ${row.from} — max cycles`;
+    label.setAttribute('for', `fb-${row.fbId}`);
+    field.appendChild(label);
+
+    const input = document.createElement('input');
+    input.id = `fb-${row.fbId}`;
+    input.className = 'input';
+    input.type = 'number';
+    input.min = '1';
+    input.value = String(row.maxCycles);
+    input.dataset.fbId = row.fbId;
+    field.appendChild(input);
+
+    host.appendChild(field);
+  });
+}
+
+// Workflow change: remember the selection and re-render its config.
+if (el.workflowSelect) {
+  el.workflowSelect.addEventListener('change', async () => {
+    state.workflowId = el.workflowSelect.value || 'wf_default';
+    await renderWorkflowConfig(state.workflowId);
+  });
 }
 
 async function saveStep(role, model, effort) {
