@@ -18,6 +18,24 @@ current hardcoded `Plan → Refine → Implement → Review` sequence.
 The default workflow is the **current** pipeline `Plan → Refine → Implement →
 Review`; "Reset to default" on the canvas redraws exactly that.
 
+## Visual reference (mockups)
+
+Authoritative visual + behavioral mockups live in
+[`docs/pipeline-composer/mockups/`](../../pipeline-composer/mockups/) — see its
+`README.md`:
+
+- `01-composer-overview.png` — full Composer view (palette, canvas, parallel
+  group, feedback loops, toolbar, saved list).
+- `02-saved-and-readonly-preview.png` — saved pipelines list + expanded
+  read-only preview.
+- `maestro-standalone-mockup.html` — interactive standalone mockup; behavioral
+  source of truth for drag/drop, the `paintWires` SVG renderer, link mode, save,
+  and read-only previews.
+
+Caveats encoded in the mockups but overridden by this spec: the mockup palette
+shows 11 agents (we ship 6) and its default pipeline is 8 steps (our default is
+the current 4-step pipeline).
+
 ## 2. Scope (decided)
 
 - **Agents — 6 runnable.** Keep the existing 4 (Plan, Refine Plan,
