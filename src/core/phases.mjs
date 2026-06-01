@@ -55,6 +55,11 @@ const FALLBACK_PROMPTS = {
     'You are the Manual Tests author. Read the plan and the implemented diff, then write a ' +
     'markdown checklist of manual test cases (each a `- [ ]` line with steps + expected result) ' +
     'to the path given in the task.',
+  'manual-web-ui-testing':
+    'You are the Manual Web UI Tester. Run each case in the manual checklist against the live ' +
+    'web UI using the Playwright tools, then write a result markdown AND a review JSON ' +
+    '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }). Use severities ' +
+    'critical|major|minor|suggestion; a failing case is at least major.',
 };
 
 /**
@@ -347,6 +352,45 @@ export async function runManualTestsChecklist(ctx, opts) {
 
   const summary = (text || '').trim() || 'Manual test checklist written.';
   return { checklistPath, summary };
+}
+
+/**
+ * Manual web UI testing — verifier (loopSource). Drives the running web UI through
+ * the manual checklist (Playwright MCP, declared in the agent frontmatter) and
+ * emits the protocol review verdict JSON. Returns { review }.
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ checklistPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
+ */
+export async function runManualWebUiTesting(ctx, opts) {
+  const { checklistPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
+  const role = 'manual-web-ui-testing';
+  const systemPrompt = buildSystemPrompt(
+    ctx.toolInstruction,
+    ctx.agentPrompts?.manualWebUiTesting,
+    role,
+  );
+  const prompt =
+    taskHeader(ctx, `Run the manual web UI tests (cycle ${cycle})`) +
+    '\n## What to do\n\n' +
+    'Execute the manual test checklist against the running web UI using the Playwright tools. ' +
+    'Write a human-readable result markdown AND a machine-readable review JSON.\n\n' +
+    `Checklist to run: ${checklistPath}\n` +
+    `Write the result markdown to: ${reviewMdPath}\n` +
+    `Write the review JSON to: ${reviewJsonPath}\n\n` +
+    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
+    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
+    'pipeline (a failing manual case is at least major).\n\n' +
+    mockMarkers({
+      MOCK_ROLE: role,
+      MOCK_OUT: reviewMdPath,
+      MOCK_JSON: reviewJsonPath,
+      MOCK_CYCLE: cycle,
+    });
+
+  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+
+  const review = await readReview(reviewJsonPath);
+  return { review };
 }
 
 // ── small local helpers ────────────────────────────────────────────────────────

@@ -107,6 +107,25 @@ test('verifier(reviewer) reading a pre-written blocking review reports blocked',
   assert.equal(res.status, 'blocked');
 });
 
+test('verifier(manualWebUiTesting) cycle 1 blocked, cycle 2 ok (mock decreases severity)', async () => {
+  const dir = await makeTmpDir();
+  const node = { nodeId: 's5_0', key: 'manualWebUiTesting', runnerType: 'verifier', loopSource: true };
+  const c1 = await runners.verifier(ctxFor(dir, node, {
+    checklistPath: join(dir, 'checklist.md'),
+    reviewMdPath: join(dir, 'webui.md'),
+    reviewJsonPath: join(dir, 'webui-c1.json'),
+    cycle: 1,
+  }));
+  assert.equal(c1.status, 'blocked');
+  const c2 = await runners.verifier(ctxFor(dir, node, {
+    checklistPath: join(dir, 'checklist.md'),
+    reviewMdPath: join(dir, 'webui.md'),
+    reviewJsonPath: join(dir, 'webui-c2.json'),
+    cycle: 2,
+  }));
+  assert.equal(c2.status, 'ok');
+});
+
 test('producer(manualTestsChecklist) writes a checklist and returns ok', async () => {
   const dir = await makeTmpDir();
   const node = { nodeId: 's4_0', key: 'manualTestsChecklist', runnerType: 'producer', loopSource: false };
