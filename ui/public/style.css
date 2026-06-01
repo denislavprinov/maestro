@@ -515,3 +515,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-meta .run-cost:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .h-meta .hist-total{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
 .h-meta .hist-total:empty{display:none;}
+
+/* ---------- per-phase + per-pipeline duration (twin of cost) ---------- */
+.stage .lbl .dur{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--ink-2);font-style:normal;margin-top:2px;}
+.stage .lbl .dur:empty{display:none;}
+.stage.active .lbl .dur{color:rgba(255,255,255,.82);}
+.run-meta .run-time{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
+.run-meta .run-time:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
+.h-meta .hist-time{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
+.h-meta .hist-time:empty{display:none;}

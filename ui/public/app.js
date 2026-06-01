@@ -277,6 +277,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     phaseStatus: '',
     costByStage: {},   // { stageKey: usd } for the live stepper
     totalCostUsd: 0,   // pipeline total for the card meta line
+    steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     configSnapshot: null,
     logLines: [],
@@ -362,6 +363,50 @@ function estTitle(n) {
     : '';
 }
 
+// Format a duration in ms as a compact human string. Twin of fmtUsd: non-finite
+// or negative -> ''. <60s -> 'Ns'; <1h -> 'Mm Ss'; else 'Hh Mm'. Math.round
+// is half-up (500ms -> '1s').
+function fmtDuration(ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v < 0) return '';
+  const s = Math.round(v / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+// Live ms for one step: finalized activeMs plus the running tail when live.
+// History passes live=false so a dangling runningSince never contributes.
+function liveStepMs(step, now, live = true) {
+  const base = Number(step?.activeMs) || 0;
+  return live && step?.runningSince != null ? base + Math.max(0, now - step.runningSince) : base;
+}
+
+// Roll per-step activeMs up into UI stage buckets, mirroring costByStage.
+// A step WITHOUT an activeMs field stays absent (blank); activeMs:0 buckets as 0.
+// live=true (Running) adds the running tail; live=false (History) uses finalized only.
+function durByStage(steps, now = Date.now(), live = true) {
+  const out = {};
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s || s.activeMs == null) continue;
+    if (!Number.isFinite(Number(s.activeMs))) continue;
+    const key = normalizePhase(s.phase);
+    if (key) out[key] = (out[key] || 0) + liveStepMs(s, now, live);
+  }
+  return out;
+}
+
+// Live total = sum of all steps' live ms (finalized + running tails). Running only.
+function liveTotalMs(steps, now = Date.now()) {
+  let sum = 0;
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (s && s.activeMs != null) sum += liveStepMs(s, now, true);
+  }
+  return sum;
+}
+
 // Roll saved per-step costs up into UI stage buckets. normalizePhase folds
 // clarify->plan, refine#1+refine#2->refine, implement+fixes->implement, etc.
 // A stage is keyed IFF its step carries a costUsd field (i.e. a result event was
@@ -383,7 +428,10 @@ function costByStage(steps) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
-  if (Array.isArray(msg.steps)) r.costByStage = costByStage(msg.steps);
+  if (Array.isArray(msg.steps)) {
+    r.steps = msg.steps;
+    r.costByStage = costByStage(msg.steps);
+  }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
   if (msg.phase) {
     const key = normalizePhase(msg.phase);
@@ -1558,6 +1606,8 @@ function buildHistCard(projectDir, p) {
   }
   const whenEl = node.querySelector('.h-meta small');
   if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
+  const timeEl = node.querySelector('.hist-time');
+  if (timeEl) timeEl.textContent = typeof p.totalActiveMs === 'number' ? fmtDuration(p.totalActiveMs) : '';
   const totalEl = node.querySelector('.hist-total');
   if (totalEl) {
     totalEl.textContent = typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '';
@@ -1623,6 +1673,11 @@ async function loadHistDetail(projectDir, id, detail) {
         totalEl.title = estTitle(data.state.totalCostUsd);
       }
     }
+    if (typeof data.state.totalActiveMs === 'number') {
+      const card = detail.closest('.hist-card');
+      const t = card && card.querySelector('.hist-time');
+      if (t) t.textContent = fmtDuration(data.state.totalActiveMs);
+    }
   } catch (e) {
     detail.dataset.loaded = ''; // allow a retry on the next expand
     let note = detail.querySelector('.detail-error');
@@ -1642,6 +1697,8 @@ function paintHistStepper(detail, st) {
   const key = normalizePhase(st.phase);
   const reached = key ? STEP_ORDER.indexOf(key) : -1;
   const isDone = status === 'done' || status === 'complete' || status === 'completed';
+
+  const durs = durByStage(st.steps, 0, false); // finalized only; now=0 is unused when live=false
 
   for (const stage of detail.querySelectorAll('.stage[data-step]')) {
     const idx = STEP_ORDER.indexOf(stage.dataset.step);
@@ -1674,6 +1731,12 @@ function paintHistStepper(detail, st) {
     // NOT fabricate separate refine/review counts (no data source for them).
     const cyEl = stage.querySelector('.cycle');
     if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(stage.dataset.step) && st.cycle) ? `#${st.cycle}` : '';
+
+    const durEl = stage.querySelector('.dur');
+    if (durEl) {
+      const d = durs[stage.dataset.step];
+      durEl.textContent = d != null ? fmtDuration(d) : '';
+    }
 
     const costEl = stage.querySelector('.cost'); // COST: per-stage figure
     if (costEl) {
@@ -1855,6 +1918,7 @@ const STAGE_NUM = { done: ['s-done', 'n-green'], now: ['s-now', 'n-peach'], paus
 function paintStepper(r) {
   if (!r.el) return;
   const terminalDone = r.status === 'done';
+  const durs = durByStage(r.steps, Date.now());
   for (const stage of r.el.querySelectorAll('.stage[data-step]')) {
     const step = stage.dataset.step;
     const idx = STEP_ORDER.indexOf(step);
@@ -1886,6 +1950,12 @@ function paintStepper(r) {
     // Cycle badge on refine/review.
     const cyEl = stage.querySelector('.cycle');
     if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(step) && r.cycle) ? `#${r.cycle}` : '';
+
+    const durEl = stage.querySelector('.dur');
+    if (durEl) {
+      const d = durs[step];
+      durEl.textContent = d != null ? fmtDuration(d) : '';
+    }
 
     const costEl = stage.querySelector('.cost');
     if (costEl) {
@@ -1926,6 +1996,8 @@ function paintRunCard(r) {
   }
 
   paintStepper(r);
+  const timeEl = r.el.querySelector('.run-time');
+  if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
   if (totalEl) {
     totalEl.textContent = fmtUsd(r.totalCostUsd || 0); // always shows (mock => $0.00)
@@ -2024,6 +2096,34 @@ window.addEventListener('hashchange', () => {
   const h = location.hash.slice(1);
   if (VIEW_NAMES.includes(h)) showView(h);
 });
+
+// ---------------------------------------------------------------------------
+// Live timer: tick running cards once a second so timers advance without events.
+// ---------------------------------------------------------------------------
+const _timerTick = setInterval(() => {
+  for (const r of runs.values()) {
+    const active = r.status === 'running' || r.status === 'starting';
+    const paused = r.pendingQuestion != null;
+    if (!active || paused || !r.el) continue;
+    const now = Date.now();
+    const timeEl = r.el.querySelector('.run-time');
+    if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, now));
+    const durs = durByStage(r.steps, now);
+    for (const stage of r.el.querySelectorAll('.stage[data-step]')) {
+      const durEl = stage.querySelector('.dur');
+      if (!durEl) continue;
+      const d = durs[stage.dataset.step];
+      durEl.textContent = d != null ? fmtDuration(d) : '';
+    }
+  }
+}, 1000);
+// In a real browser, setInterval returns a numeric id and this timer simply runs
+// for the page's lifetime. Under node:test the jsdom harness imports THIS module,
+// where bare `setInterval` resolves to Node's global and returns a Timeout that
+// would keep the event loop open and hang the test process. unref() — guarded
+// because the browser's numeric id has no such method — lets the test subprocess
+// exit cleanly with zero effect on browser behaviour.
+if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
 // ---------------------------------------------------------------------------
 // boot

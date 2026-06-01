@@ -112,7 +112,8 @@ class Orchestrator extends EventEmitter {
       tools: null,
       checkpointRef: null,
       pipelineDir: null,
-      totalCostUsd: 0, // cumulative actual spend (sum of steps[].costUsd)
+      totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
+      totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
     };
   }
 
@@ -461,31 +462,52 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Emit a question and await its resolution. Honors auto-mode.
+   * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  _ask({ id, kind, questions, issues }) {
+  async _ask({ id, kind, questions, issues }) {
     this._checkAbort();
-    this._emit('question', { id, kind, questions, issues });
 
-    if (this.auto) {
-      // Resolve immediately with a deterministic auto-answer.
-      if (kind === 'clarify') {
-        const auto = {
-          answers: (questions || []).map((q) => ({
-            id: q.id,
-            choice: (q.options && q.options.find((o) => o && o.trim())) || 'auto',
-          })),
-        };
-        this._log('orchestrator', 'info', `auto-answering clarify ${id}`);
-        return Promise.resolve(auto);
-      }
-      this._log('orchestrator', 'info', `auto-answering gate ${id} -> continue`);
-      return Promise.resolve({ decision: 'continue' });
+    // Freeze the active-time clock while we wait on the user (active-time-only).
+    const frozenKey = this._runningStepKey();
+    if (frozenKey) {
+      this._clockPause(frozenKey);
+      this.state.totalActiveMs = sumStepActive(this.state.steps);
+      this._emit('state', this.getState()); // UI freezes the live timer
+      this._persist().catch(() => {});
     }
 
-    return new Promise((resolveP, rejectP) => {
-      this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP };
-    });
+    this._emit('question', { id, kind, questions, issues });
+
+    try {
+      if (this.auto) {
+        if (kind === 'clarify') {
+          this._log('orchestrator', 'info', `auto-answering clarify ${id}`);
+          return {
+            answers: (questions || []).map((q) => ({
+              id: q.id,
+              choice: (q.options && q.options.find((o) => o && o.trim())) || 'auto',
+            })),
+          };
+        }
+        this._log('orchestrator', 'info', `auto-answering gate ${id} -> continue`);
+        return { decision: 'continue' };
+      }
+      return await new Promise((resolveP, rejectP) => {
+        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP };
+      });
+    } finally {
+      // Resume only if that step is still the active phase AND the run hasn't
+      // gone terminal. stop() sets status before rejecting the pending promise,
+      // so on a stop-while-blocked we must NOT resume (the terminal _setStatus
+      // already folded every clock). Gates fire after a phase's 'done', so
+      // frozenKey is null there and nothing resumes anyway.
+      if (frozenKey && this.state.status !== 'stopped' && this.state.status !== 'error') {
+        this._clockResume(frozenKey);
+        this._emit('state', this.getState());
+        this._persist().catch(() => {});
+      }
+    }
   }
 
   /**
@@ -698,20 +720,23 @@ class Orchestrator extends EventEmitter {
 
   _recordStep(phase, cycle, status) {
     const key = cycle ? `${phase}#${cycle}` : phase;
-    const existing = this.state.steps.find((s) => s.key === key);
-    if (existing) {
-      existing.status = status;
-      existing.updatedAt = new Date().toISOString();
+    const now = new Date().toISOString();
+    let step = this.state.steps.find((s) => s.key === key);
+    if (!step) {
+      step = { key, phase, cycle, status, startedAt: now, updatedAt: now, activeMs: 0, runningSince: null };
+      this.state.steps.push(step);
     } else {
-      this.state.steps.push({
-        key,
-        phase,
-        cycle,
-        status,
-        startedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+      step.status = status;
+      step.updatedAt = now;
     }
+    if (status === 'start') {
+      this._clockPauseAll();   // close out any prior running step
+      this._clockResume(key);  // start this phase's active clock
+    } else {
+      this._clockPause(key);   // 'done' (or any terminal marker): finalize
+    }
+    // Keep the derived total in lockstep with the per-step figures (mirrors cost).
+    this.state.totalActiveMs = sumStepActive(this.state.steps);
   }
 
   /**
@@ -739,8 +764,49 @@ class Orchestrator extends EventEmitter {
     this._persist().catch(() => {});
   }
 
+  /** Start (resume) the active-time clock for a step key, idempotently. */
+  _clockResume(key) {
+    const step = this.state.steps.find((s) => s.key === key);
+    if (step && step.runningSince == null) step.runningSince = Date.now();
+  }
+
+  /** Pause a step's clock, folding the elapsed run into activeMs. No-op if idle. */
+  _clockPause(key) {
+    const step = this.state.steps.find((s) => s.key === key);
+    if (!step || step.runningSince == null) return;
+    step.activeMs = (step.activeMs || 0) + Math.max(0, Date.now() - step.runningSince);
+    step.runningSince = null;
+  }
+
+  /** Pause every running step (defensive: only one runs at a time normally). */
+  _clockPauseAll() {
+    for (const s of this.state.steps) {
+      if (s.runningSince != null) this._clockPause(s.key);
+    }
+  }
+
+  /** Key of the step whose clock is currently running, or null. */
+  _runningStepKey() {
+    const s = this.state.steps.find((x) => x.runningSince != null);
+    return s ? s.key : null;
+  }
+
+  /** Live total = finalized activeMs (sumStepActive) + the running tail. Test/diagnostic. */
+  liveActiveMs() {
+    const now = Date.now();
+    let sum = 0;
+    for (const s of this.state.steps) {
+      sum += (s.activeMs || 0) + (s.runningSince != null ? Math.max(0, now - s.runningSince) : 0);
+    }
+    return sum;
+  }
+
   _setStatus(status) {
     this.state.status = status;
+    if (status === 'done' || status === 'stopped' || status === 'error') {
+      this._clockPauseAll();
+      this.state.totalActiveMs = sumStepActive(this.state.steps);
+    }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());
   }
@@ -797,6 +863,22 @@ function sumStepCosts(steps) {
     if (Number.isFinite(s?.costUsd)) sum += s.costUsd;
   }
   return roundUsd(sum);
+}
+
+/**
+ * Sum per-step active processing time (ms) into the pipeline total. Only the
+ * FINALIZED activeMs is summed here; a still-running step's tail is added live
+ * by consumers (liveActiveMs / the UI). Absent/NaN values are ignored. No
+ * rounding (durations are integer ms).
+ * @param {Array<{activeMs?:number}>} steps
+ * @returns {number}
+ */
+function sumStepActive(steps) {
+  let sum = 0;
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (Number.isFinite(s?.activeMs)) sum += s.activeMs;
+  }
+  return sum;
 }
 
 function isAbort(err) {

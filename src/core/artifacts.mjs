@@ -273,6 +273,24 @@ function pipelineTotalCost(state) {
 }
 
 /**
+ * The pipeline's total active processing time (ms) for the history list. Prefer
+ * the persisted `totalActiveMs`; fall back to summing per-step `activeMs` for
+ * older/partial state.json. Returns null only when there's no timing data at all
+ * (so the UI renders a blank chip rather than a misleading 0s).
+ * @param {object|null} state
+ * @returns {number|null}
+ */
+function pipelineTotalActiveMs(state) {
+  if (typeof state?.totalActiveMs === 'number') return state.totalActiveMs;
+  let sum = 0;
+  let any = false;
+  for (const s of Array.isArray(state?.steps) ? state.steps : []) {
+    if (Number.isFinite(s?.activeMs)) { sum += s.activeMs; any = true; }
+  }
+  return any ? sum : null;
+}
+
+/**
  * List all pipelines for a project, newest first.
  * Each entry: { id, dir, title, status, startedAt, mtime }.
  * Directories without a readable state.json fall back to filesystem metadata.
@@ -310,6 +328,7 @@ export async function listPipelines(projectDir) {
       status: state?.status ?? 'unknown',
       startedAt: state?.startedAt ?? null,
       totalCostUsd: pipelineTotalCost(state),
+      totalActiveMs: pipelineTotalActiveMs(state),
       mtime,
     });
   }
