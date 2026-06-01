@@ -43,3 +43,33 @@ test('topology() drops a feedback whose endpoint no longer exists', () => {
 test('topology() returns empty arrays for an empty canvas', () => {
   assert.deepEqual(topology([], []), { steps: [], feedbacks: [] });
 });
+
+test('metaLine() formats "N steps · M agents" with no loops', () => {
+  const steps = [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'reviewer' }]];
+  assert.equal(metaLine(steps, []), '2 steps · 2 agents');
+});
+
+test('metaLine() singularises one feedback loop', () => {
+  const steps = [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'reviewer' }]];
+  assert.equal(metaLine(steps, [{ id: 'fb_0', from: 's1_0', to: 's0_0' }]), '2 steps · 2 agents · 1 feedback loop');
+});
+
+test('metaLine() pluralises multiple feedback loops and counts parallel members as agents', () => {
+  const steps = [
+    [{ id: 's0_0', key: 'planner' }],
+    [{ id: 's1_0', key: 'implementer' }, { id: 's1_1', key: 'manualTestsChecklist' }],
+    [{ id: 's2_0', key: 'reviewer' }],
+  ];
+  const fbs = [{ id: 'fb_0', from: 's2_0', to: 's1_0' }, { id: 'fb_1', from: 's2_0', to: 's0_0' }];
+  assert.equal(metaLine(steps, fbs), '3 steps · 4 agents · 2 feedback loops');
+});
+
+test('distinctAgents() returns first-seen-ordered unique keys', () => {
+  const steps = [
+    [{ id: 's0_0', key: 'planner' }],
+    [{ id: 's1_0', key: 'implementer' }, { id: 's1_1', key: 'implementer' }],
+    [{ id: 's2_0', key: 'reviewer' }],
+    [{ id: 's3_0', key: 'planner' }],
+  ];
+  assert.deepEqual(distinctAgents(steps), ['planner', 'implementer', 'reviewer']);
+});

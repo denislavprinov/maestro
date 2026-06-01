@@ -29,9 +29,27 @@ export function topology(steps, feedbacks) {
   return { steps: outSteps, feedbacks: outFeedbacks };
 }
 
+// metaLine(steps, feedbacks) -> "N steps · M agents[ · K feedback loop(s)]"
+// (saved-pipelines card meta line). Mirrors the mockup's renderList meta string.
+export function metaLine(steps, feedbacks) {
+  const nSteps = steps.length;
+  const nAgents = steps.reduce((sum, col) => sum + col.length, 0);
+  const nLoops = (feedbacks || []).length;
+  let s = `${nSteps} steps · ${nAgents} agents`;
+  if (nLoops) s += ` · ${nLoops} feedback loop${nLoops > 1 ? 's' : ''}`;
+  return s;
+}
+
+// distinctAgents(steps) -> ordered unique role keys (for the chip row).
+export function distinctAgents(steps) {
+  const seen = [];
+  steps.forEach((col) => col.forEach((node) => {
+    if (!seen.includes(node.key)) seen.push(node.key);
+  }));
+  return seen;
+}
+
 // Filled in by later tasks (each gated by its own failing test).
-export function metaLine() { return ''; }
-export function distinctAgents() { return []; }
 export function defaultTopologyFromTemplate() { return { steps: [], feedbacks: [] }; }
 export function mergePalette() { return []; }
 export const EMBEDDED_AGENTS = {};
