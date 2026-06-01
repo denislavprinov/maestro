@@ -98,3 +98,36 @@ test('POST /api/workflows creates a valid template -> 201, then it lists', async
   const list = await (await fetch(`${base}/api/workflows`)).json();
   assert.ok(list.workflows.some((w) => w.id === workflow.id && w.name === 'Quick Fix'));
 });
+
+test('DELETE /api/workflows/wf_default is refused -> 400', async () => {
+  const r = await fetch(`${base}/api/workflows/wf_default`, { method: 'DELETE' });
+  assert.equal(r.status, 400);
+  assert.ok((await r.json()).error);
+});
+
+test('DELETE /api/workflows/:id is 404 for an unknown id', async () => {
+  const r = await fetch(`${base}/api/workflows/wf_missing_xyz`, { method: 'DELETE' });
+  assert.equal(r.status, 404);
+});
+
+test('DELETE /api/workflows/:id removes a created template', async () => {
+  // Create one to delete.
+  const created = await (await fetch(`${base}/api/workflows`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({
+      name: 'Disposable',
+      steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'reviewer' }]],
+      feedbacks: [],
+    }),
+  })).json();
+  const id = created.workflow.id;
+
+  const del = await fetch(`${base}/api/workflows/${id}`, { method: 'DELETE' });
+  assert.equal(del.status, 200);
+  assert.deepEqual(await del.json(), { ok: true });
+
+  // Gone from the list (default still present).
+  const list = await (await fetch(`${base}/api/workflows`)).json();
+  assert.ok(!list.workflows.some((w) => w.id === id));
+  assert.ok(list.workflows.some((w) => w.id === 'wf_default'));
+});

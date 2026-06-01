@@ -529,6 +529,19 @@ app.post('/api/workflows', async (req, res) => {
   }
 });
 
+app.delete('/api/workflows/:id', async (req, res) => {
+  const id = req.params.id;
+  // The built-in default is not in the user store and must never be deleted.
+  if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
+  try {
+    const removed = await deleteWorkflow(id); // CONV-1: await
+    if (!removed) return res.status(404).json({ error: 'workflow not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Install logic (mirrors scripts/install.mjs): copy agents/*.md and
 // skills/maestro/** into <projectDir>/.claude/...
