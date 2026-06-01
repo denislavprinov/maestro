@@ -33,6 +33,24 @@ test('cost fallback also reads the legacy raw.cost_usd spelling', () => {
   assert.equal(orch.getState().totalCostUsd, 0.04);
 });
 
+test('a real (non-mock) result with no cost warns once; mock stays silent', () => {
+  // real orchestrator (fresh() leaves claude.mock false)
+  const real = fresh();
+  real._phase('plan', 0, 'start');
+  const realLogs = [];
+  real.on('log', (l) => realLogs.push(l));
+  real._onAgentEvent('planner', { type: 'result', raw: { type: 'result' } }); // no cost anywhere
+  assert.equal(realLogs.filter((l) => l.level === 'warn').length, 1, 'real run warns about the missing cost estimate');
+
+  // mock orchestrator stays silent (claude.mock === true)
+  const mock = createOrchestrator({ projectDir: '/tmp/proj', claude: { mock: true } });
+  mock._phase('plan', 0, 'start');
+  const mockLogs = [];
+  mock.on('log', (l) => mockLogs.push(l));
+  mock._onAgentEvent('planner', { type: 'result', raw: { type: 'result' } });
+  assert.equal(mockLogs.filter((l) => l.level === 'warn').length, 0, 'mock stays silent');
+});
+
 test('costs accumulate across phases/cycles into the running total', () => {
   const orch = fresh();
   orch._phase('clarify', 1, 'start');
