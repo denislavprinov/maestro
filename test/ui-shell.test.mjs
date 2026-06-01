@@ -18,8 +18,10 @@ test('run-card template: 6 steps + qpanel + stop', () => {
   const m = html.match(/<template id="run-card-tpl">([\s\S]*?)<\/template>/);
   assert.ok(m, 'missing run-card-tpl');
   const tpl = m[1];
-  for (const s of ['preflight','plan','refine','implement','review','done'])
-    assert.ok(tpl.includes(`data-step="${s}"`), `tpl missing step ${s}`);
+  // Stages are now JS-built (Task 3 emptied the static markup): the template
+  // carries only the empty container the stepper renders into.
+  assert.ok(/class="stages compact"\s*>\s*<\/div>/.test(tpl), 'tpl missing empty .stages.compact container');
+  assert.ok(!tpl.includes('data-step'), 'tpl should no longer carry static data-step stages');
   assert.ok(tpl.includes('qpanel'), 'tpl missing qpanel slot');
   assert.ok(tpl.includes('btn-stop'), 'tpl missing btn-stop');
 });

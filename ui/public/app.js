@@ -289,6 +289,55 @@ function manifestFor(stepper) {
   return CLIENT_DEFAULT_STEPPER;
 }
 
+// Resolve an incoming phase/state event to a cell index + node id within a run's
+// manifest. nodeId (node phase events) pins the exact node; bookend/legacy events
+// match by phase: preflight/done by kind, everything else by uiPhase.
+function locateInManifest(manifest, msg) {
+  const m = manifestFor(manifest);
+  if (msg.nodeId) {
+    for (let i = 0; i < m.steps.length; i++) {
+      if (m.steps[i].nodes.some((n) => n.id === msg.nodeId)) return { cellIdx: i, nodeId: msg.nodeId };
+    }
+  }
+  const key = normalizePhase(msg.phase);
+  if (key === 'preflight') return { cellIdx: 0, nodeId: 'preflight' };
+  if (key === 'done') return { cellIdx: m.steps.length - 1, nodeId: 'done' };
+  for (let i = 0; i < m.steps.length; i++) {
+    const hit = m.steps[i].nodes.find((n) => n.uiPhase === key);
+    if (hit) return { cellIdx: i, nodeId: hit.id };
+  }
+  return { cellIdx: -1, nodeId: null };
+}
+
+// Map a phase status string + run status to a stepper node kind.
+function nodeKindFor(r, status) {
+  if (r.pendingQuestion != null) return 'pause';
+  if (r.status === 'stopped') return 'stop';
+  if (['done', 'complete', 'passed', 'finish'].includes(status)) return 'done';
+  return 'now';
+}
+
+// Apply one phase/state transition to the run's live node-status map.
+// The scalar trackers (phaseKey/cycle/phaseStatus) drive the foot chip + status
+// pill and are kept in sync even when the phase isn't locatable in this run's
+// manifest (e.g. a manual-web phase on the legacy default manifest) — only the
+// cell-level node-status map needs a resolved cell + node id.
+function advanceRun(r, msg) {
+  r.phaseKey = normalizePhase(msg.phase) || r.phaseKey;
+  if (msg.cycle) r.cycle = msg.cycle;
+  r.phaseStatus = msg.status || '';
+  const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
+  if (cellIdx < 0 || !nodeId) return;
+  if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
+  r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
+}
+
+// Replace a live card's stepper DOM when the manifest first arrives/changes.
+function rebuildStepperDom(r) {
+  const host = r.el && r.el.querySelector('.stages.compact');
+  if (host) buildStepper(host, r.stepper);
+}
+
 // Build the stepper DOM into `host` (a .stages.compact container) from a
 // manifest. Each cell -> one .stage with a single visible number. A cell with
 // >1 node gets class .parallel and stacks each node as a .stage-node row.
@@ -372,11 +421,13 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     status,
     startedAt: startedAt || nowHMS(),
     local,
-    maxStepIdx: -1,
+    stepper: null,        // run's own stepper manifest (from 'state'); null => legacy default
+    nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
+    maxCellIdx: -1,       // highest reached cell index (drives "earlier cells = done")
     phaseKey: 'preflight',
     cycle: 0,
     phaseStatus: '',
-    costByStage: {},   // { stageKey: usd } for the live stepper
+    costByNode: {},       // { nodeId|uiPhase: usd } for the live stepper
     totalCostUsd: 0,   // pipeline total for the card meta line
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
@@ -407,20 +458,11 @@ function upsertRun(partial) {
 // Per-run event handlers
 // ---------------------------------------------------------------------------
 function onPhase(r, msg) {
-  const key = normalizePhase(msg.phase);
-  if (key) {
-    const idx = STEP_ORDER.indexOf(key);
-    if (idx > r.maxStepIdx) r.maxStepIdx = idx;
-    r.phaseKey = key;
-    if (msg.cycle) r.cycle = msg.cycle;
-    r.phaseStatus = msg.status || '';
-  }
-  // The "done" phase marks all steps complete.
-  if (key === 'done' || (msg.phase && String(msg.phase).toLowerCase().includes('done'))) {
-    r.maxStepIdx = STEP_ORDER.indexOf('done');
+  advanceRun(r, msg);
+  if (normalizePhase(msg.phase) === 'done') {
+    r.maxCellIdx = manifestFor(r.stepper).steps.length - 1;
     r.phaseKey = 'done';
   }
-  // Surface the phase transition in the run's log.
   const cyc = msg.cycle ? ` #${msg.cycle}` : '';
   const st = msg.status ? ` (${msg.status})` : '';
   onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
@@ -559,20 +601,18 @@ function costByNode(steps) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg.stepper && r.stepper == null) {
+    r.stepper = msg.stepper;
+    // The manifest arrived after the card was built (or replaced the default):
+    // rebuild the stepper DOM so subsequent paints address the right nodes.
+    if (r.el) rebuildStepperDom(r);
+  }
   if (Array.isArray(msg.steps)) {
     r.steps = msg.steps;
-    r.costByStage = costByStage(msg.steps);
+    r.costByNode = costByNode(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
-  if (msg.phase) {
-    const key = normalizePhase(msg.phase);
-    if (key) {
-      const idx = STEP_ORDER.indexOf(key);
-      if (idx > r.maxStepIdx) r.maxStepIdx = idx;
-      r.phaseKey = key;
-    }
-  }
-  if (msg.cycle) r.cycle = msg.cycle;
+  if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
   paintRunCard(r);
 }
@@ -2845,6 +2885,11 @@ function buildRunCard(r) {
   const node = tpl.content.firstElementChild.cloneNode(true);
   node.dataset.runId = r.runId;
 
+  // Build the stepper from the run's manifest BEFORE fillStageSublabels runs
+  // (it fills .sub inside these stages). r.stepper may be null -> legacy default.
+  const stepHost = node.querySelector('.stages.compact');
+  if (stepHost) buildStepper(stepHost, r.stepper);
+
   const titleEl = node.querySelector('.run-title');
   if (titleEl) titleEl.textContent = r.title;
   const metaEl = node.querySelector('.rm-text');
@@ -2891,32 +2936,39 @@ function fillStageSublabels(node, snap) {
   }
 }
 
-// Paint the 6-stage stepper from the run model.
+// Paint the stepper from the run model.
 const STAGE_NUM = { done: ['s-done', 'n-green'], now: ['s-now', 'n-peach'], pause: ['s-pause', 'n-amber'], stop: ['s-stop', 'n-red'] };
+
+// Aggregate kind for a cell from its nodes' live status + position. terminalDone
+// forces all-done; a cell strictly before the frontier is done; the frontier
+// cell takes its nodes' status (any 'now' wins, else 'done' when all settled).
+function cellKind(r, cell, cellIdx, terminalDone) {
+  if (terminalDone) return 'done';
+  if (cellIdx < r.maxCellIdx) return 'done';
+  if (cellIdx > r.maxCellIdx) return null; // pending
+  const kinds = cell.nodes.map((n) => r.nodeStatus[n.id]).filter(Boolean);
+  if (!kinds.length) return null;
+  if (kinds.includes('stop')) return 'stop';
+  if (kinds.includes('pause')) return 'pause';
+  if (kinds.includes('now')) return 'now';
+  return kinds.every((k) => k === 'done') ? 'done' : 'now';
+}
+
 function paintStepper(r) {
   if (!r.el) return;
+  const manifest = manifestFor(r.stepper);
   const terminalDone = r.status === 'done';
-  const durs = durByStage(r.steps, Date.now());
-  for (const stage of r.el.querySelectorAll('.stage[data-step]')) {
-    const step = stage.dataset.step;
-    const idx = STEP_ORDER.indexOf(step);
-    const numEl = stage.querySelector('.num');
+  const durs = durByNode(r.steps, Date.now(), true);
+  const stages = r.el.querySelectorAll('.stages.compact > .stage');
 
+  manifest.steps.forEach((cell, cellIdx) => {
+    const stage = stages[cellIdx];
+    if (!stage) return;
+    const numEl = stage.querySelector('.num');
     stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
     if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
 
-    let kind = null; // 'done' | 'now' | 'pause' | 'stop' | null(pending)
-    if (terminalDone) {
-      kind = 'done';
-    } else if (idx < r.maxStepIdx) {
-      kind = 'done';
-    } else if (idx === r.maxStepIdx) {
-      if (r.pendingQuestion != null) kind = 'pause';
-      else if (r.status === 'stopped') kind = 'stop';
-      else if (['done', 'complete', 'passed'].includes(r.phaseStatus)) kind = 'done';
-      else kind = 'now';
-    }
-
+    const kind = cellKind(r, cell, cellIdx, terminalDone);
     if (kind) {
       const [sCls, nCls] = STAGE_NUM[kind];
       stage.classList.add(sCls);
@@ -2925,23 +2977,29 @@ function paintStepper(r) {
       numEl.classList.add('n-grey'); // pending
     }
 
-    // Cycle badge on refine/review.
-    const cyEl = stage.querySelector('.cycle');
-    if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(step) && r.cycle) ? `#${r.cycle}` : '';
-
-    const durEl = stage.querySelector('.dur');
-    if (durEl) {
-      const d = durs[step];
-      durEl.textContent = d != null ? fmtDuration(d) : '';
+    // Per-node cycle / duration / cost. Single-node cells expose .cycle/.dur/.cost
+    // directly under .lbl; parallel cells expose them per .stage-node row.
+    for (const node of cell.nodes) {
+      const scope = stage.querySelector(`.stage-node[data-node-id="${node.id}"]`) || stage;
+      const cyEl = scope.querySelector('.cycle');
+      if (cyEl) cyEl.textContent = (node.cycles && r.cycle && cellIdx === r.maxCellIdx) ? `#${r.cycle}` : '';
+      const durEl = scope.querySelector('.dur');
+      if (durEl) { const d = durs[node.id]; durEl.textContent = d != null ? fmtDuration(d) : ''; }
+      const costEl = scope.querySelector('.cost');
+      if (costEl) {
+        const c = (r.costByNode || {})[node.id];
+        costEl.textContent = c != null ? fmtUsd(c) : '';
+        costEl.title = c != null ? estTitle(c) : '';
+      }
     }
+  });
+}
 
-    const costEl = stage.querySelector('.cost');
-    if (costEl) {
-      const c = (r.costByStage || {})[step];
-      costEl.textContent = c != null ? fmtUsd(c) : '';
-      costEl.title = c != null ? estTitle(c) : '';
-    }
-  }
+// Does the run's current frontier cell contain a cycling node?
+function currentNodeCycles(r) {
+  const m = manifestFor(r.stepper);
+  const cell = m.steps[r.maxCellIdx];
+  return !!(cell && cell.nodes.some((n) => n.cycles));
 }
 
 function paintRunCard(r) {
@@ -2964,9 +3022,7 @@ function paintRunCard(r) {
     if (r.pendingQuestion != null) {
       const n = questionCount(r.pendingQuestion);
       chip.textContent = `${phaseLabel} paused · ${n} question${n === 1 ? '' : 's'}`;
-    } else if (CYCLING_PHASES.has(r.phaseKey) && r.cycle) {
-      // Max cycles aren't carried on the client run model, so show the current
-      // cycle number without a misleading denominator.
+    } else if (currentNodeCycles(r) && r.cycle) {
       chip.textContent = `${phaseLabel} cycle ${r.cycle}`;
     } else {
       chip.textContent = phaseLabel;

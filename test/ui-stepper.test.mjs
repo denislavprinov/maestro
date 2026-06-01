@@ -98,3 +98,36 @@ test('manifestFor falls back to the legacy default when state has no stepper', a
   assert.deepEqual(m.steps.map((s) => s.nodes[0].label),
     ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
 });
+
+test('Running card renders the run\'s own manifest and paints by nodeId', async () => {
+  const ctx = await bootLive();
+  ctx.selectProject();
+  await new Promise((r) => setTimeout(r, 0));
+
+  const manifest = {
+    version: 1,
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
+      { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
+      { kind: 'agents', nodes: [{ id: 's4_0', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', color: 'blue', cycles: false }] },
+      { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+    ],
+  };
+  const RID = 'run-1';
+  // A state event carrying the manifest creates/updates the run; then a node phase.
+  ctx.emit({ type: 'state', runId: RID, status: 'running', phase: 'refine', stepper: manifest, steps: [] });
+  ctx.emit({ type: 'phase', runId: RID, phase: 'refine', status: 'start', nodeId: 's1_0' });
+  ctx.showRunning();
+  await new Promise((r) => setTimeout(r, 0));
+
+  const card = ctx.window.document.querySelector('#run-list [data-run-id="run-1"]');
+  assert.ok(card, 'run card exists');
+  const labels = [...card.querySelectorAll('.stage .lbl b, .stage .stage-node b')].map((e) => e.textContent);
+  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine Plan', 'Manual Tests Checklist', 'Done']);
+  // s1_0 (Refine Plan, cell index 2) is the current step -> s-now.
+  assert.ok(card.querySelector('.stage[data-node-id="s1_0"]').classList.contains('s-now'));
+  // Earlier cells are done.
+  assert.ok(card.querySelector('.stage[data-node-id="s0_0"]').classList.contains('s-done'));
+  assert.ok(card.querySelector('.stage[data-node-id="preflight"]').classList.contains('s-done'));
+});
