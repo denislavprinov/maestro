@@ -534,8 +534,11 @@ class Orchestrator extends EventEmitter {
     // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
     const cost = e.costUsd != null
       ? Number(e.costUsd)
-      : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd) : NaN);
+      : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
     if (Number.isFinite(cost)) this._recordCost(cost);
+    else if (e.raw && e.raw.type === 'result' && !this.claude.mock) {
+      this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)');
+    }
 
     const text = (e.text || '').trim();
     if (text) {

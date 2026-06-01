@@ -25,6 +25,14 @@ test('cost falls back to raw.total_cost_usd when costUsd is absent', () => {
   assert.equal(orch.getState().totalCostUsd, 0.02);
 });
 
+test('cost fallback also reads the legacy raw.cost_usd spelling', () => {
+  const orch = fresh();
+  orch._phase('plan', 0, 'start');
+  // event with NO top-level costUsd and only the legacy raw.cost_usd field
+  orch._onAgentEvent('planner', { type: 'result', raw: { type: 'result', cost_usd: 0.04 } });
+  assert.equal(orch.getState().totalCostUsd, 0.04);
+});
+
 test('costs accumulate across phases/cycles into the running total', () => {
   const orch = fresh();
   orch._phase('clarify', 1, 'start');

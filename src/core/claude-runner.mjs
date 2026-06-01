@@ -273,7 +273,7 @@ export function extractResultCost(evt) {
   const raw = evt.total_cost_usd ?? evt.cost_usd; // accept either spelling; keeps 0
   if (raw == null) return null;                   // no cost field present
   const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) && n >= 0 ? n : null; // a negative spend is malformed → no cost
 }
 
 // ── Mock execution ───────────────────────────────────────────────────────────

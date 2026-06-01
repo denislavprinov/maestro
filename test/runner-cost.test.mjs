@@ -22,6 +22,12 @@ test('extractResultCost returns null for non-result / costless events', () => {
   assert.equal(extractResultCost(null), null);
 });
 
+test('extractResultCost rejects a negative cost (treats it as no cost)', () => {
+  assert.equal(extractResultCost({ type: 'result', total_cost_usd: -5 }), null);
+  assert.equal(extractResultCost({ type: 'result', total_cost_usd: 0 }), 0, 'genuine zero still kept');
+  assert.equal(extractResultCost({ type: 'result', total_cost_usd: 0.07 }), 0.07);
+});
+
 test('mock runClaude emits a single zero-cost result event', async () => {
   const events = [];
   // planner-clarify with no MOCK_OUT performs no file writes (mockPlannerClarify
