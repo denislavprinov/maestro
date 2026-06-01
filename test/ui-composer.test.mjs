@@ -114,3 +114,61 @@ test('Save serializes the canvas to contract topology and POSTs {name,steps,feed
   assert.equal(posted[0].steps[0][0].id, 's0_0', 'contract instance ids');
   assert.equal(posted[0].feedbacks.length, 2, 'two default feedback loops');
 });
+
+test('saved list renders rows with meta line + chips; expand builds a read-only preview; delete removes the row', async () => {
+  const WF_QUICK = {
+    id: 'wf_quickfix', name: 'Quick Fix', version: 1,
+    steps: [
+      [{ id: 's0_0', key: 'planner' }],
+      [{ id: 's1_0', key: 'implementer' }],
+      [{ id: 's2_0', key: 'reviewer' }],
+    ],
+    feedbacks: [{ id: 'fb_0', from: 's2_0', to: 's1_0' }],
+    createdAt: 'x', updatedAt: 'x',
+  };
+  const deleted = [];
+  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
+  const { window } = dom;
+  window.Element.prototype.scrollIntoView = function () {};
+  Object.defineProperty(window.HTMLElement.prototype, 'offsetParent', { get() { return window.document.body; }, configurable: true });
+  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  window.confirm = () => true;
+  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  window.fetch = (url, opts) => {
+    const u = String(url);
+    if (u.includes('/api/workflows/wf_default')) return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_WF });
+    if (u.match(/\/api\/workflows\/wf_quickfix$/) && opts && opts.method === 'DELETE') { deleted.push('wf_quickfix'); return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }); }
+    // The server reload after a DELETE reflects the deletion (matches the real
+    // store: deleteWorkflow → GET returns the remaining workflows).
+    if (u.endsWith('/api/workflows')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: deleted.includes('wf_quickfix') ? [DEFAULT_WF] : [DEFAULT_WF, WF_QUICK] }) });
+    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: [] }) });
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [], config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
+  };
+  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+  }
+  globalThis.window = window; globalThis.document = window.document;
+  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await new Promise((r) => setTimeout(r, 0));
+  window.location.hash = 'composer';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 30));
+
+  const rows = window.document.querySelectorAll('#composer-saved-list .pl-item');
+  assert.equal(rows.length, 2, 'Default + Quick Fix');
+  const quick = [...rows].find((r) => r.querySelector('.pl-name').textContent === 'Quick Fix');
+  assert.ok(quick, 'Quick Fix row present');
+  assert.equal(quick.querySelector('.pl-meta').textContent.replace(/\s+/g, ' ').trim(), '3 steps · 3 agents · 1 feedback loop');
+  assert.equal(quick.querySelectorAll('.pl-chip').length, 3, 'three distinct-agent chips');
+
+  quick.querySelector('.pl-row').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(quick.classList.contains('open'), 'row expands');
+  assert.ok(quick.querySelector('.pl-body .ro-flow'), 'read-only preview rendered');
+  assert.equal(quick.querySelectorAll('.pl-body .ro-flow .node').length, 3, 'preview has 3 nodes');
+
+  quick.querySelector('.pl-del').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(deleted, ['wf_quickfix'], 'DELETE called for the workflow id');
+  assert.equal(window.document.querySelectorAll('#composer-saved-list .pl-item').length, 1, 'row removed after reload');
+});

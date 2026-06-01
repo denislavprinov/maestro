@@ -815,11 +815,99 @@ async function composerSave() {
   setTimeout(() => { saveBtn.innerHTML = html; saveBtn.style.background = ''; }, 1400);
 }
 
-// TEMPORARY (Task 7): count-only stub. Task 8 replaces this with the full
-// saved-list renderer (composerRenderList/composerRenderRO/composerRoNode).
 async function composerLoadSaved() {
   composer.saved = await listWorkflows();
-  if (composer.els.count) composer.els.count.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
+  composerRenderList();
+}
+
+function composerRoNode(a) {
+  const ag = composerAgent(a.key);
+  const d = document.createElement('div');
+  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
+  d.innerHTML =
+    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
+    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>`;
+  return d;
+}
+
+function composerRenderRO(host, item) {
+  const tag = document.createElement('div'); tag.className = 'pl-readonly-tag';
+  tag.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg> Read-only preview';
+  host.appendChild(tag);
+  const scroll = document.createElement('div'); scroll.className = 'ro-scroll';
+  const f = document.createElement('div'); f.className = 'flow ro-flow';
+  const w = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); w.setAttribute('class', 'wires');
+  f.appendChild(w);
+  for (let i = 0; i < item.steps.length; i++) {
+    f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+    const col = document.createElement('div'); col.className = 'col';
+    const ct = document.createElement('div'); ct.className = 'col-tag';
+    ct.innerHTML = `Step ${i + 1}` + (item.steps[i].length > 1 ? ' · <em>parallel</em>' : '');
+    col.appendChild(ct);
+    item.steps[i].forEach((a) => col.appendChild(composerRoNode(a)));
+    f.appendChild(col);
+  }
+  f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+  scroll.appendChild(f); host.appendChild(scroll);
+  const paint = () => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id });
+  requestAnimationFrame(() => requestAnimationFrame(paint));
+  setTimeout(paint, 60);
+}
+
+function composerRenderList() {
+  const listEl = composer.els.list, cntEl = composer.els.count;
+  listEl.innerHTML = '';
+  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
+  if (!composer.saved.length) {
+    listEl.innerHTML = '<div class="pl-empty">No saved pipelines yet — build one above and hit "Save pipeline".</div>';
+    return;
+  }
+  composer.saved.forEach((item) => {
+    const used = distinctAgents(item.steps);
+    const chips = used.map((k) => {
+      const ag = composerAgent(k);
+      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}</span>`;
+    }).join('');
+    const meta = metaLine(item.steps, item.feedbacks).replace(
+      / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
+    );
+    const wrap = document.createElement('div'); wrap.className = 'pl-item'; wrap.dataset.id = item.id;
+    const isDefault = item.id === 'wf_default';
+    wrap.innerHTML =
+      `<div class="pl-row">` +
+        `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+        `<div class="pl-main">` +
+          `<div class="pl-name">${item.name}</div>` +
+          `<div class="pl-meta">${meta}</div>` +
+          `<div class="pl-chips">${chips}</div>` +
+        `</div>` +
+        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
+      `</div>` +
+      `<div class="pl-body"></div>`;
+    listEl.appendChild(wrap);
+    const row = wrap.querySelector('.pl-row');
+    const del = wrap.querySelector('.pl-del');
+    const body = wrap.querySelector('.pl-body');
+    if (del) del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+      try { await deleteWorkflow(item.id); } catch (err) {
+        appendLog({ source: 'ui', level: 'error', text: `delete pipeline: ${err.message}`, ts: Date.now() }); return;
+      }
+      await composerLoadSaved();
+    });
+    row.addEventListener('click', () => {
+      const open = wrap.classList.toggle('open');
+      if (open) {
+        if (!body.dataset.rendered) { composerRenderRO(body, item); body.dataset.rendered = '1'; }
+        else {
+          const f = body.querySelector('.ro-flow'), w = body.querySelector('.wires');
+          if (f && w) requestAnimationFrame(() => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id }));
+        }
+      }
+    });
+  });
 }
 
 function modelById(id) {
