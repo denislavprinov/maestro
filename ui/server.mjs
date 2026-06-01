@@ -22,6 +22,11 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
 } from '../src/core/config.mjs';
+import {
+  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
+} from '../src/core/workflows.mjs';
+import { validateWorkflow } from '../src/core/workflow-validator.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -472,6 +477,32 @@ app.delete('/api/config/models', async (req, res) => {
   try {
     const config = await removeCustomModel(projectDir, id);
     res.json({ config, models: await listModels(projectDir) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Workflow templates (global store at ~/.maestro/workflows). Topology only;
+// model/effort/cycles live in per-project run-config. CRUD mirrors the
+// /api/projects + /api/config delegation pattern: thin handlers, validation and
+// atomic persistence owned by src/core/workflows.mjs + workflow-validator.mjs.
+// ---------------------------------------------------------------------------
+app.get('/api/workflows', async (_req, res) => {
+  try {
+    // The built-in default is never persisted to the user store; callers
+    // prepend it (CONTRACT: GET -> { workflows: [DEFAULT_WORKFLOW, ...listWorkflows()] }).
+    res.json({ workflows: [DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/workflows/:id', async (req, res) => {
+  try {
+    const tpl = await readWorkflow(req.params.id); // CONV-1: await; returns DEFAULT_WORKFLOW for "wf_default"
+    if (!tpl) return res.status(404).json({ error: 'workflow not found' });
+    res.json(tpl);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
