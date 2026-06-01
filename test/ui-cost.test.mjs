@@ -126,3 +126,10 @@ test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays b
   assert.equal(byStep.refine.querySelector('.cost').textContent, '', 'never-run refine stays blank');
   assert.equal(byStep.review.querySelector('.cost').textContent, '', 'never-run review stays blank');
 });
+
+test('costByNode buckets per nodeId and by uiPhase fallback', async () => {
+  const { window } = await boot();
+  const fn = window.__np.costByNode;
+  assert.equal(fn([{ nodeId: 's0_0', phase: 'planner', costUsd: 0.12 }])['s0_0'], 0.12);
+  assert.equal(fn([{ phase: 'plan', costUsd: 0.05 }])['plan'], 0.05);
+});

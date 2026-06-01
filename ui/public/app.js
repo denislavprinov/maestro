@@ -267,6 +267,92 @@ function normalizePhase(phase) {
   return null;
 }
 
+// Legacy default stepper, used when a run predates state.stepper (old history)
+// or before the first 'state' event arrives. Node ids = uiPhase keys so old
+// per-step costs/durations (bucketed by phase) still attribute correctly.
+const CLIENT_DEFAULT_STEPPER = {
+  version: 1,
+  steps: [
+    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+    { kind: 'agents', nodes: [{ id: 'plan',      uiPhase: 'plan',      label: 'Plan',      color: 'violet', cycles: false }] },
+    { kind: 'agents', nodes: [{ id: 'refine',    uiPhase: 'refine',    label: 'Refine',    color: 'green',  cycles: true  }] },
+    { kind: 'agents', nodes: [{ id: 'implement', uiPhase: 'implement', label: 'Implement', color: 'amber',  cycles: false }] },
+    { kind: 'agents', nodes: [{ id: 'review',    uiPhase: 'review',    label: 'Review',    color: 'blue',   cycles: true  }] },
+    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+  ],
+};
+
+// Pick the manifest to render: prefer a persisted/emitted one, else the legacy
+// default. Defensive against malformed shapes.
+function manifestFor(stepper) {
+  if (stepper && Array.isArray(stepper.steps) && stepper.steps.length) return stepper;
+  return CLIENT_DEFAULT_STEPPER;
+}
+
+// Build the stepper DOM into `host` (a .stages.compact container) from a
+// manifest. Each cell -> one .stage with a single visible number. A cell with
+// >1 node gets class .parallel and stacks each node as a .stage-node row.
+function buildStepper(host, manifest) {
+  host.innerHTML = '';
+  const m = manifestFor(manifest);
+  m.steps.forEach((cell, i) => {
+    const stage = document.createElement('div');
+    stage.className = 'stage' + (cell.nodes.length > 1 ? ' parallel' : '');
+    stage.dataset.cellIdx = String(i);
+    // Single-node cells carry the node id directly for fast addressing.
+    if (cell.nodes.length === 1) stage.dataset.nodeId = cell.nodes[0].id;
+
+    const num = document.createElement('div');
+    num.className = 'num';
+    num.textContent = String(i + 1);
+    stage.appendChild(num);
+
+    if (cell.nodes.length === 1) {
+      stage.appendChild(buildStageLabel(cell.nodes[0]));
+    } else {
+      const wrap = document.createElement('div');
+      wrap.className = 'pnodes';
+      for (const node of cell.nodes) wrap.appendChild(buildParallelNode(node));
+      stage.appendChild(wrap);
+    }
+    host.appendChild(stage);
+  });
+}
+
+// The label column for a single-node cell: bold label, sub caption, and the
+// cycle/dur/cost <em> slots paint* fills. Color accent when the node has one.
+function buildStageLabel(node) {
+  const lbl = document.createElement('div');
+  lbl.className = 'lbl';
+  if (node.color) lbl.classList.add('acc-' + node.color);
+  const b = document.createElement('b');
+  b.textContent = node.label || node.id;
+  const sub = document.createElement('small');
+  sub.className = 'sub';
+  sub.textContent = node.sub || '';
+  const cycle = document.createElement('em'); cycle.className = 'cycle';
+  const dur = document.createElement('em'); dur.className = 'dur';
+  const cost = document.createElement('em'); cost.className = 'cost';
+  lbl.append(b, sub, cycle, dur, cost);
+  return lbl;
+}
+
+// One stacked row inside a .parallel cell. Addressable by node id; carries its
+// own cycle/dur/cost slots.
+function buildParallelNode(node) {
+  const row = document.createElement('div');
+  row.className = 'stage-node pnode';
+  row.dataset.nodeId = node.id;
+  if (node.color) row.classList.add('acc-' + node.color);
+  const b = document.createElement('b');
+  b.textContent = node.label || node.id;
+  const cycle = document.createElement('em'); cycle.className = 'cycle';
+  const dur = document.createElement('em'); dur.className = 'dur';
+  const cost = document.createElement('em'); cost.className = 'cost';
+  row.append(b, cycle, dur, cost);
+  return row;
+}
+
 // ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
 // Running view; events are fanned out by handleServerMessage.
@@ -435,6 +521,36 @@ function costByStage(steps) {
     const c = Number(s.costUsd);
     if (!Number.isFinite(c) || c < 0) continue; // ignore bogus; KEEP zero
     const key = normalizePhase(s.phase);
+    if (key) out[key] = (out[key] || 0) + c;
+  }
+  return out;
+}
+
+// A step's stepper bucket key: its node id when present (new runs), else the
+// normalized phase (legacy runs, whose default-manifest node ids ARE uiPhases).
+function stepBucketKey(s) {
+  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : normalizePhase(s && s.phase);
+}
+
+// Per-node active-ms, mirroring durByStage but keyed by stepBucketKey.
+function durByNode(steps, now = Date.now(), live = true) {
+  const out = {};
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s || s.activeMs == null || !Number.isFinite(Number(s.activeMs))) continue;
+    const key = stepBucketKey(s);
+    if (key) out[key] = (out[key] || 0) + liveStepMs(s, now, live);
+  }
+  return out;
+}
+
+// Per-node cost, mirroring costByStage but keyed by stepBucketKey.
+function costByNode(steps) {
+  const out = {};
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s || s.costUsd == null) continue;
+    const c = Number(s.costUsd);
+    if (!Number.isFinite(c) || c < 0) continue;
+    const key = stepBucketKey(s);
     if (key) out[key] = (out[key] || 0) + c;
   }
   return out;
@@ -1028,6 +1144,10 @@ if (typeof window !== 'undefined') {
     renderModelEffortPair,
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
+    buildStepper,
+    manifestFor,
+    durByNode,
+    costByNode,
   });
 }
 

@@ -200,3 +200,12 @@ test('a manual-checklist phase labels the running chip "Manual tests" (not swall
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(ctx.chipText(), 'Manual tests', 'manual-checklist must map to its own label');
 });
+
+test('durByNode buckets per nodeId, falling back to uiPhase for legacy steps', async () => {
+  const { window } = await boot();
+  const fn = window.__np.durByNode;
+  const a = fn([{ nodeId: 's1_0', phase: 'refiner', activeMs: 1500, runningSince: null }], 0, false);
+  assert.equal(a['s1_0'], 1500);
+  const b = fn([{ phase: 'refine', activeMs: 800, runningSince: null }], 0, false);
+  assert.equal(b['refine'], 800); // legacy: node id == uiPhase
+});
