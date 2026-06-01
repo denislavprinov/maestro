@@ -249,7 +249,7 @@ function currentView() {
 // Steps tracker
 // ---------------------------------------------------------------------------
 // Canonical order of phases for "everything before current => done".
-const STEP_ORDER = ['preflight', 'plan', 'refine', 'implement', 'review', 'done'];
+const STEP_ORDER = ['preflight', 'plan', 'refine', 'implement', 'review', 'manual-checklist', 'manual-web', 'done'];
 
 // Normalize a core phase name to one of our tracker step keys.
 // Order matters: more specific phases ("refine", "review", "implement") are
@@ -259,6 +259,8 @@ function normalizePhase(phase) {
   if (!phase) return null;
   const p = String(phase).toLowerCase();
   if (p.includes('preflight')) return 'preflight';
+  if (p.includes('manual-web')) return 'manual-web';
+  if (p.includes('manual-checklist') || p.includes('manual-test')) return 'manual-checklist';
   if (p.includes('refine')) return 'refine';
   if (p.includes('review')) return 'review';
   if (p.includes('implement')) return 'implement';
@@ -2677,7 +2679,7 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
-const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', done: 'Done' };
+const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 const CYCLING_PHASES = new Set(['refine', 'review']);
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
@@ -2729,7 +2731,7 @@ function buildRunCard(r) {
 
 // Map each agent role's snapshot (model label + effort) onto the matching
 // stage's sublabel. The card steps use phase keys; map them to config roles.
-const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer' };
+const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer', 'manual-checklist': 'manualTestsChecklist', 'manual-web': 'manualWebUiTesting' };
 function fillStageSublabels(node, snap) {
   const models = Array.isArray(snap.models) ? snap.models : [];
   const steps = snap.steps || {};
