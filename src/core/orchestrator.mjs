@@ -724,10 +724,13 @@ class Orchestrator extends EventEmitter {
    */
   _recordCost(costUsd) {
     if (!Number.isFinite(costUsd) || costUsd < 0) return;
-    this.state.totalCostUsd = roundUsd((this.state.totalCostUsd || 0) + costUsd);
     const key = this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase;
     const step = this.state.steps.find((s) => s.key === key);
     if (step) step.costUsd = roundUsd((step.costUsd || 0) + costUsd);
+    // Derive the pipeline total from the per-step figures so it ALWAYS equals
+    // their sum. Keeping a separate running total and rounding it on every add
+    // drifts from Σ steps (e.g. 0.00005 + 0.00015 gave total 0.0003 vs Σ 0.0002).
+    this.state.totalCostUsd = sumStepCosts(this.state.steps);
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());
     this._persist().catch(() => {});
@@ -776,6 +779,21 @@ function numOr(v, d) {
 /** Round a USD amount to 4 decimals (tenth-of-a-cent) to avoid float drift. */
 function roundUsd(n) {
   return Math.round((Number(n) || 0) * 1e4) / 1e4;
+}
+
+/**
+ * Sum per-step costUsd into the pipeline total, rounded ONCE so the total is
+ * exactly Σ steps (avoids the drift of independently rounding a separate running
+ * total on every add). Absent/NaN step costs are ignored.
+ * @param {Array<{costUsd?:number}>} steps
+ * @returns {number}
+ */
+function sumStepCosts(steps) {
+  let sum = 0;
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (Number.isFinite(s?.costUsd)) sum += s.costUsd;
+  }
+  return roundUsd(sum);
 }
 
 function isAbort(err) {

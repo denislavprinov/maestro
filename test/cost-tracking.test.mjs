@@ -80,3 +80,16 @@ test('a result event with text both logs AND records cost (cost not swallowed)',
   assert.ok(logs.some((l) => l.text === 'done.'), 'result text still logged at info');
   assert.equal(orch.getState().totalCostUsd, 0.05, 'cost still recorded');
 });
+
+test('total always equals the rounded sum of per-step costs (no accumulator drift)', () => {
+  const roundUsd = (n) => Math.round(n * 1e4) / 1e4;
+  const orch = fresh();
+  orch._phase('plan', 0, 'start');
+  orch._onAgentEvent('planner', { type: 'result', costUsd: 0.00005 });
+  orch._phase('implement', 0, 'start');
+  orch._onAgentEvent('coder', { type: 'result', costUsd: 0.00015 });
+  const st = orch.getState();
+  const sum = st.steps.reduce((a, s) => a + (Number.isFinite(s.costUsd) ? s.costUsd : 0), 0);
+  assert.equal(st.totalCostUsd, roundUsd(sum), 'total must equal Σ steps (rounded once)');
+  assert.equal(st.totalCostUsd, 0.0002, 'old independent accumulator produced 0.0003 here');
+});
