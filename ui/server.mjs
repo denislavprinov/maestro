@@ -543,6 +543,21 @@ app.delete('/api/workflows/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/agents -> the agent registry for the Composer palette. Scanned from
+// agents/*.meta.json by src/core/agent-registry.mjs and returned as an array in
+// palette render order (.order ascending). The client builds draggable pills
+// (colored dot + displayName + icon) from this.
+// ---------------------------------------------------------------------------
+app.get('/api/agents', (_req, res) => {
+  try {
+    const registry = loadAgentRegistry(AGENTS_DIR); // { [key]: AgentMeta }, sorted by .order
+    res.json({ agents: Object.values(registry) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Install logic (mirrors scripts/install.mjs): copy agents/*.md and
 // skills/maestro/** into <projectDir>/.claude/...
 // ---------------------------------------------------------------------------

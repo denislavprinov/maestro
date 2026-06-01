@@ -131,3 +131,23 @@ test('DELETE /api/workflows/:id removes a created template', async () => {
   assert.ok(!list.workflows.some((w) => w.id === id));
   assert.ok(list.workflows.some((w) => w.id === 'wf_default'));
 });
+
+test('GET /api/agents returns the palette registry as an ordered array', async () => {
+  const r = await fetch(`${base}/api/agents`);
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.ok(Array.isArray(j.agents), 'agents is an array (palette render order)');
+  // The 4 legacy + 2 new agents from the CONTRACT are present.
+  const keys = j.agents.map((a) => a.key);
+  for (const k of ['planner', 'refiner', 'implementer', 'reviewer',
+                   'manualTestsChecklist', 'manualWebUiTesting']) {
+    assert.ok(keys.includes(k), `registry includes ${k}`);
+  }
+  // Each pill carries what the palette needs to render.
+  const planner = j.agents.find((a) => a.key === 'planner');
+  assert.ok(planner.displayName, 'has a displayName');
+  assert.ok(planner.color, 'has a color token');
+  // Sorted ascending by .order (palette render order).
+  const orders = j.agents.map((a) => a.order);
+  assert.deepEqual(orders, [...orders].sort((a, b) => a - b), 'ordered by .order');
+});
