@@ -51,6 +51,10 @@ const FALLBACK_PROMPTS = {
     'Write a human-readable review markdown AND a review JSON ' +
     '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }). ' +
     'Use severities critical|major|minor|suggestion; only critical/major block.',
+  'manual-tests-checklist':
+    'You are the Manual Tests author. Read the plan and the implemented diff, then write a ' +
+    'markdown checklist of manual test cases (each a `- [ ]` line with steps + expected result) ' +
+    'to the path given in the task.',
 };
 
 /**
@@ -310,6 +314,39 @@ export async function runReviewer(ctx, opts) {
 
   const review = await readReview(reviewJsonPath);
   return { review };
+}
+
+/**
+ * Manual Tests Checklist — producer. Reads the plan (and any implementation diff)
+ * and writes a markdown checklist of manual test cases as a pipeline artifact.
+ * Returns { checklistPath, summary }.
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ planPath: string, checklistPath: string }} opts
+ */
+export async function runManualTestsChecklist(ctx, opts) {
+  const { planPath, checklistPath } = opts || {};
+  const role = 'manual-tests-checklist';
+  const systemPrompt = buildSystemPrompt(
+    ctx.toolInstruction,
+    ctx.agentPrompts?.manualTestsChecklist,
+    role,
+  );
+  const prompt =
+    taskHeader(ctx, 'Draft a manual test checklist') +
+    '\n## What to do\n\n' +
+    'Read the implementation plan and the implemented changes (via `git diff` in your cwd), ' +
+    'then write a markdown checklist of concrete manual test cases a human can run against the ' +
+    'app. Each case: a `- [ ]` line with steps and the expected result.\n\n' +
+    `Plan: ${planPath}\n` +
+    `Write the checklist markdown to: ${checklistPath}\n\n` +
+    mockMarkers({ MOCK_ROLE: role, MOCK_OUT: checklistPath, MOCK_IN: planPath });
+
+  const { text } = await runClaude(
+    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
+  );
+
+  const summary = (text || '').trim() || 'Manual test checklist written.';
+  return { checklistPath, summary };
 }
 
 // ── small local helpers ────────────────────────────────────────────────────────

@@ -107,6 +107,19 @@ test('verifier(reviewer) reading a pre-written blocking review reports blocked',
   assert.equal(res.status, 'blocked');
 });
 
+test('producer(manualTestsChecklist) writes a checklist and returns ok', async () => {
+  const dir = await makeTmpDir();
+  const node = { nodeId: 's4_0', key: 'manualTestsChecklist', runnerType: 'producer', loopSource: false };
+  const res = await runners.producer(ctxFor(dir, node, {
+    planPath: join(dir, 'plan.md'),
+    checklistPath: join(dir, 'manual-tests-checklist.md'),
+  }));
+  assert.equal(res.status, 'ok');
+  assert.equal(res.checklistPath, join(dir, 'manual-tests-checklist.md'));
+  const body = await import('node:fs/promises').then((fs) => fs.readFile(res.checklistPath, 'utf8'));
+  assert.match(body, /Manual Test/i);
+});
+
 test('unknown producer key throws a clear error', async () => {
   const dir = await makeTmpDir();
   const node = { nodeId: 'x', key: 'nope', runnerType: 'producer', loopSource: false };
