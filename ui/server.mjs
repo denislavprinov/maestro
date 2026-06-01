@@ -35,7 +35,19 @@ const PORT = Number(process.env.PORT) || 4317;
 // Run registry. Each entry holds the live orchestrator + a ring buffer of the
 // events emitted so far so that a WebSocket which connects late can replay.
 // ---------------------------------------------------------------------------
-/** @type {Map<string, { id, orch, projectDir, title, status, events: any[], pendingQuestion: any }>} */
+/**
+ * @type {Map<string, {
+ *   id: string,                 // runs-Map key = randomUUID()
+ *   pipelineId?: string,        // short id from src/core/artifacts.mjs#shortId, set after createPipeline
+ *   orch: import('events').EventEmitter,
+ *   projectDir: string,
+ *   title: string,
+ *   status: string,
+ *   startedAt: string,
+ *   events: any[],
+ *   pendingQuestion: any
+ * }>}
+ */
 const runs = new Map();
 
 const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error'];
@@ -114,6 +126,7 @@ function broadcast(obj) {
 function summarizeRuns() {
   return [...runs.values()].map((r) => ({
     runId: r.id,
+    pipelineId: r.pipelineId || null,
     projectDir: r.projectDir,
     title: r.title,
     status: r.status,
@@ -170,6 +183,10 @@ function wireRun(entry) {
         // Mirror status from the snapshot when present. (Pending questions are
         // cleared explicitly on answer/done/error, not from state snapshots.)
         if (payload.status) entry.status = payload.status;
+        // Capture the on-disk pipeline short id the orchestrator stamps onto
+        // state.id after createPipeline. Guard so null in pre-createPipeline
+        // snapshots cannot overwrite a previously-captured value.
+        if (typeof payload.id === 'string' && payload.id) entry.pipelineId = payload.id;
       }
 
       record(event);
@@ -316,7 +333,16 @@ app.get('/api/runs', async (req, res) => {
     // be on disk, so the UI history reflects an active run too.
     const live = [...runs.values()]
       .filter((r) => r.projectDir === projectDir)
-      .map((r) => ({ id: r.id, runId: r.id, title: r.title, status: r.status, live: true }));
+      .map((r) => ({
+        // Surface the on-disk pipeline id as `id` once createPipeline has run, so
+        // renderHistory's dedup-by-id merges this entry with its disk twin. The
+        // UUID stays on `runId` because WS / answer / stop route by runs-Map key.
+        id: r.pipelineId || r.id,
+        runId: r.id,
+        title: r.title,
+        status: r.status,
+        live: true,
+      }));
     res.json({ pipelines, live });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -598,3 +624,4 @@ if (isMain) {
 }
 
 export { app, server, runs };
+export const _testing = { wireRun };
