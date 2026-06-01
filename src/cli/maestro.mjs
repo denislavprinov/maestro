@@ -38,6 +38,7 @@ function parseArgs(argv) {
     maxReview: undefined,
     model: undefined,
     permissionMode: undefined,
+    workflow: undefined,
     mock: false,
     auto: false,
     install: null,
@@ -54,6 +55,7 @@ function parseArgs(argv) {
     '--max-review',
     '--model',
     '--permission-mode',
+    '--workflow',
     '--install',
   ]);
   const map = {
@@ -66,6 +68,7 @@ function parseArgs(argv) {
     '--max-review': 'maxReview',
     '--model': 'model',
     '--permission-mode': 'permissionMode',
+    '--workflow': 'workflow',
     '--install': 'install',
   };
 
@@ -147,6 +150,7 @@ Options:
   --max-review <N>         Max review cycles before gating (must be >=1; default 5)
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode (default acceptEdits)
+  --workflow <id>          Saved workflow id to run (default: wf_default)
   --mock                   Offline mock mode (no claude, no tokens)
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
   --ui                     Launch the web UI (ui/server.mjs) and exit
@@ -340,6 +344,7 @@ async function main() {
     extras,
     maxRefineCycles: flags.maxRefine,
     maxReviewCycles: flags.maxReview,
+    workflowId: flags.workflow || undefined,
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,
