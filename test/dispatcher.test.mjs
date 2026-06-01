@@ -283,3 +283,30 @@ test('custom workflow: a PARALLEL producer step + a review->implement loop dispa
     if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   }
 });
+
+test('run(): stamps state.stepper (preflight..done) and node phase events carry nodeId', async () => {
+  const dir = await makeTmpDir();
+  const orch = makeOrch({ projectDir: dir, prompt: 'demo task', auto: true, claude: { mock: true } });
+  const phaseEvents = [];
+  orch.on('phase', (e) => phaseEvents.push(e));
+
+  const res = await orch.run();
+  assert.equal(res.status, 'done', 'mock default pipeline finishes');
+
+  const st = orch.getState();
+  assert.ok(st.stepper, 'state.stepper present');
+  assert.equal(st.stepper.version, 1);
+  assert.equal(st.stepper.steps[0].kind, 'preflight');
+  assert.equal(st.stepper.steps.at(-1).kind, 'done');
+  assert.equal(st.stepper.steps.length, 6, 'wf_default: preflight + 4 agent cells + done');
+
+  // Agent-node phase events (from _nodeStep) carry a nodeId; bookend phases
+  // (_phase: preflight/clarify/done) carry none.
+  const nodeEvents = phaseEvents.filter((e) => e.nodeId);
+  assert.ok(nodeEvents.length >= 1, 'at least one node phase event carried a nodeId');
+  assert.ok(nodeEvents.every((e) => typeof e.nodeId === 'string'));
+  assert.ok(
+    phaseEvents.some((e) => e.phase === 'preflight' && e.nodeId == null),
+    'the preflight bookend phase has no nodeId',
+  );
+});

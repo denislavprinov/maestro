@@ -34,7 +34,7 @@ import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runPlannerClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
-import { resolveWorkflow } from './workflows.mjs';
+import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 
 /**
@@ -106,6 +106,7 @@ class Orchestrator extends EventEmitter {
       startedAt: null,
       updatedAt: null,
       steps: [],
+      stepper: null, // UI stepper manifest, snapshotted at run start (Task 2)
       tools: null,
       checkpointRef: null,
       pipelineDir: null,
@@ -221,6 +222,14 @@ class Orchestrator extends EventEmitter {
       //    pre-step, not a plan node).
       const registry = await loadAgentRegistry();
       const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
+      // Snapshot the stepper manifest the Running/History views render from. It
+      // rides in state.json + every 'state' event via getState() (deep clone).
+      // Stamp + persist + emit BEFORE dispatch so clients render the right nodes
+      // before the first node 'phase' event lands. (this.pipeline already exists —
+      // it was created at orchestrator.mjs:188 — so _persist() writes state.json.)
+      this.state.stepper = buildStepperManifest(plan, registry);
+      await this._persist();
+      this._emit('state', this.getState());
       await appendAudit(this.pipeline.dir, `Workflow: **${plan.name}** (${plan.id}).`);
       await this._dispatch(plan, { answers });
       this._checkAbort();
@@ -665,7 +674,7 @@ class Orchestrator extends EventEmitter {
     this.state.phase = node.uiPhase || node.key;
     this.state.cycle = cycle;
     this.state.updatedAt = now;
-    this._emit('phase', { phase: this.state.phase, cycle, status });
+    this._emit('phase', { phase: this.state.phase, cycle, status, nodeId: node.nodeId });
     this._emit('state', this.getState());
     this._persist().catch(() => {});
   }
