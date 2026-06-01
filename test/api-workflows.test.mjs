@@ -110,6 +110,15 @@ test('DELETE /api/workflows/:id is 404 for an unknown id', async () => {
   assert.equal(r.status, 404);
 });
 
+test('workflow API rejects path-traversal ids (no read, no delete)', async () => {
+  // GET traversal must NOT 200-with-foreign-content; expect 404 (unknown/rejected).
+  const g = await fetch(`${base}/api/workflows/${encodeURIComponent('../../package')}`);
+  assert.equal(g.status, 404);
+  // DELETE traversal must be refused (400 or 404) and never unlink anything.
+  const d = await fetch(`${base}/api/workflows/${encodeURIComponent('../../package')}`, { method: 'DELETE' });
+  assert.ok(d.status === 404 || d.status === 400, `expected 404/400, got ${d.status}`);
+});
+
 test('DELETE /api/workflows/:id removes a created template', async () => {
   // Create one to delete.
   const created = await (await fetch(`${base}/api/workflows`, {

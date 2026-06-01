@@ -97,6 +97,11 @@ export function workflowsDir() {
   return join(maestroHome(), 'workflows');
 }
 
+/** A workflow id is a filename stem; reject anything that could escape the store
+ *  (path separators, "..", dots, spaces). Valid ids are wf_<slug> / wf_default. */
+const SAFE_WORKFLOW_ID = /^[A-Za-z0-9_-]+$/;
+function isSafeWorkflowId(id) { return typeof id === 'string' && SAFE_WORKFLOW_ID.test(id); }
+
 /** Absolute path to a single template file. */
 function workflowFile(id) {
   return join(workflowsDir(), `${id}.json`);
@@ -113,6 +118,7 @@ async function writeRaw(id, tpl) {
 
 /** Read + shallow-validate one stored template. Missing/corrupt => null. */
 async function readRaw(id) {
+  if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
   try {
     const data = JSON.parse(await readFile(workflowFile(id), 'utf8'));
     if (!data || typeof data !== 'object' || !Array.isArray(data.steps)) return null;
@@ -193,6 +199,7 @@ export async function listWorkflows() {
  */
 export async function deleteWorkflow(id) {
   if (id === DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
+  if (!isSafeWorkflowId(id)) return false; // SECURITY: reject path-traversal / unsafe ids
   const file = workflowFile(id);
   if (!existsSync(file)) return false;
   try {

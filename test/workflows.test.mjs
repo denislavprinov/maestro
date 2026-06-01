@@ -149,6 +149,35 @@ test('deleteWorkflow refuses to delete the built-in default (returns false, leav
   assert.equal(still.id, 'wf_default'); // DEFAULT_WORKFLOW is always present
 });
 
+// --- Security: path-traversal guard on workflow ids -----------------------
+// workflowFile(id) builds <workflowsDir>/<id>.json; an id containing path
+// separators or ".." would escape the store. The id is a filename stem, so the
+// guard accepts only ^[A-Za-z0-9_-]+$ (covers wf_default + wf_<slug>).
+test('readWorkflow rejects path-traversal / unsafe ids (returns null)', async () => {
+  await freshHome();
+  for (const bad of ['../foo', '../../etc/passwd', 'a/b', '..%2f..%2fx', 'foo.bar', 'foo bar', '', '.', '..']) {
+    assert.equal(await readWorkflow(bad), null, `readWorkflow must reject "${bad}"`);
+  }
+});
+test('deleteWorkflow refuses unsafe ids (returns false, deletes nothing)', async () => {
+  const home = await freshHome();
+  // plant a sentinel OUTSIDE the workflows dir, inside MAESTRO_HOME/.maestro
+  const { writeFile, mkdir } = await import('node:fs/promises');
+  const { existsSync } = await import('node:fs');
+  const sentinel = join(home, '.maestro', 'SENTINEL.json');
+  await mkdir(join(home, '.maestro'), { recursive: true });
+  await writeFile(sentinel, JSON.stringify({ steps: [] }), 'utf8');
+  assert.equal(await deleteWorkflow('../SENTINEL'), false);
+  assert.equal(existsSync(sentinel), true, 'sentinel must survive a traversal delete');
+});
+test('writeWorkflow still works and ids round-trip (guard does not break valid ids)', async () => {
+  await freshHome();
+  const saved = await writeWorkflow({ name: 'My Cool Flow', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  assert.match(saved.id, /^wf_/);
+  assert.ok(await readWorkflow(saved.id), 'a valid derived id still reads back');
+  assert.equal(await deleteWorkflow(saved.id), true);
+});
+
 // Inline fake registry mirroring Phase 1's AgentMeta shape. agentFile values are
 // the REAL agent prompt files on disk so prompt + tools load is exercised.
 const REGISTRY = {
