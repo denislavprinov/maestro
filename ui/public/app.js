@@ -1220,6 +1220,7 @@ function renderFeedbackRows(rows) {
 if (el.workflowSelect) {
   el.workflowSelect.addEventListener('change', async () => {
     state.workflowId = el.workflowSelect.value || 'wf_default';
+    saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
   });
 }
@@ -1243,6 +1244,67 @@ async function saveStep(role, model, effort) {
     renderStepConfigs();
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist one node's model/effort to the per-project run-config for the active
+// workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
+async function saveNode(workflowId, nodeId, model, effort) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort } } }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      return;
+    }
+    if (data.config) state.config = data.config;
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist one feedback loop's cycle count (CONV-2): PATCH /api/config
+// { projectDir, workflowId, feedbacks:{ [fbId]:{maxCycles} } }.
+async function saveFeedback(workflowId, fbId, maxCycles) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, workflowId, feedbacks: { [fbId]: { maxCycles } } }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      return;
+    }
+    if (data.config) state.config = data.config;
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist the active workflow selection (CONV-2): PATCH /api/config { projectDir, activeWorkflowId }.
+async function saveActiveWorkflow(workflowId) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, activeWorkflowId: workflowId }),
+    });
+    const data = await safeJson(res);
+    if (res.ok && data.config) state.config = data.config;
+  } catch {
+    /* selection is best-effort; ignore transient errors */
   }
 }
 
@@ -1272,23 +1334,86 @@ async function addModelFlow(role) {
   }
 }
 
-// Delegated change handler for all step selects. The selects live in the
-// #pipeline-config block (cached as el.pipelineConfig); each carries data-role.
+// Delegated change handler for all config controls inside #pipeline-config:
+//  - legacy default-stage selects carry data-role (persist via saveStep);
+//  - dynamic node selects carry data-node-id (persist via saveNode);
+//  - feedback cycle inputs carry data-fb-id (persist via saveFeedback).
 el.pipelineConfig.addEventListener('change', (e) => {
   const t = e.target;
+
+  // Feedback cycle inputs (number inputs, not selects).
+  if (t instanceof HTMLInputElement && t.dataset.fbId) {
+    const n = Math.max(1, Math.round(Number(t.value) || 1));
+    t.value = String(n); // normalize the field
+    saveFeedback(state.workflowId, t.dataset.fbId, n);
+    return;
+  }
+
   if (!(t instanceof HTMLSelectElement)) return;
+
+  // Dynamic per-node selects (saved workflow).
+  if (t.dataset.nodeId) {
+    const nodeId = t.dataset.nodeId;
+    if (t.classList.contains('step-model')) {
+      if (t.value === '__add__') return addModelFlowNode(nodeId);
+      // New model -> reset effort + re-render this row's effort options.
+      saveNode(state.workflowId, nodeId, t.value, '');
+      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
+      if (effortSel) renderModelEffortPair(t, effortSel, caption, { model: t.value, effort: '' });
+    } else if (t.classList.contains('step-effort')) {
+      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+      const model = modelSel ? modelSel.value : '';
+      saveNode(state.workflowId, nodeId, model, t.value);
+      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
+      if (caption) {
+        const m = modelById(model);
+        caption.textContent = `${m ? m.label : 'default model'} · ${t.value || 'default effort'}`;
+      }
+    }
+    return;
+  }
+
+  // Legacy default-stage selects (data-role).
   const role = t.dataset.role;
   if (!role) return;
-
   if (t.classList.contains('step-model')) {
     if (t.value === '__add__') return addModelFlow(role);
-    // New model -> reset effort (old effort may be unsupported by the new model).
     saveStep(role, t.value, '');
   } else if (t.classList.contains('step-effort')) {
     const model = (state.config.steps[role] || {}).model || '';
     saveStep(role, model, t.value);
   }
 });
+
+// "+ Add model…" picked on a per-node select: add the custom model, then select
+// it for that node (mirrors addModelFlow for the legacy role selects).
+async function addModelFlowNode(nodeId) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) { renderWorkflowConfig(state.workflowId); return; }
+  const id = (window.prompt('New model id (e.g. claude-opus-4-8 or a fine-tune id):') || '').trim();
+  if (!id) { renderWorkflowConfig(state.workflowId); return; }
+  const label = (window.prompt('Display name (optional):', id) || '').trim();
+  try {
+    const res = await fetch('/api/config/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, id, label }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `add model: ${data.error || res.status}`, ts: Date.now() });
+      renderWorkflowConfig(state.workflowId);
+      return;
+    }
+    state.models = Array.isArray(data.models) ? data.models : state.models;
+    await saveNode(state.workflowId, nodeId, id, ''); // select the new model (effort reset)
+    renderWorkflowConfig(state.workflowId);           // repaint with the new model in the list
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `add model error: ${e.message}`, ts: Date.now() });
+    renderWorkflowConfig(state.workflowId);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Log window

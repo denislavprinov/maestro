@@ -29,7 +29,7 @@ async function boot({ fetchHandler } = {}) {
     }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
   };
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
+  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'HTMLInputElement', 'HTMLSelectElement']) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
@@ -250,4 +250,66 @@ test('saved run-config preselects a node\'s model+effort when the workflow is op
   assert.equal(doc.querySelector('#wf-node-config .step-model[data-node-id="s1_0"]').value, 'claude-opus-4-8');
   assert.equal(doc.querySelector('#wf-node-config .step-effort[data-node-id="s1_0"]').value, 'high');
   assert.equal(doc.querySelector('#wf-feedback-config input[data-fb-id="fb_0"]').value, '7');
+});
+
+// Capture PATCH /api/config bodies (CONV-2) while still serving the
+// workflow/agents/config GETs. Returns { window, posts } (posts = PATCH bodies).
+async function bootCapturing(extraConfig = {}) {
+  const posts = [];
+  const base = workflowFetch(extraConfig);
+  const { window } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/api/config') && opts && opts.method === 'PATCH') {
+        posts.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [], ...extraConfig } }) });
+      }
+      return base(url);
+    },
+  });
+  return { window, posts };
+}
+
+test('changing a node model PATCHes { ..., nodes: { [nodeId]: { model, effort } } }', async () => {
+  const { window, posts } = await bootCapturing();
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  const modelSel = window.document.querySelector('#wf-node-config .step-model[data-node-id="s1_0"]');
+  modelSel.value = 'claude-opus-4-8';
+  modelSel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const body = posts.find((p) => p.nodes && p.nodes.s1_0);
+  assert.ok(body, 'no PATCH captured for the node');
+  assert.equal(body.projectDir, PROJECT);
+  assert.equal(body.workflowId, 'wf_x');
+  assert.equal(body.nodes.s1_0.model, 'claude-opus-4-8');
+  assert.equal(body.nodes.s1_0.effort, ''); // new model resets effort
+});
+
+test('changing a feedback cycle count PATCHes { ..., feedbacks: { [fbId]: { maxCycles } } }', async () => {
+  const { window, posts } = await bootCapturing();
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  const cyc = window.document.querySelector('#wf-feedback-config input[data-fb-id="fb_0"]');
+  cyc.value = '4';
+  cyc.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const body = posts.find((p) => p.feedbacks && p.feedbacks.fb_0);
+  assert.ok(body, 'no PATCH captured for the feedback');
+  assert.equal(body.workflowId, 'wf_x');
+  assert.equal(body.feedbacks.fb_0.maxCycles, 4);
+});
+
+test('selecting a workflow persists it as the active workflow', async () => {
+  const { window, posts } = await bootCapturing();
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  const body = posts.find((p) => p.activeWorkflowId === 'wf_x');
+  assert.ok(body, 'active workflow not persisted');
+  assert.equal(body.projectDir, PROJECT);
 });
