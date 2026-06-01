@@ -546,8 +546,92 @@ class Orchestrator extends EventEmitter {
     };
   }
 
+  /**
+   * Stable step key for a node occurrence. Parallel nodes in the same step share
+   * stepIndex but differ by nodeId; loop re-runs differ by cycle. Format keeps the
+   * legacy `phase#cycle` readability while staying unique per node:
+   *   "<stepIndex>:<nodeId>#<cycle>"  (cycle omitted when 1 and not a loop re-run)
+   */
+  _stepKeyFor(node, stepIndex, cycle) {
+    const c = Number(cycle) > 1 ? `#${cycle}` : '';
+    return `${stepIndex}:${node.nodeId}${c}`;
+  }
+
+  /**
+   * Node execution context. Extends the legacy _phaseCtx shape but is keyed by the
+   * node (model/effort come from the resolved plan node, not a role lookup) and
+   * tags every emit + cost with { nodeId, stepIndex, cycle } so parallel/looped
+   * emits are attributable. `node.agentKeyForPrompt` lets a node reuse an existing
+   * agent's prompt body (the default-workflow nodes set this to their role).
+   * @param {object} node    plan Node { nodeId, key, runnerType, model, effort, ... }
+   * @param {{stepIndex:number, cycle:number}} pos
+   */
+  _nodeCtx(node, pos = {}) {
+    const stepIndex = Number(pos.stepIndex) || 0;
+    const cycle = Number(pos.cycle) > 0 ? Number(pos.cycle) : 1;
+    const stepKey = this._stepKeyFor(node, stepIndex, cycle);
+    return {
+      projectDir: this.projectDir,
+      pipelineDir: this.pipeline.dir,
+      taskPrompt: this.pipeline.promptText,
+      toolInstruction: this.toolInstruction,
+      agentPrompts: this.agentPrompts,
+      checkpointRef: this.checkpointRef,
+      signal: this.abort.signal,
+      node,
+      nodeId: node.nodeId,
+      stepIndex,
+      cycle,
+      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey }),
+      claudeOpts: {
+        bin: this.claude.bin,
+        permissionMode: this.claude.permissionMode,
+        model: node.model || this.claude.model, // per-node, falling back to global
+        effort: node.effort,                     // per-node effort (undefined when unset)
+        mock: this.claude.mock,
+      },
+    };
+  }
+
+  /**
+   * Record/transition a node's step (parallel-safe analogue of _recordStep). The
+   * key is the node-derived stepKey so concurrent nodes never collide. On 'start'
+   * it does NOT pause sibling clocks (parallel nodes run simultaneously); on a
+   * terminal marker it folds just this node's clock.
+   */
+  _nodeStep(node, stepIndex, cycle, status) {
+    const key = this._stepKeyFor(node, stepIndex, cycle);
+    const now = new Date().toISOString();
+    let step = this.state.steps.find((s) => s.key === key);
+    if (!step) {
+      step = {
+        key, phase: node.key, nodeId: node.nodeId, stepIndex, cycle,
+        status, startedAt: now, updatedAt: now, activeMs: 0, runningSince: null,
+      };
+      this.state.steps.push(step);
+    } else {
+      step.status = status;
+      step.updatedAt = now;
+    }
+    if (status === 'start') this._clockResume(key);
+    else this._clockPause(key);
+    this.state.totalActiveMs = sumStepActive(this.state.steps);
+    // CONV-4: drive the live-UI stepper. Mirror the legacy `_phase` emit
+    // (orchestrator.mjs:710-719) but WITHOUT its `_recordStep` call (this method
+    // already records the step). `node.uiPhase` is stamped by resolveWorkflow
+    // (Phase 2 Task 6); on a parallel step the last-started node wins the scalar
+    // phase (per-node attribution lives in state.steps[]). Confirm the 'phase'
+    // payload against app.js `onPhase` (:308) before landing.
+    this.state.phase = node.uiPhase || node.key;
+    this.state.cycle = cycle;
+    this.state.updatedAt = now;
+    this._emit('phase', { phase: this.state.phase, cycle, status });
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */
-  _onAgentEvent(role, e) {
+  _onAgentEvent(role, e, attr = null) {
     if (!e) return;
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
@@ -557,14 +641,14 @@ class Orchestrator extends EventEmitter {
     const cost = e.costUsd != null
       ? Number(e.costUsd)
       : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
-    if (Number.isFinite(cost)) this._recordCost(cost);
+    if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (e.raw && e.raw.type === 'result' && !this.claude.mock) {
-      this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)');
+      this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)', attr);
     }
 
     const text = (e.text || '').trim();
     if (text) {
-      this._log(role, 'info', text);
+      this._log(role, 'info', text, attr);
       return;
     }
     // No human-readable text. Rather than echo the bare stream-json envelope
@@ -573,7 +657,7 @@ class Orchestrator extends EventEmitter {
     // events — tool_result echoes (`user`) and the init `system` event — carry
     // no information and are dropped.
     for (const call of describeToolUses(e.raw, this.projectDir)) {
-      this._log(role, 'debug', `→ ${call}`);
+      this._log(role, 'debug', `→ ${call}`, attr);
     }
   }
 
@@ -750,9 +834,10 @@ class Orchestrator extends EventEmitter {
    * carries the figure.
    * @param {number} costUsd
    */
-  _recordCost(costUsd) {
+  _recordCost(costUsd, stepKey = null) {
     if (!Number.isFinite(costUsd) || costUsd < 0) return;
-    const key = this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase;
+    const key = stepKey
+      || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase);
     const step = this.state.steps.find((s) => s.key === key);
     if (step) step.costUsd = roundUsd((step.costUsd || 0) + costUsd);
     // Derive the pipeline total from the per-step figures so it ALWAYS equals
@@ -811,8 +896,13 @@ class Orchestrator extends EventEmitter {
     this._emit('state', this.getState());
   }
 
-  _log(source, level, text) {
+  _log(source, level, text, attr = null) {
     const evt = { source, level, text, ts: new Date().toISOString() };
+    if (attr) {
+      if (attr.nodeId != null) evt.nodeId = attr.nodeId;
+      if (attr.stepIndex != null) evt.stepIndex = attr.stepIndex;
+      if (attr.cycle != null) evt.cycle = attr.cycle;
+    }
     this._emit('log', evt);
   }
 
