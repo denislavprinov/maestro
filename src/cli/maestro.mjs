@@ -34,10 +34,9 @@ function parseArgs(argv) {
     title: null,
     extras: [],
     ui: false,
-    maxRefine: undefined,
-    maxReview: undefined,
     model: undefined,
     permissionMode: undefined,
+    workflow: undefined,
     mock: false,
     auto: false,
     install: null,
@@ -50,10 +49,9 @@ function parseArgs(argv) {
     '--file',
     '--title',
     '--extras',
-    '--max-refine',
-    '--max-review',
     '--model',
     '--permission-mode',
+    '--workflow',
     '--install',
   ]);
   const map = {
@@ -62,10 +60,9 @@ function parseArgs(argv) {
     '--file': 'file',
     '--title': 'title',
     '--extras': 'extras',
-    '--max-refine': 'maxRefine',
-    '--max-review': 'maxReview',
     '--model': 'model',
     '--permission-mode': 'permissionMode',
+    '--workflow': 'workflow',
     '--install': 'install',
   };
 
@@ -101,9 +98,7 @@ function parseArgs(argv) {
       if (value === undefined) {
         fail(`Flag ${arg} requires a value.`);
       }
-      if (key === 'maxRefine' || key === 'maxReview') {
-        out[key] = Number(value);
-      } else if (key === 'extras') {
+      if (key === 'extras') {
         // Comma-separated and/or repeatable; accumulate non-empty paths.
         for (const part of String(value).split(',')) {
           const p = part.trim();
@@ -143,10 +138,9 @@ Options:
   --title <text>           Human-readable run title
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
-  --max-refine <N>         Max refine cycles before gating (must be >=1; default 5)
-  --max-review <N>         Max review cycles before gating (must be >=1; default 5)
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode (default acceptEdits)
+  --workflow <id>          Saved workflow id to run (default: wf_default)
   --mock                   Offline mock mode (no claude, no tokens)
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
   --ui                     Launch the web UI (ui/server.mjs) and exit
@@ -338,8 +332,7 @@ async function main() {
     promptFile: flags.file || undefined,
     title: flags.title || undefined,
     extras,
-    maxRefineCycles: flags.maxRefine,
-    maxReviewCycles: flags.maxReview,
+    workflowId: flags.workflow || undefined,
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,

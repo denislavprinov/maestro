@@ -21,7 +21,13 @@ import { listProjects, addProject, removeProject, normalizeProjectPath } from '.
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
+  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
 } from '../src/core/config.mjs';
+import {
+  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
+} from '../src/core/workflows.mjs';
+import { validateWorkflow } from '../src/core/workflow-validator.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -211,7 +217,7 @@ function resolveProjectDir(input) {
 
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
-// body: { projectDir, prompt?, promptMarkdown?, title?, maxRefine?, maxReview?, mock? }
+// body: { projectDir, prompt?, promptMarkdown?, title?, mock? }
 // ---------------------------------------------------------------------------
 app.post('/api/run', async (req, res) => {
   try {
@@ -234,9 +240,15 @@ app.post('/api/run', async (req, res) => {
       }
     }
 
-    const maxRefineCycles = clampInt(body.maxRefine, 5);
-    const maxReviewCycles = clampInt(body.maxReview, 5);
     const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
+
+    // Optional workflowId selects a saved (or built-in default) topology. The
+    // orchestrator resolves topology + per-project run-config into an executable
+    // plan at run start; here we only normalize + reject an unknown id up front
+    // so the client gets a clean 400 instead of a mid-run error event.
+    const workflowId =
+      typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
+    if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
 
     const runId = randomUUID();
     const title = (typeof body.title === 'string' && body.title.trim()) || effectivePrompt.slice(0, 80);
@@ -250,9 +262,8 @@ app.post('/api/run', async (req, res) => {
       prompt: effectivePrompt,
       title,
       extras,
-      maxRefineCycles,
-      maxReviewCycles,
       agentsDir: AGENTS_DIR,
+      workflowId,
       claude: { permissionMode: 'acceptEdits', mock },
     });
 
@@ -431,7 +442,11 @@ app.get('/api/config', async (req, res) => {
   const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
-    const [config, models] = await Promise.all([readConfig(projectDir), listModels(projectDir)]);
+    // readRunConfig returns the full per-project config: legacy steps/customModels
+    // PLUS the run-config workflows{} (node model/effort, feedback cycles) and
+    // activeWorkflowId. It is a superset of readConfig, so the client keeps using
+    // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
+    const [config, models] = await Promise.all([readRunConfig(projectDir), listModels(projectDir)]);
     res.json({ config, models, steps: AGENT_STEPS, efforts: EFFORTS });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -447,6 +462,49 @@ app.post('/api/config', async (req, res) => {
     res.json({ config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/config -> write run-config: per-node model/effort, per-feedback
+// cycle counts, and the active workflow id. Keyed by workflowId + node/feedback
+// instance ids (see RunConfig in the design). Legacy per-role `steps` are
+// written via POST /api/config and are left untouched here. NOTE: the run-config
+// setters do NOT reject unknown models/efforts, and setFeedbackCycles COERCES
+// maxCycles to >= 1 (it never throws) — so the try/catch below guards I/O, not
+// validation. (Optional hardening: validate model/effort in setNodeModel via
+// listModels + EFFORTS, mirroring setStep at config.mjs:141-153.)
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
+// ---------------------------------------------------------------------------
+app.patch('/api/config', async (req, res) => {
+  const body = req.body || {};
+  const projectDir = resolveProjectDir(body.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  const workflowId = typeof body.workflowId === 'string' ? body.workflowId.trim() : '';
+  try {
+    if (body.nodes && typeof body.nodes === 'object') {
+      if (!workflowId) return badRequest(res, 'workflowId is required to set node config');
+      for (const [nodeId, sel] of Object.entries(body.nodes)) {
+        await setNodeModel(projectDir, workflowId, nodeId, {
+          model: sel && sel.model, effort: sel && sel.effort,
+        });
+      }
+    }
+    if (body.feedbacks && typeof body.feedbacks === 'object') {
+      if (!workflowId) return badRequest(res, 'workflowId is required to set feedback config');
+      for (const [fbId, sel] of Object.entries(body.feedbacks)) {
+        await setFeedbackCycles(projectDir, workflowId, fbId, sel && sel.maxCycles);
+      }
+    }
+    if (typeof body.activeWorkflowId === 'string' && body.activeWorkflowId.trim()) {
+      await setActiveWorkflow(projectDir, body.activeWorkflowId.trim());
+    }
+    const config = await readRunConfig(projectDir);
+    res.json({ config });
+  } catch (err) {
+    // The config.mjs setters throw only on validation (unknown model/effort,
+    // maxCycles < 1) -> client error, mirroring POST /api/config.
     return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
@@ -472,6 +530,81 @@ app.delete('/api/config/models', async (req, res) => {
   try {
     const config = await removeCustomModel(projectDir, id);
     res.json({ config, models: await listModels(projectDir) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Workflow templates (global store at ~/.maestro/workflows). Topology only;
+// model/effort/cycles live in per-project run-config. CRUD mirrors the
+// /api/projects + /api/config delegation pattern: thin handlers, validation and
+// atomic persistence owned by src/core/workflows.mjs + workflow-validator.mjs.
+// ---------------------------------------------------------------------------
+app.get('/api/workflows', async (_req, res) => {
+  try {
+    // The built-in default is never persisted to the user store; callers
+    // prepend it (CONTRACT: GET -> { workflows: [DEFAULT_WORKFLOW, ...listWorkflows()] }).
+    res.json({ workflows: [DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/workflows/:id', async (req, res) => {
+  try {
+    const tpl = await readWorkflow(req.params.id); // CONV-1: await; returns DEFAULT_WORKFLOW for "wf_default"
+    if (!tpl) return res.status(404).json({ error: 'workflow not found' });
+    res.json(tpl);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/workflows', async (req, res) => {
+  const body = req.body || {};
+  // Build the candidate template from the editor payload (topology only).
+  const tpl = {
+    name: typeof body.name === 'string' ? body.name.trim() : '',
+    steps: Array.isArray(body.steps) ? body.steps : [],
+    feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
+  };
+  if (!tpl.name) return badRequest(res, 'name is required');
+  try {
+    const registry = loadAgentRegistry(AGENTS_DIR);
+    const { ok, errors } = validateWorkflow(tpl, registry);
+    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors });
+    // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
+    const workflow = await writeWorkflow(tpl); // CONV-1: await
+    res.status(201).json({ workflow });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/workflows/:id', async (req, res) => {
+  const id = req.params.id;
+  // The built-in default is not in the user store and must never be deleted.
+  if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
+  try {
+    const removed = await deleteWorkflow(id); // CONV-1: await
+    if (!removed) return res.status(404).json({ error: 'workflow not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents -> the agent registry for the Composer palette. Scanned from
+// agents/*.meta.json by src/core/agent-registry.mjs and returned as an array in
+// palette render order (.order ascending). The client builds draggable pills
+// (colored dot + displayName + icon) from this.
+// ---------------------------------------------------------------------------
+app.get('/api/agents', (_req, res) => {
+  try {
+    const registry = loadAgentRegistry(AGENTS_DIR); // { [key]: AgentMeta }, sorted by .order
+    res.json({ agents: Object.values(registry) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -551,12 +684,6 @@ async function copyDir(srcDir, destDir, baseForRel, copiedOut) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-function clampInt(v, fallback) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 1) return fallback;
-  return Math.floor(n);
-}
-
 /**
  * Decode uploaded extra files ([{ name, dataBase64 }]) to a per-run temp dir and
  * return absolute paths. Filenames are reduced to their basename to prevent

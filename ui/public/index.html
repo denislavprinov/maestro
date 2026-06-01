@@ -35,6 +35,10 @@
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
           </a>
+          <a href="#composer" data-nav="composer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+            <span>Pipeline Composer</span>
+          </a>
         </nav>
 
         <div class="side-foot">
@@ -56,6 +60,7 @@
           <a href="#new" data-nav="new" class="active">New</a>
           <a href="#running" data-nav="running">Running</a>
           <a href="#history" data-nav="history">History</a>
+          <a href="#composer" data-nav="composer">Composer</a>
         </nav>
 
         <!-- ===== VIEW: NEW PIPELINE ===== -->
@@ -63,7 +68,7 @@
           <div class="topbar">
             <div>
               <h1>New pipeline</h1>
-              <div class="sub">Plan &rarr; Refine &rarr; Implement &rarr; Review</div>
+              <div class="sub">Pick a workflow, configure each agent, and run · default: Plan &rarr; Refine &rarr; Implement &rarr; Review</div>
             </div>
           </div>
 
@@ -136,62 +141,70 @@
                   </div>
                 </div>
 
-                <!-- Cycles -->
-                <div class="row-2">
-                  <div class="field" style="flex:1;margin-bottom:0">
-                    <label for="maxRefine">Max refine cycles</label>
-                    <input id="maxRefine" name="maxRefine" class="input" type="number" min="1" value="5" />
-                  </div>
-                  <div class="field" style="flex:1;margin-bottom:0">
-                    <label for="maxReview">Max review cycles</label>
-                    <input id="maxReview" name="maxReview" class="input" type="number" min="1" value="5" />
-                  </div>
-                </div>
-
                 <!-- Pipeline configuration -->
                 <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
                   <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
-                  <div class="hint" style="margin:0 0 6px">Model and reasoning effort per stage.</div>
+                  <div class="hint" style="margin:0 0 6px">Choose a workflow, then set model and reasoning effort per agent.</div>
 
-                  <div class="stage-cfg">
-                    <div class="acc violet"></div>
-                    <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
+                  <!-- Workflow picker (Default + saved). app.js populates from GET /api/workflows. -->
+                  <div class="field" style="margin-bottom:14px">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
                     </div>
-                    <small class="step-current" data-role="planner"></small>
                   </div>
 
-                  <div class="stage-cfg">
-                    <div class="acc green"></div>
-                    <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
+                  <!-- Default-workflow stages: the original four rows, shown when the
+                       Default workflow is selected (backward-compat). -->
+                  <div id="wf-default-stages">
+                    <div class="stage-cfg">
+                      <div class="acc violet"></div>
+                      <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="planner"></small>
                     </div>
-                    <small class="step-current" data-role="refiner"></small>
+
+                    <div class="stage-cfg">
+                      <div class="acc green"></div>
+                      <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="refiner"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc peach"></div>
+                      <div class="meta"><b>Implement</b><small>write the code</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="implementer"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc blue"></div>
+                      <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
+                      </div>
+                      <small class="step-current" data-role="reviewer"></small>
+                    </div>
                   </div>
 
-                  <div class="stage-cfg">
-                    <div class="acc peach"></div>
-                    <div class="meta"><b>Implement</b><small>write the code</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
-                    </div>
-                    <small class="step-current" data-role="implementer"></small>
-                  </div>
+                  <!-- Per-node pickers for a non-default (saved) workflow. app.js fills this. -->
+                  <div id="wf-node-config" class="hidden"></div>
 
-                  <div class="stage-cfg">
-                    <div class="acc blue"></div>
-                    <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
-                    <div class="picks">
-                      <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
-                      <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
-                    </div>
-                    <small class="step-current" data-role="reviewer"></small>
-                  </div>
+                  <!-- Per-feedback cycle-count inputs. app.js fills this. -->
+                  <div id="wf-feedback-config" class="hidden"></div>
                 </div>
 
                 <!-- Mock -->
@@ -287,6 +300,58 @@
           </template>
         </section>
         <!-- /view history -->
+
+        <!-- ===== VIEW: PIPELINE COMPOSER ===== -->
+        <section class="view hidden" data-view="composer">
+          <div class="topbar">
+            <div>
+              <h1>Pipeline Composer</h1>
+              <div class="sub">Compose how your agents collaborate — drag, stack, and loop them into a pipeline</div>
+            </div>
+            <button type="button" class="btn-ghost" id="composer-reset" style="padding:11px 20px">Reset to default</button>
+          </div>
+
+          <section class="card builder-card">
+            <div class="palette">
+              <span class="p-label">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+                Agents · drag onto the canvas to build your pipeline
+              </span>
+              <div id="composer-palette" style="display:contents"></div>
+            </div>
+
+            <div class="canvas-wrap" id="composer-canvas-wrap">
+              <div class="flow" id="composer-flow">
+                <svg class="wires" id="composer-wires"></svg>
+              </div>
+            </div>
+
+            <div class="builder-foot">
+              <div class="legend">
+                <span class="lg"><span class="ll"></span> sequential — runs in order</span>
+                <span class="lg"><span class="ll fb"></span> feedback loop</span>
+              </div>
+              <span class="link-banner" id="composer-link-banner" hidden>
+                <span id="composer-link-text">Click a target agent to draw a feedback loop</span>
+                <button type="button" id="composer-link-cancel">Cancel</button>
+              </span>
+              <span class="sp"></span>
+              <button type="button" class="btn-ghost" id="composer-clear" style="padding:10px 18px">Clear canvas</button>
+              <button type="button" class="btn-go" id="composer-save">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                Save pipeline
+              </button>
+            </div>
+          </section>
+
+          <section class="card saved-card">
+            <div class="saved-head">
+              <div><b>Saved pipelines</b><span class="cnt" id="composer-saved-count"></span></div>
+            </div>
+            <div class="saved-list" id="composer-saved-list"></div>
+          </section>
+        </section>
+        <!-- /view composer -->
       </main>
     </div>
 

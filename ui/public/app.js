@@ -15,11 +15,22 @@ const state = {
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
+  workflowId: 'wf_default', // currently selected workflow in New Pipeline
+  agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
+  workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
 // server is authoritative — see loadConfig, which also receives data.steps.)
 const STEP_ROLES = ['planner', 'refiner', 'implementer', 'reviewer'];
+
+import {
+  topology,
+  metaLine,
+  distinctAgents,
+  defaultTopologyFromTemplate,
+  mergePalette,
+} from './composer-core.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -48,14 +59,16 @@ const el = {
   mdFileName: $('#mdFileName'),
   extras: $('#extras'),
   extrasNote: $('#extrasNote'),
-  maxRefine: $('#maxRefine'),
-  maxReview: $('#maxReview'),
   mock: $('#mock'),
   installBtn: $('#install-btn'),
   startBtn: $('#start-btn'),
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
+  workflowSelect: $('#workflowSelect'),
+  wfDefaultStages: $('#wf-default-stages'),
+  wfNodeConfig: $('#wf-node-config'),
+  wfFeedbackConfig: $('#wf-feedback-config'),
 
   history: $('#history'),
   refreshHistory: $('#refresh-history'),
@@ -234,7 +247,7 @@ function currentView() {
 // Steps tracker
 // ---------------------------------------------------------------------------
 // Canonical order of phases for "everything before current => done".
-const STEP_ORDER = ['preflight', 'plan', 'refine', 'implement', 'review', 'done'];
+const STEP_ORDER = ['preflight', 'plan', 'refine', 'implement', 'review', 'manual-checklist', 'manual-web', 'done'];
 
 // Normalize a core phase name to one of our tracker step keys.
 // Order matters: more specific phases ("refine", "review", "implement") are
@@ -244,6 +257,8 @@ function normalizePhase(phase) {
   if (!phase) return null;
   const p = String(phase).toLowerCase();
   if (p.includes('preflight')) return 'preflight';
+  if (p.includes('manual-web')) return 'manual-web';
+  if (p.includes('manual-checklist') || p.includes('manual-test')) return 'manual-checklist';
   if (p.includes('refine')) return 'refine';
   if (p.includes('review')) return 'review';
   if (p.includes('implement')) return 'implement';
@@ -463,7 +478,473 @@ async function loadConfig(projectDir) {
   } catch {
     /* keep last-known config */
   }
-  renderStepConfigs();
+  // Seed the active workflow from per-project run-config (activeWorkflowId),
+  // then populate the dropdown + render the chosen workflow's config. This
+  // supersedes the bare renderStepConfigs() call: the default branch still calls
+  // renderStepConfigs() internally for backward-compat.
+  if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
+  await loadWorkflowsInto(state.workflowId);
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline Composer — /api/workflows + /api/agents client wrappers
+// ---------------------------------------------------------------------------
+async function fetchAgents() {
+  try {
+    const res = await fetch('/api/agents');
+    if (!res.ok) return null;
+    return await safeJson(res);
+  } catch {
+    return null; // composer falls back to the embedded registry
+  }
+}
+
+async function listWorkflows() {
+  try {
+    const res = await fetch('/api/workflows');
+    const data = await safeJson(res);
+    if (!res.ok) return [];
+    return Array.isArray(data.workflows) ? data.workflows : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getWorkflow(id) {
+  try {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return await safeJson(res);
+  } catch {
+    return null;
+  }
+}
+
+async function saveWorkflow({ name, steps, feedbacks }) {
+  const res = await fetch('/api/workflows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, steps, feedbacks }),
+  });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
+  return data.workflow;
+}
+
+async function deleteWorkflow(id) {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `delete failed (${res.status})`);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline Composer module (ported from docs/pipeline-composer/mockups).
+// Pure serialization lives in composer-core.mjs; this is DOM wiring only.
+// Manual-only behaviors (no jsdom layout / no HTML5 DnD): paintWires geometry,
+// drag pills onto strips/cols, hover-loop link mode, read-only preview paint.
+// SELF-LOOP NOTE: a SAME-NODE self-loop (fb.from===fb.to, e.g. the default's
+// fb_refine s1_0->s1_0) is created/removed via the node's top-left self-cycle
+// toggle (.selfloop), NOT the bottom-right link button — that one only draws edges
+// to DISTINCT nodes (composerAddFeedback still rejects from===to). paintWires
+// special-cases from===to to draw a small violet lobe beneath the node with NO
+// delete-X (the toggle owns removal; cross-node amber loops keep their X). Manual
+// checklist: Reset shows the Refine node with its self-cycle toggle lit (violet ring)
+// and a violet self-loop arc beneath it; clicking the toggle removes both, clicking
+// again restores them.
+// ---------------------------------------------------------------------------
+const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
+const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
+const COMPOSER_SEQ = '#B7B7BC';
+
+let _composerReady = false;
+const composer = {
+  agents: {},          // key -> {key,displayName,description,color,icon}
+  steps: [],           // Array<Array<{id,key}>> (local ids)
+  feedbacks: [],       // Array<{from,to}> (local ids)
+  saved: [],           // WorkflowTemplate[] from the server
+  linkFrom: null,
+  dragKey: null,
+  uid: 1,
+  els: {},
+};
+const composerMk = (key) => ({ id: 'n' + composer.uid++, key });
+const composerAgent = (key) => composer.agents[key] || { displayName: key, description: '', color: 'blue', icon: '' };
+
+async function initComposer() {
+  if (_composerReady) { composerDrawWires(); return; }
+  _composerReady = true;
+  composer.els = {
+    flow: document.getElementById('composer-flow'),
+    wires: document.getElementById('composer-wires'),
+    palette: document.getElementById('composer-palette'),
+    banner: document.getElementById('composer-link-banner'),
+    linkText: document.getElementById('composer-link-text'),
+    list: document.getElementById('composer-saved-list'),
+    count: document.getElementById('composer-saved-count'),
+  };
+  if (!composer.els.flow) return;
+
+  // toolbar + global listeners (bound once)
+  document.getElementById('composer-reset').addEventListener('click', () => { composerExitLink(); composerReset(); });
+  document.getElementById('composer-clear').addEventListener('click', () => { composerExitLink(); composer.steps = []; composer.feedbacks = []; composerRefresh(); });
+  document.getElementById('composer-save').addEventListener('click', composerSave);
+  document.getElementById('composer-link-cancel').addEventListener('click', composerExitLink);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') composerExitLink(); });
+  composer.els.wires.addEventListener('click', (e) => {
+    const g = e.target.closest('.fb-del'); if (!g) return;
+    composer.feedbacks.splice(+g.dataset.fb, 1); composerRefresh();
+  });
+  let rt;
+  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(composerDrawWires, 80); });
+  if (window.ResizeObserver) new window.ResizeObserver(() => composerDrawWires()).observe(composer.els.flow);
+
+  // palette from the registry (or embedded fallback)
+  const agentsRes = await fetchAgents();
+  const pal = mergePalette(agentsRes);
+  composer.agents = {};
+  pal.forEach((a) => { composer.agents[a.key] = a; });
+  composerBuildPalette(pal);
+
+  // initial canvas = the saved default workflow (4-step)
+  await composerReset();
+  await composerLoadSaved();
+}
+
+/* ---- palette ---- */
+function composerBuildPalette(pal) {
+  const palette = composer.els.palette;
+  palette.innerHTML = '';
+  pal.forEach((ag) => {
+    const p = document.createElement('div');
+    p.className = 'agent-pill';
+    p.draggable = true;
+    p.dataset.key = ag.key;
+    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}`;
+    p.addEventListener('dragstart', (e) => {
+      composer.dragKey = ag.key; p.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
+    });
+    p.addEventListener('dragend', () => {
+      composer.dragKey = null; p.classList.remove('dragging');
+      document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
+    });
+    palette.appendChild(p);
+  });
+}
+
+/* ---- node ---- */
+function composerNodeEl(a) {
+  const ag = composerAgent(a.key);
+  const selfOn = composer.feedbacks.some((f) => f.from === a.id && f.to === a.id);
+  const d = document.createElement('div');
+  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
+  d.innerHTML =
+    `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
+    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
+    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>` +
+    `<div class="nx" title="Remove agent">✕</div>` +
+    `<div class="loop" title="Draw a feedback loop from this agent">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
+  d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
+  d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
+  d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
+  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { composerAddFeedback(composer.linkFrom, a.id); composerExitLink(); } });
+  return d;
+}
+
+/* ---- drop helpers ---- */
+function composerAllow(e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }
+function composerMakeStrip(index, full) {
+  const s = document.createElement('div');
+  s.className = 'strip' + (full ? ' full' : '');
+  s.addEventListener('dragover', (e) => { composerAllow(e); s.classList.add('over'); });
+  s.addEventListener('dragleave', () => s.classList.remove('over'));
+  s.addEventListener('drop', (e) => {
+    e.preventDefault(); s.classList.remove('over');
+    if (!composer.dragKey) return;
+    composer.steps.splice(index, 0, [composerMk(composer.dragKey)]); composer.dragKey = null; composerRefresh();
+  });
+  return s;
+}
+function composerMakeCol(stepIdx) {
+  const col = document.createElement('div');
+  col.className = 'col';
+  const tag = document.createElement('div'); tag.className = 'col-tag';
+  tag.innerHTML = `Step ${stepIdx + 1}` + (composer.steps[stepIdx].length > 1 ? ' · <em>parallel</em>' : '');
+  col.appendChild(tag);
+  composer.steps[stepIdx].forEach((a) => col.appendChild(composerNodeEl(a)));
+  const hint = document.createElement('div'); hint.className = 'par-hint'; hint.textContent = '+ run in parallel';
+  col.appendChild(hint);
+  col.addEventListener('dragover', (e) => { composerAllow(e); col.classList.add('over'); });
+  col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
+  col.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
+    if (!composer.dragKey) return;
+    composer.steps[stepIdx].push(composerMk(composer.dragKey)); composer.dragKey = null; composerRefresh();
+  });
+  return col;
+}
+
+/* ---- render ---- */
+function composerRefresh() {
+  const flow = composer.els.flow;
+  [...flow.querySelectorAll(':scope > .strip, :scope > .col, :scope > .empty-flow')].forEach((e) => e.remove());
+  if (composer.steps.length === 0) {
+    flow.appendChild(composerMakeStrip(0, true));
+    const empty = document.createElement('div'); empty.className = 'empty-flow';
+    empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14" stroke-linecap="round"/></svg>' +
+      'Drag an agent here to begin<small>Place agents left-to-right for sequence · stack them for parallel steps</small>';
+    flow.appendChild(empty);
+  } else {
+    for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
+    flow.appendChild(composerMakeStrip(composer.steps.length));
+  }
+  requestAnimationFrame(composerDrawWires);
+}
+
+/* ---- mutations ---- */
+function composerRemoveNode(id) {
+  for (let i = 0; i < composer.steps.length; i++) {
+    const j = composer.steps[i].findIndex((a) => a.id === id);
+    if (j >= 0) { composer.steps[i].splice(j, 1); if (composer.steps[i].length === 0) composer.steps.splice(i, 1); break; }
+  }
+  composer.feedbacks = composer.feedbacks.filter((f) => f.from !== id && f.to !== id);
+  if (composer.linkFrom === id) composerExitLink();
+  composerRefresh();
+}
+function composerAddFeedback(from, to) {
+  if (from === to) return;
+  if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
+  composerRefresh();
+}
+// Self-cycle toggle: add/remove a SAME-NODE feedback (from===to). The composer's
+// link button rejects from===to, so this is the only way to set a self-loop. It
+// re-runs the step on its own blocking issues (the default's fb_refine).
+function composerToggleSelf(id) {
+  const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
+  if (i >= 0) composer.feedbacks.splice(i, 1);
+  else composer.feedbacks.push({ from: id, to: id });
+  composerRefresh();
+}
+
+/* ---- feedback linking mode ---- */
+function composerToggleLink(id) { if (composer.linkFrom === id) composerExitLink(); else composerEnterLink(id); }
+function composerEnterLink(id) {
+  composer.linkFrom = id;
+  composer.els.banner.hidden = false;
+  const a = composer.steps.flat().find((n) => n.id === id);
+  composer.els.linkText.textContent = `Loop from "${composerAgent(a.key).displayName}" → click a target agent`;
+  composer.els.flow.querySelectorAll('.node').forEach((n) => {
+    n.classList.toggle('linking', n.dataset.id === id);
+    n.classList.toggle('link-target', n.dataset.id !== id);
+  });
+}
+function composerExitLink() {
+  composer.linkFrom = null;
+  if (composer.els.banner) composer.els.banner.hidden = true;
+  if (composer.els.flow) composer.els.flow.querySelectorAll('.node').forEach((n) => n.classList.remove('linking', 'link-target'));
+}
+
+/* ---- wires (shared renderer; ns-namespaced markers) ---- */
+function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
+  opts = opts || {};
+  const ns = opts.ns || 'main';
+  if (flowEl.offsetParent === null) return; // view hidden — skip
+  const rect = (id) => {
+    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
+    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
+  };
+  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
+  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
+  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
+  let s = `<defs>` +
+    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
+    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
+    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
+  for (let i = 0; i < steps.length - 1; i++) {
+    steps[i].forEach((a) => {
+      steps[i + 1].forEach((b) => {
+        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
+        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
+        const dx = Math.max(36, (x2 - x1) * 0.5);
+        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${COMPOSER_SEQ}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#arrSeq-${ns})"/>`;
+      });
+    });
+  }
+  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
+  let maxBottom = 0;
+  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
+  feedbacks.forEach((fb, idx) => {
+    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
+    if (fb.from === fb.to) {
+      // same-node self-cycle: a small violet lobe hanging beneath the node. No
+      // delete-X — the node's top-left self-cycle toggle owns add/remove.
+      const cx = ra.x + ra.w / 2, baseY = ra.y + ra.h;
+      const sx = cx - 15, tx = cx + 11, rail = baseY + 34;
+      s += `<path d="M${sx} ${baseY} C ${sx - 22} ${rail}, ${tx + 22} ${rail}, ${tx} ${baseY}" fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      return;
+    }
+    const p = posOf(fb.from);
+    const below = p.len > 1 && p.i === p.len - 1;
+    let sx, sy, tx, ty, rail, mx, my;
+    if (below) {
+      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
+      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
+      my = rail - (rail - Math.max(sy, ty)) * 0.18;
+    } else {
+      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
+      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
+      my = rail + (Math.min(sy, ty) - rail) * 0.18;
+    }
+    mx = (sx + tx) / 2;
+    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}" fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
+    if (opts.del) {
+      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
+        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
+        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
+    }
+  });
+  wiresEl.innerHTML = s;
+}
+function composerDrawWires() {
+  if (!composer.els.flow) return;
+  composerPaintWires(composer.els.flow, composer.els.wires, composer.steps, composer.feedbacks, { ns: 'main', del: true });
+}
+
+/* ---- toolbar actions (server-wired) ---- */
+async function composerReset() {
+  const tpl = await getWorkflow('wf_default');
+  const model = defaultTopologyFromTemplate(tpl, composerMk);
+  composer.steps = model.steps;
+  composer.feedbacks = model.feedbacks;
+  composerRefresh();
+}
+async function composerSave() {
+  if (!composer.steps.length) return;
+  composerExitLink();
+  const name = (window.prompt('Name this pipeline:', '') || '').trim();
+  if (!name) return;
+  const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
+  const saveBtn = document.getElementById('composer-save');
+  let saved;
+  try {
+    saved = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks });
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
+    return;
+  }
+  await composerLoadSaved();
+  // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
+  // expand the first .pl-item (v1 bug: it auto-expanded Default, not the new pipeline).
+  // Expand the row we just saved — match by returned id, then by name; if neither
+  // matches, expand nothing rather than the wrong Default preview.
+  const items = [...composer.els.list.querySelectorAll('.pl-item')];
+  const row = (saved && saved.id && items.find((el) => el.dataset.id === saved.id))
+    || items.find((el) => (el.querySelector('.pl-name')?.textContent || '').trim() === name);
+  if (row) row.querySelector('.pl-row').click();
+  const html = saveBtn.innerHTML;
+  saveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved';
+  saveBtn.style.background = 'var(--green-ink)';
+  setTimeout(() => { saveBtn.innerHTML = html; saveBtn.style.background = ''; }, 1400);
+}
+
+async function composerLoadSaved() {
+  composer.saved = await listWorkflows();
+  composerRenderList();
+}
+
+function composerRoNode(a) {
+  const ag = composerAgent(a.key);
+  const d = document.createElement('div');
+  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
+  d.innerHTML =
+    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
+    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>`;
+  return d;
+}
+
+function composerRenderRO(host, item) {
+  const tag = document.createElement('div'); tag.className = 'pl-readonly-tag';
+  tag.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg> Read-only preview';
+  host.appendChild(tag);
+  const scroll = document.createElement('div'); scroll.className = 'ro-scroll';
+  const f = document.createElement('div'); f.className = 'flow ro-flow';
+  const w = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); w.setAttribute('class', 'wires');
+  f.appendChild(w);
+  for (let i = 0; i < item.steps.length; i++) {
+    f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+    const col = document.createElement('div'); col.className = 'col';
+    const ct = document.createElement('div'); ct.className = 'col-tag';
+    ct.innerHTML = `Step ${i + 1}` + (item.steps[i].length > 1 ? ' · <em>parallel</em>' : '');
+    col.appendChild(ct);
+    item.steps[i].forEach((a) => col.appendChild(composerRoNode(a)));
+    f.appendChild(col);
+  }
+  f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+  scroll.appendChild(f); host.appendChild(scroll);
+  const paint = () => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id });
+  requestAnimationFrame(() => requestAnimationFrame(paint));
+  setTimeout(paint, 60);
+}
+
+function composerRenderList() {
+  const listEl = composer.els.list, cntEl = composer.els.count;
+  listEl.innerHTML = '';
+  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
+  if (!composer.saved.length) {
+    listEl.innerHTML = '<div class="pl-empty">No saved pipelines yet — build one above and hit "Save pipeline".</div>';
+    return;
+  }
+  composer.saved.forEach((item) => {
+    const used = distinctAgents(item.steps);
+    const chips = used.map((k) => {
+      const ag = composerAgent(k);
+      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}</span>`;
+    }).join('');
+    const meta = metaLine(item.steps, item.feedbacks).replace(
+      / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
+    );
+    const wrap = document.createElement('div'); wrap.className = 'pl-item'; wrap.dataset.id = item.id;
+    const isDefault = item.id === 'wf_default';
+    wrap.innerHTML =
+      `<div class="pl-row">` +
+        `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+        `<div class="pl-main">` +
+          `<div class="pl-name">${item.name}</div>` +
+          `<div class="pl-meta">${meta}</div>` +
+          `<div class="pl-chips">${chips}</div>` +
+        `</div>` +
+        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
+      `</div>` +
+      `<div class="pl-body"></div>`;
+    listEl.appendChild(wrap);
+    const row = wrap.querySelector('.pl-row');
+    const del = wrap.querySelector('.pl-del');
+    const body = wrap.querySelector('.pl-body');
+    if (del) del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+      try { await deleteWorkflow(item.id); } catch (err) {
+        appendLog({ source: 'ui', level: 'error', text: `delete pipeline: ${err.message}`, ts: Date.now() }); return;
+      }
+      await composerLoadSaved();
+    });
+    row.addEventListener('click', () => {
+      const open = wrap.classList.toggle('open');
+      if (open) {
+        if (!body.dataset.rendered) { composerRenderRO(body, item); body.dataset.rendered = '1'; }
+        else {
+          const f = body.querySelector('.ro-flow'), w = body.querySelector('.wires');
+          if (f && w) requestAnimationFrame(() => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id }));
+        }
+      }
+    });
+  });
 }
 
 function modelById(id) {
@@ -477,42 +958,296 @@ function option(value, text) {
   return o;
 }
 
-function renderStepConfigs() {
-  // Config always edits the NEXT run, so selectors are never locked. (The
-  // multi-run engine in Task 3 owns per-run status; there is no global run
-  // status to gate on anymore.)
-  const locked = false;
+// ---------------------------------------------------------------------------
+// New-Pipeline workflow config: PURE helpers (no DOM, no fetch). These flatten a
+// workflow's topology + the per-project run-config into row data the renderers
+// paint. Exposed on window.__np so jsdom unit tests can exercise them directly.
+// ---------------------------------------------------------------------------
 
+// Flatten workflow.steps[][] into an ordered list of node rows, joining each
+// node's role `key` to its registry metadata (label/color) and overlaying the
+// run-config's saved {model,effort} for that node-instance id. Order = outer
+// (sequential) then inner (parallel) — exactly the dispatch order.
+function buildNodeConfigRows(workflow, registry, runConfig) {
+  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
+  const reg = registry || {};
+  const nodes = (runConfig && runConfig.nodes) || {};
+  const rows = [];
+  steps.forEach((group, stepIndex) => {
+    const members = Array.isArray(group) ? group : [];
+    members.forEach((node) => {
+      if (!node || !node.id) return;
+      const meta = reg[node.key] || null;
+      const saved = nodes[node.id] || {};
+      rows.push({
+        nodeId: node.id,
+        key: node.key,
+        label: (meta && meta.displayName) || node.key || node.id,
+        color: (meta && meta.color) || '',
+        stepIndex,
+        parallel: members.length > 1,
+        model: typeof saved.model === 'string' ? saved.model : '',
+        effort: typeof saved.effort === 'string' ? saved.effort : '',
+      });
+    });
+  });
+  return rows;
+}
+
+// Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
+// overlaying the run-config's saved maxCycles (default 3 when unset).
+function buildFeedbackRows(workflow, runConfig) {
+  const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
+  const saved = (runConfig && runConfig.feedbacks) || {};
+  return fbs.map((fb) => {
+    const rc = saved[fb.id] || {};
+    const n = Number(rc.maxCycles);
+    return {
+      fbId: fb.id,
+      from: fb.from,
+      to: fb.to,
+      maxCycles: Number.isFinite(n) && n >= 1 ? n : 3,
+    };
+  });
+}
+
+// First effort a model supports (used to seed a node's effort caption when none
+// is saved). '' when the model is unknown or advertises no efforts.
+function defaultEffortFor(modelId) {
+  const m = modelById(modelId);
+  return m && Array.isArray(m.efforts) && m.efforts.length ? m.efforts[0] : '';
+}
+
+// Test hook: expose the pure helpers (and a couple of collaborators the tests
+// reuse) without leaking them into the app's runtime contract.
+if (typeof window !== 'undefined') {
+  window.__np = Object.assign(window.__np || {}, {
+    buildNodeConfigRows,
+    buildFeedbackRows,
+    defaultEffortFor,
+    renderModelEffortPair,
+    renderWorkflowConfig,
+    _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
+  });
+}
+
+// Paint one model+effort select pair (and its caption) from a saved selection
+// {model,effort}. Shared by the legacy default-stage rows and the dynamic
+// per-node rows so the dropdown contents + effort filtering live in one place.
+function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
+  // Model dropdown: "(default model)" + every model + "+ Add model…".
+  modelSel.innerHTML = '';
+  modelSel.appendChild(option('', '(default model)'));
+  state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom ? ' ·custom' : ''))));
+  modelSel.appendChild(option('__add__', '+ Add model…'));
+  modelSel.value = sel.model || '';
+
+  // Effort dropdown: filtered to the selected model's supported efforts.
+  const model = modelById(modelSel.value);
+  effortSel.innerHTML = '';
+  effortSel.appendChild(option('', '(default effort)'));
+  (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
+  effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
+
+  modelSel.disabled = false;
+  effortSel.disabled = !model; // no model picked => effort is meaningless
+
+  if (caption) {
+    const mLabel = model ? model.label : 'default model';
+    caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`;
+  }
+}
+
+function renderStepConfigs() {
+  // The Default workflow's four rows are keyed by data-role; paint each from the
+  // legacy per-role config (state.config.steps). Config always edits the NEXT
+  // run, so selectors are never locked.
   for (const role of STEP_ROLES) {
     const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
     const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
     const caption = document.querySelector(`.step-current[data-role="${role}"]`);
     if (!modelSel || !effortSel) continue;
-
-    const sel = state.config.steps[role] || {};
-
-    // Model dropdown: "(default model)" + every model + "+ Add model…".
-    modelSel.innerHTML = '';
-    modelSel.appendChild(option('', '(default model)'));
-    state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom ? ' ·custom' : ''))));
-    modelSel.appendChild(option('__add__', '+ Add model…'));
-    modelSel.value = sel.model || '';
-
-    // Effort dropdown: filtered to the selected model's supported efforts.
-    const model = modelById(modelSel.value);
-    effortSel.innerHTML = '';
-    effortSel.appendChild(option('', '(default effort)'));
-    (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
-    effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
-
-    modelSel.disabled = locked;
-    effortSel.disabled = locked || !model; // no model picked => effort is meaningless
-
-    if (caption) {
-      const mLabel = model ? model.label : 'default model';
-      caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`;
-    }
+    renderModelEffortPair(modelSel, effortSel, caption, state.config.steps[role] || {});
   }
+}
+
+// ---------------------------------------------------------------------------
+// New-Pipeline workflow selector. Populates #workflowSelect from
+// GET /api/workflows; on change, renders per-node model/effort pickers + per-
+// feedback cycle inputs for the chosen workflow (or the legacy default stages).
+// ---------------------------------------------------------------------------
+
+// --- API wrappers (existing fetch()/safeJson style) ---
+async function listWorkflowsApi() {
+  try {
+    const res = await fetch('/api/workflows');
+    const data = await safeJson(res);
+    return res.ok && Array.isArray(data.workflows) ? data.workflows : [];
+  } catch { return []; }
+}
+
+async function getWorkflowApi(id) {
+  if (state.workflowCache[id]) return state.workflowCache[id];
+  try {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+    const data = await safeJson(res);
+    if (!res.ok || !data || !Array.isArray(data.steps)) return null;
+    state.workflowCache[id] = data;
+    return data;
+  } catch { return null; }
+}
+
+async function getAgentsApi() {
+  if (Object.keys(state.agents).length) return state.agents;
+  try {
+    const res = await fetch('/api/agents');
+    const data = await safeJson(res);
+    const list = res.ok && Array.isArray(data.agents) ? data.agents : [];
+    state.agents = Object.fromEntries(list.map((a) => [a.key, a]));
+    return state.agents;
+  } catch { return state.agents; }
+}
+
+// Fill #workflowSelect with Default + saved names, preserving/falling back to
+// the active selection (state.workflowId), then render that workflow's config.
+async function loadWorkflowsInto(selectId) {
+  const sel = el.workflowSelect;
+  if (!sel) return;
+  const workflows = await listWorkflowsApi();
+  const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
+  const want = selectId || state.workflowId || 'wf_default';
+  sel.innerHTML = '';
+  list.forEach((wf) => sel.appendChild(option(wf.id, wf.name || wf.id)));
+  // Fall back to default if the wanted id is gone (e.g. a deleted workflow).
+  state.workflowId = list.some((wf) => wf.id === want) ? want : 'wf_default';
+  sel.value = state.workflowId;
+  await renderWorkflowConfig(state.workflowId);
+}
+
+// Render the config UI for one workflow. Default -> show the legacy 4 stage rows
+// and hide the dynamic containers. Saved -> fetch topology + registry, render a
+// node row per node and a cycle input per feedback.
+async function renderWorkflowConfig(workflowId) {
+  const isDefault = !workflowId || workflowId === 'wf_default';
+  if (el.wfDefaultStages) el.wfDefaultStages.classList.toggle('hidden', !isDefault);
+  if (el.wfNodeConfig) el.wfNodeConfig.classList.toggle('hidden', isDefault);
+  if (el.wfFeedbackConfig) el.wfFeedbackConfig.classList.toggle('hidden', isDefault);
+
+  if (isDefault) {
+    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '';
+    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
+    renderStepConfigs(); // legacy per-role rows
+    return;
+  }
+
+  const [wf, registry] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
+  if (!wf) {
+    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '<div class="hint">Could not load this workflow.</div>';
+    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
+    return;
+  }
+  const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
+  renderNodeRows(buildNodeConfigRows(wf, registry, runConfig));
+  renderFeedbackRows(buildFeedbackRows(wf, runConfig));
+}
+
+// Build one .stage-cfg row per node into #wf-node-config, keyed by data-node-id.
+// Mirrors the legacy markup (acc bar + meta + picks + caption) so it reuses the
+// existing .stage-cfg styles and renderModelEffortPair.
+function renderNodeRows(rows) {
+  const host = el.wfNodeConfig;
+  if (!host) return;
+  host.innerHTML = '';
+  rows.forEach((row) => {
+    const card = document.createElement('div');
+    card.className = 'stage-cfg';
+
+    const acc = document.createElement('div');
+    acc.className = 'acc' + (row.color ? ' ' + row.color : '');
+    card.appendChild(acc);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const b = document.createElement('b');
+    b.textContent = row.label;
+    const small = document.createElement('small');
+    small.textContent = row.parallel ? `Step ${row.stepIndex + 1} · parallel` : `Step ${row.stepIndex + 1}`;
+    meta.append(b, small);
+    card.appendChild(meta);
+
+    const picks = document.createElement('div');
+    picks.className = 'picks';
+    const mWrap = document.createElement('div');
+    mWrap.className = 'select-wrap';
+    const modelSel = document.createElement('select');
+    modelSel.className = 'step-model select';
+    modelSel.dataset.nodeId = row.nodeId;
+    modelSel.setAttribute('aria-label', `${row.label} model`);
+    mWrap.appendChild(modelSel);
+    const eWrap = document.createElement('div');
+    eWrap.className = 'select-wrap';
+    const effortSel = document.createElement('select');
+    effortSel.className = 'step-effort select';
+    effortSel.dataset.nodeId = row.nodeId;
+    effortSel.setAttribute('aria-label', `${row.label} effort`);
+    eWrap.appendChild(effortSel);
+    picks.append(mWrap, eWrap);
+    card.appendChild(picks);
+
+    const caption = document.createElement('small');
+    caption.className = 'step-current';
+    caption.dataset.nodeId = row.nodeId;
+    card.appendChild(caption);
+
+    renderModelEffortPair(modelSel, effortSel, caption, { model: row.model, effort: row.effort });
+    host.appendChild(card);
+  });
+}
+
+// Build one cycle-count input per feedback into #wf-feedback-config, keyed by
+// data-fb-id. Shows the loop's direction (to <- from) as a label.
+function renderFeedbackRows(rows) {
+  const host = el.wfFeedbackConfig;
+  if (!host) return;
+  host.innerHTML = '';
+  if (!rows.length) return;
+
+  const h = document.createElement('div');
+  h.className = 'hint';
+  h.style.margin = '10px 0 6px';
+  h.textContent = 'Feedback loops — max cycles before gating to you.';
+  host.appendChild(h);
+
+  rows.forEach((row) => {
+    const field = document.createElement('div');
+    field.className = 'field';
+    field.style.marginBottom = '10px';
+
+    const label = document.createElement('label');
+    label.textContent = `Loop ${row.to} ← ${row.from} — max cycles`;
+    label.setAttribute('for', `fb-${row.fbId}`);
+    field.appendChild(label);
+
+    const input = document.createElement('input');
+    input.id = `fb-${row.fbId}`;
+    input.className = 'input';
+    input.type = 'number';
+    input.min = '1';
+    input.value = String(row.maxCycles);
+    input.dataset.fbId = row.fbId;
+    field.appendChild(input);
+
+    host.appendChild(field);
+  });
+}
+
+// Workflow change: remember the selection and re-render its config.
+if (el.workflowSelect) {
+  el.workflowSelect.addEventListener('change', async () => {
+    state.workflowId = el.workflowSelect.value || 'wf_default';
+    saveActiveWorkflow(state.workflowId);
+    await renderWorkflowConfig(state.workflowId);
+  });
 }
 
 async function saveStep(role, model, effort) {
@@ -534,6 +1269,67 @@ async function saveStep(role, model, effort) {
     renderStepConfigs();
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist one node's model/effort to the per-project run-config for the active
+// workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
+async function saveNode(workflowId, nodeId, model, effort) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort } } }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      return;
+    }
+    if (data.config) state.config = data.config;
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist one feedback loop's cycle count (CONV-2): PATCH /api/config
+// { projectDir, workflowId, feedbacks:{ [fbId]:{maxCycles} } }.
+async function saveFeedback(workflowId, fbId, maxCycles) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, workflowId, feedbacks: { [fbId]: { maxCycles } } }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      return;
+    }
+    if (data.config) state.config = data.config;
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist the active workflow selection (CONV-2): PATCH /api/config { projectDir, activeWorkflowId }.
+async function saveActiveWorkflow(workflowId) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, activeWorkflowId: workflowId }),
+    });
+    const data = await safeJson(res);
+    if (res.ok && data.config) state.config = data.config;
+  } catch {
+    /* selection is best-effort; ignore transient errors */
   }
 }
 
@@ -563,23 +1359,86 @@ async function addModelFlow(role) {
   }
 }
 
-// Delegated change handler for all step selects. The selects live in the
-// #pipeline-config block (cached as el.pipelineConfig); each carries data-role.
+// Delegated change handler for all config controls inside #pipeline-config:
+//  - legacy default-stage selects carry data-role (persist via saveStep);
+//  - dynamic node selects carry data-node-id (persist via saveNode);
+//  - feedback cycle inputs carry data-fb-id (persist via saveFeedback).
 el.pipelineConfig.addEventListener('change', (e) => {
   const t = e.target;
+
+  // Feedback cycle inputs (number inputs, not selects).
+  if (t instanceof HTMLInputElement && t.dataset.fbId) {
+    const n = Math.max(1, Math.round(Number(t.value) || 1));
+    t.value = String(n); // normalize the field
+    saveFeedback(state.workflowId, t.dataset.fbId, n);
+    return;
+  }
+
   if (!(t instanceof HTMLSelectElement)) return;
+
+  // Dynamic per-node selects (saved workflow).
+  if (t.dataset.nodeId) {
+    const nodeId = t.dataset.nodeId;
+    if (t.classList.contains('step-model')) {
+      if (t.value === '__add__') return addModelFlowNode(nodeId);
+      // New model -> reset effort + re-render this row's effort options.
+      saveNode(state.workflowId, nodeId, t.value, '');
+      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
+      if (effortSel) renderModelEffortPair(t, effortSel, caption, { model: t.value, effort: '' });
+    } else if (t.classList.contains('step-effort')) {
+      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+      const model = modelSel ? modelSel.value : '';
+      saveNode(state.workflowId, nodeId, model, t.value);
+      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
+      if (caption) {
+        const m = modelById(model);
+        caption.textContent = `${m ? m.label : 'default model'} · ${t.value || 'default effort'}`;
+      }
+    }
+    return;
+  }
+
+  // Legacy default-stage selects (data-role).
   const role = t.dataset.role;
   if (!role) return;
-
   if (t.classList.contains('step-model')) {
     if (t.value === '__add__') return addModelFlow(role);
-    // New model -> reset effort (old effort may be unsupported by the new model).
     saveStep(role, t.value, '');
   } else if (t.classList.contains('step-effort')) {
     const model = (state.config.steps[role] || {}).model || '';
     saveStep(role, model, t.value);
   }
 });
+
+// "+ Add model…" picked on a per-node select: add the custom model, then select
+// it for that node (mirrors addModelFlow for the legacy role selects).
+async function addModelFlowNode(nodeId) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) { renderWorkflowConfig(state.workflowId); return; }
+  const id = (window.prompt('New model id (e.g. claude-opus-4-8 or a fine-tune id):') || '').trim();
+  if (!id) { renderWorkflowConfig(state.workflowId); return; }
+  const label = (window.prompt('Display name (optional):', id) || '').trim();
+  try {
+    const res = await fetch('/api/config/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, id, label }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      appendLog({ source: 'ui', level: 'error', text: `add model: ${data.error || res.status}`, ts: Date.now() });
+      renderWorkflowConfig(state.workflowId);
+      return;
+    }
+    state.models = Array.isArray(data.models) ? data.models : state.models;
+    await saveNode(state.workflowId, nodeId, id, ''); // select the new model (effort reset)
+    renderWorkflowConfig(state.workflowId);           // repaint with the new model in the list
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `add model error: ${e.message}`, ts: Date.now() });
+    renderWorkflowConfig(state.workflowId);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Log window
@@ -1330,8 +2189,7 @@ el.form.addEventListener('submit', async (e) => {
   const body = {
     projectDir,
     title: title || undefined,
-    maxRefine: Number(el.maxRefine.value) || 5,
-    maxReview: Number(el.maxReview.value) || 5,
+    workflowId: state.workflowId || 'wf_default',
     mock: el.mock.checked,
   };
 
@@ -1393,7 +2251,7 @@ el.form.addEventListener('submit', async (e) => {
 // subscribe would double-replay this run's buffer on the next hello.
 function beginRun(runId, projectDir, title) {
   const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
-  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models }));
+  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models, workflowId: state.workflowId }));
   hideViewer();
   updateNavCounts();
   showView('running');
@@ -1842,7 +2700,7 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
-const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', done: 'Done' };
+const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 const CYCLING_PHASES = new Set(['refine', 'review']);
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
@@ -1894,7 +2752,7 @@ function buildRunCard(r) {
 
 // Map each agent role's snapshot (model label + effort) onto the matching
 // stage's sublabel. The card steps use phase keys; map them to config roles.
-const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer' };
+const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer', 'manual-checklist': 'manualTestsChecklist', 'manual-web': 'manualWebUiTesting' };
 function fillStageSublabels(node, snap) {
   const models = Array.isArray(snap.models) ? snap.models : [];
   const steps = snap.steps || {};
@@ -2071,7 +2929,7 @@ function updateNavCounts() {
 // ---------------------------------------------------------------------------
 const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
-const VIEW_NAMES = ['new', 'running', 'history'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer'];
 
 function showView(name) {
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -2081,6 +2939,7 @@ function showView(name) {
     const d = selectedProjectPath();
     if (d) loadHistory(d);
   }
+  if (name === 'composer') initComposer();
 }
 
 // Nav clicks only update the hash; the single hashchange listener drives

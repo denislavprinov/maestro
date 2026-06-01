@@ -13,14 +13,17 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 
-/** The four agent steps, in pipeline order. Drives the UI + orchestrator. */
-export const AGENT_STEPS = [
-  { key: 'planner', label: 'Plan' },
-  { key: 'refiner', label: 'Refine' },
-  { key: 'implementer', label: 'Implement' },
-  { key: 'reviewer', label: 'Review' },
-];
+/**
+ * The agent steps, in pipeline order — now DERIVED from the agent registry
+ * (agents/*.meta.json) rather than hardcoded, so adding an agent needs no edit
+ * here. The original four roles keep their legacy short labels via
+ * registryToSteps's LEGACY_LABELS, so this stays byte-identical for them while
+ * also surfacing the two new agents. Drives the UI + orchestrator + per-step
+ * config keys (STEP_KEYS, sanitizeSteps, resolveStepModels all read this).
+ */
+export const AGENT_STEPS = registryToSteps(loadAgentRegistry());
 
 const STEP_KEYS = new Set(AGENT_STEPS.map((s) => s.key));
 
@@ -105,12 +108,16 @@ async function readRaw(projectDir) {
   }
 }
 
-/** Atomically write the config. Creates <projectDir>/.maestro on demand. */
+/** Atomically write the legacy {steps,customModels} view WITHOUT dropping the
+ *  run-config layer (workflows/activeWorkflowId) or other top-level keys (e.g.
+ *  webUiTesting) that this sanitized view does not model. */
 async function writeRaw(projectDir, cfg) {
   await mkdir(configDir(projectDir), { recursive: true });
   const file = configFile(projectDir);
+  const existing = await readWholeFile(projectDir);            // preserve unknown keys
+  const merged = { ...existing, steps: cfg.steps, customModels: cfg.customModels };
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+  await writeFile(tmp, JSON.stringify(merged, null, 2) + '\n', 'utf8');
   await rename(tmp, file);
 }
 
@@ -213,4 +220,132 @@ export async function resolveStepModels(projectDir, fallbackModel) {
     out[key] = { model: sel.model || fallbackModel || undefined, effort: sel.effort || undefined };
   }
   return out;
+}
+
+// ── run-config: per-project model/effort/cycles for composed workflows ─────────
+// Layered ON TOP of the legacy { steps, customModels } config in the SAME file.
+// readRaw()/writeRaw() above intentionally drop unknown keys, so these helpers
+// read and write the file directly to preserve `workflows` + `activeWorkflowId`
+// alongside the sanitized legacy keys.
+
+/** Read the whole config file untouched. Missing/corrupt => {}. Never throws. */
+async function readWholeFile(projectDir) {
+  try {
+    const data = JSON.parse(await readFile(configFile(projectDir), 'utf8'));
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Atomically persist the whole config object. Creates <projectDir>/.maestro. */
+async function writeWholeFile(projectDir, obj) {
+  await mkdir(configDir(projectDir), { recursive: true });
+  const file = configFile(projectDir);
+  const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  await rename(tmp, file);
+}
+
+/** Coerce a per-node selection to a clean {model?,effort?} or null (both blank). */
+function cleanNodeSel(selection) {
+  const model = typeof selection?.model === 'string' ? selection.model.trim() : '';
+  const effort = typeof selection?.effort === 'string' ? selection.effort.trim() : '';
+  if (!model && !effort) return null;
+  return { ...(model && { model }), ...(effort && { effort }) };
+}
+
+/**
+ * Read the full RunConfig: the sanitized legacy view (steps/customModels) plus
+ * the run-config layer (workflows + activeWorkflowId). Missing => empty layer.
+ * Never throws.
+ * @param {string} projectDir
+ * @returns {Promise<{steps:object,customModels:Array,workflows:object,activeWorkflowId?:string}>}
+ */
+export async function readRunConfig(projectDir) {
+  const legacy = await readRaw(projectDir); // sanitized { steps, customModels }
+  const whole = await readWholeFile(projectDir);
+  const workflows =
+    whole.workflows && typeof whole.workflows === 'object' ? whole.workflows : {};
+  const out = { ...legacy, workflows };
+  if (whole.webUiTesting && typeof whole.webUiTesting === 'object') out.webUiTesting = whole.webUiTesting;
+  if (typeof whole.activeWorkflowId === 'string' && whole.activeWorkflowId.trim()) {
+    out.activeWorkflowId = whole.activeWorkflowId.trim();
+  }
+  return out;
+}
+
+/** Get (creating as needed) the nested workflows[id] bucket on a raw config obj. */
+function bucket(whole, workflowId) {
+  if (!whole.workflows || typeof whole.workflows !== 'object') whole.workflows = {};
+  if (!whole.workflows[workflowId] || typeof whole.workflows[workflowId] !== 'object') {
+    whole.workflows[workflowId] = {};
+  }
+  const wf = whole.workflows[workflowId];
+  if (!wf.nodes || typeof wf.nodes !== 'object') wf.nodes = {};
+  if (!wf.feedbacks || typeof wf.feedbacks !== 'object') wf.feedbacks = {};
+  return wf;
+}
+
+/**
+ * Set (or clear) the model+effort for one node instance of a workflow. Both
+ * blank => the node entry is removed. Writes preserve all other config keys.
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @param {string} nodeId
+ * @param {{model?:string,effort?:string}} selection
+ * @returns {Promise<void>}
+ */
+export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
+  const whole = await readWholeFile(projectDir);
+  const wf = bucket(whole, workflowId);
+  const sel = cleanNodeSel(selection);
+  if (sel) wf.nodes[nodeId] = sel;
+  else delete wf.nodes[nodeId];
+  await writeWholeFile(projectDir, whole);
+}
+
+/**
+ * Set the cycle count for one feedback loop of a workflow. Coerced to an integer
+ * >= 1 (a loop runs at least once). Preserves all other config keys.
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @param {string} fbId
+ * @param {number} maxCycles
+ * @returns {Promise<void>}
+ */
+export async function setFeedbackCycles(projectDir, workflowId, fbId, maxCycles) {
+  const n = Math.max(1, Math.floor(Number(maxCycles) || 0) || 1);
+  const whole = await readWholeFile(projectDir);
+  const wf = bucket(whole, workflowId);
+  wf.feedbacks[fbId] = { maxCycles: n };
+  await writeWholeFile(projectDir, whole);
+}
+
+/**
+ * Remember the last workflow selected in New Pipeline. Preserves other keys.
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @returns {Promise<void>}
+ */
+export async function setActiveWorkflow(projectDir, workflowId) {
+  const whole = await readWholeFile(projectDir);
+  whole.activeWorkflowId = String(workflowId || '').trim();
+  await writeWholeFile(projectDir, whole);
+}
+
+/**
+ * Resolve just the run-config for one workflow into { nodes, feedbacks } maps
+ * (the inputs resolveWorkflow overlays on the template). Unconfigured => empties.
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @returns {Promise<{nodes:Record<string,{model?:string,effort?:string}>,feedbacks:Record<string,{maxCycles:number}>}>}
+ */
+export async function resolveRunConfig(projectDir, workflowId) {
+  const rc = await readRunConfig(projectDir);
+  const wf = rc.workflows[workflowId] || {};
+  return {
+    nodes: wf.nodes && typeof wf.nodes === 'object' ? wf.nodes : {},
+    feedbacks: wf.feedbacks && typeof wf.feedbacks === 'object' ? wf.feedbacks : {},
+  };
 }

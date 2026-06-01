@@ -25,7 +25,7 @@ test('GET /api/config returns predefined models + empty config + step defs', asy
   const r = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.deepEqual(j.config, { steps: {}, customModels: [] });
+  assert.deepEqual(j.config, { steps: {}, customModels: [], workflows: {} });
   assert.ok(j.models.some((m) => m.id === 'claude-opus-4-8'));
   assert.ok(j.steps.some((s) => s.key === 'planner'));
   assert.ok(j.efforts.includes('xhigh'));

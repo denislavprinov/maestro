@@ -355,6 +355,12 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
     case 'reviewer':
       text = await mockReviewer(m, cycle, onEvent);
       break;
+    case 'manual-tests-checklist':
+      text = await mockManualTestsChecklist(m, onEvent);
+      break;
+    case 'manual-web-ui-testing':
+      text = await mockManualWebUiTesting(m, cycle, onEvent);
+      break;
     default:
       await emitLog(onEvent, `[mock] no side effects for unknown role`);
       break;
@@ -603,6 +609,67 @@ async function mockReviewer(m, cycle, onEvent) {
       review.issues
         .map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`)
         .join('\n') +
+      '\n';
+    await ensureDir(mdPath);
+    await writeFile(mdPath, md, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${mdPath}`, raw: { mock: true, file: mdPath } });
+  }
+  if (jsonPath) {
+    await ensureDir(jsonPath);
+    await writeFile(jsonPath, JSON.stringify(review, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${jsonPath}`, raw: { mock: true, file: jsonPath } });
+  }
+  return JSON.stringify(review);
+}
+
+async function mockManualTestsChecklist(m, onEvent) {
+  const out = m.MOCK_OUT;
+  await emitLog(onEvent, '[mock] manual-tests author drafting checklist');
+  if (!out) return '[mock] manual-tests-checklist: no MOCK_OUT given';
+  const md =
+    `# Manual Test Checklist\n\n` +
+    `- [ ] App boots without errors — open the app; expect no console errors.\n` +
+    `- [ ] Core flow works — exercise the new feature; expect the documented result.\n` +
+    `- [ ] Invalid input is handled — submit bad input; expect a clear error.\n`;
+  await ensureDir(out);
+  await writeFile(out, md, 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] manual checklist written to ${out}`;
+}
+
+async function mockManualWebUiTesting(m, cycle, onEvent) {
+  const mdPath = m.MOCK_OUT;
+  const jsonPath = m.MOCK_JSON;
+  await emitLog(onEvent, `[mock] manual web UI testing run (cycle ${cycle})`);
+  // Cycle 1: one major (a case fails). Cycle >=2: only a suggestion. Terminates by cycle 2.
+  const review =
+    cycle <= 1
+      ? {
+          summary: 'One manual case failed in the live UI.',
+          issues: [
+            {
+              severity: 'major',
+              title: 'Core flow case failed',
+              detail: 'The documented result did not appear when exercising the feature.',
+              location: 'manual-tests-checklist.md',
+            },
+          ],
+        }
+      : {
+          summary: 'All manual cases passed.',
+          issues: [
+            {
+              severity: 'suggestion',
+              title: 'Add an accessibility pass',
+              detail: 'Consider a keyboard-only walkthrough next time.',
+              location: 'manual-tests-checklist.md',
+            },
+          ],
+        };
+  if (mdPath) {
+    const md =
+      `# Manual Web UI Test Result (cycle ${cycle})\n\n## Summary\n\n${review.summary}\n\n## Issues\n\n` +
+      review.issues.map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`).join('\n') +
       '\n';
     await ensureDir(mdPath);
     await writeFile(mdPath, md, 'utf8');

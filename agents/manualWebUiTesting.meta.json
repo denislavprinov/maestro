@@ -1,0 +1,12 @@
+{
+  "key": "manualWebUiTesting",
+  "displayName": "Manual web UI testing",
+  "description": "run manual cases via Playwright",
+  "color": "violet",
+  "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M10 8.5l5 3.5-5 3.5V8.5Z\" fill=\"currentColor\" stroke=\"none\"/>",
+  "agentFile": "maestro-manual-web-ui-testing.md",
+  "runnerType": "verifier",
+  "loopSource": true,
+  "connectsTo": "*",
+  "order": 6
+}

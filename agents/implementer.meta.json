@@ -1,0 +1,12 @@
+{
+  "key": "implementer",
+  "displayName": "Implementation",
+  "description": "write the code",
+  "color": "peach",
+  "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "maestro-implementer.md",
+  "runnerType": "producer",
+  "loopSource": false,
+  "connectsTo": "*",
+  "order": 3
+}

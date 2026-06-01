@@ -32,13 +32,10 @@ import {
 import { detectTools } from './preflight.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
-import {
-  runPlannerClarify,
-  runPlannerPlan,
-  runRefiner,
-  runImplementer,
-  runReviewer,
-} from './phases.mjs';
+import { runPlannerClarify } from './phases.mjs';
+import { runners as defaultRunners } from './runners.mjs';
+import { resolveWorkflow } from './workflows.mjs';
+import { loadAgentRegistry } from './agent-registry.mjs';
 
 /**
  * Default location of the agent prompt markdown files, relative to this module.
@@ -61,8 +58,6 @@ const AGENT_FILES = {
  * @param {string} [opts.promptFile]
  * @param {string[]} [opts.extras]
  * @param {string} [opts.title]
- * @param {number} [opts.maxRefineCycles=5]
- * @param {number} [opts.maxReviewCycles=5]
  * @param {object} [opts.claude]  { bin?, permissionMode="acceptEdits", model?, mock? }
  * @param {string} [opts.agentsDir]
  * @param {string} [opts.pipelineId]
@@ -78,8 +73,6 @@ class Orchestrator extends EventEmitter {
     super();
     this.opts = opts || {};
     this.projectDir = resolve(this.opts.projectDir || process.cwd());
-    this.maxRefineCycles = numOr(this.opts.maxRefineCycles, 5);
-    this.maxReviewCycles = numOr(this.opts.maxReviewCycles, 5);
     this.claude = {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
@@ -89,6 +82,10 @@ class Orchestrator extends EventEmitter {
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
+    // Which saved workflow topology to run (default reproduces today's pipeline) and
+    // the runner registry the dispatcher consults (overridable for tests).
+    this.workflowId = this.opts.workflowId || 'wf_default';
+    this._runners = this.opts.runners || defaultRunners;
 
     this.abort = new AbortController();
     this.pendingQuestion = null; // { id, resolve, reject, kind }
@@ -217,43 +214,15 @@ class Orchestrator extends EventEmitter {
       const answers = await this._clarify();
       this._checkAbort();
 
-      // 5) Planner plan.
-      const planFilePath = planPath(this.projectDir, this.baseName, 1, this.planDatePrefix);
-      this._phase('plan', 0, 'start');
-      const planResult = await runPlannerPlan(this._phaseCtx('planner'), {
-        answers,
-        planFilePath,
-        baseName: this.baseName,
-      });
-      const currentPlanPath = planResult?.planPath || planFilePath;
-      this._artifact('plan', currentPlanPath);
-      await appendAudit(this.pipeline.dir, `Plan written: \`${rel(this.projectDir, currentPlanPath)}\`.`);
-      this._phase('plan', 0, 'done');
-      this._checkAbort();
-
-      // 6) Refine loop.
-      const finalPlanPath = await this._refineLoop(currentPlanPath);
-      this._checkAbort();
-
-      // 7) Implement.
-      this._phase('implement', 0, 'start');
-      const impl = await runImplementer(this._phaseCtx('implementer'), {
-        planPath: finalPlanPath,
-        mode: 'implement',
-      });
-      // Stage the implementer's output so newly-created (untracked) files appear
-      // in `git diff` for the reviewer. Without this, brand-new feature files are
-      // invisible to a plain `git diff`/`git diff HEAD`.
-      await this._stageWorkingTree();
-      await appendAudit(
-        this.pipeline.dir,
-        `Implementation complete: ${oneLine(impl?.summary) || 'done'}.`,
-      );
-      this._phase('implement', 0, 'done');
-      this._checkAbort();
-
-      // 8) Review loop (review -> fix -> review ...).
-      await this._reviewLoop(finalPlanPath);
+      // 5) Resolve the workflow topology + per-project run-config -> ExecutablePlan,
+      //    then dispatch it. The default workflow (wf_default) routes through the
+      //    SAME dispatcher and reproduces today's Plan->Refine->Implement->Review
+      //    (the planner PLAN node is the first dispatched step; clarify above is a
+      //    pre-step, not a plan node).
+      const registry = await loadAgentRegistry();
+      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
+      await appendAudit(this.pipeline.dir, `Workflow: **${plan.name}** (${plan.id}).`);
+      await this._dispatch(plan, { answers });
       this._checkAbort();
 
       // 9) Done.
@@ -321,141 +290,212 @@ class Orchestrator extends EventEmitter {
     return enriched;
   }
 
+  // ── data-driven dispatcher ─────────────────────────────────────────────────
+
   /**
-   * Refine loop. Each cycle runs the refiner producing -vN and a review json.
-   * Stops when the review has no blocking issues. Past maxRefineCycles, emits a
-   * gate question with the open blocking issues; "continue" ends the loop,
-   * "another" runs one more cycle (escalates indefinitely).
-   * Returns the path of the latest refined plan.
+   * Walk the resolved plan's steps in order. A single-node step runs directly; a
+   * multi-node step runs concurrently (Promise.all). After each step completes,
+   * check active feedback loops whose `from` step just ran: if the loop's `from`
+   * node returned blocking issues and the loop's cycle < maxCycles, rewind the
+   * pointer to the loop's `to` step (incrementing the loop cycle) and re-run
+   * forward. When a loop's cycles are exhausted, gate the user (continue/stop)
+   * exactly as the legacy _reviewLoop did.
+   *
+   * Per-loop state lives in `loopState[fb.id] = { cycle }`; the per-step run cycle
+   * passed to nodes is bumped while a loop is replaying through that step (so a
+   * node's artifacts/keys are unique per re-run), defaulting to 1.
+   * @param {object} plan ExecutablePlan
+   * @param {{answers?:Array}} runArgs
    */
-  async _refineLoop(initialPlanPath) {
-    let cycle = 0;
-    let inPlanPath = initialPlanPath;
-    let latestPlanPath = initialPlanPath;
+  async _dispatch(plan, runArgs = {}) {
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    const feedbacks = Array.isArray(plan?.feedbacks) ? plan.feedbacks : [];
+    // Map: source step index -> feedbacks originating there. `from` resolves to the
+    // index of the step containing the from-node; `to` is a step index (tolerate a
+    // node id or a numeric index).
+    const nodeStepIndex = new Map();
+    steps.forEach((group, i) => group.forEach((n) => nodeStepIndex.set(n.nodeId, i)));
+    const toIndex = (ref) =>
+      typeof ref === 'number' ? ref : (nodeStepIndex.has(ref) ? nodeStepIndex.get(ref) : Number(ref) || 0);
+    const fbByFrom = new Map();
+    for (const fb of feedbacks) {
+      const fromIdx = toIndex(fb.from);
+      if (!fbByFrom.has(fromIdx)) fbByFrom.set(fromIdx, []);
+      fbByFrom.get(fromIdx).push({ ...fb, fromIdx, toIdx: toIndex(fb.to), maxCycles: numOr(fb.maxCycles, 1) });
+    }
+    const loopState = {}; // fb.id -> { cycle }
+    // The active run cycle per step index while a loop is replaying through it.
+    const stepCycle = new Array(steps.length).fill(1);
 
-    while (true) {
-      cycle += 1;
-      this._phase('refine', cycle, 'start');
-      const outPlanPath = planPath(this.projectDir, this.baseName, cycle + 1, this.planDatePrefix);
-      const reviewJsonPath = join(this.pipeline.dir, `refine-review-cycle${cycle}.json`);
+    // Shared run state threaded between nodes (the plan/checklist/review paths).
+    const io = {
+      planPath: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix),
+      checklistPath: join(this.pipeline.dir, 'manual-tests-checklist.md'),
+      answers: runArgs.answers || [],
+    };
 
-      const { outPlanPath: writtenPath, review } = await runRefiner(this._phaseCtx('refiner'), {
-        inPlanPath,
-        outPlanPath,
-        cycle,
-        reviewJsonPath,
-      });
+    let i = 0;
+    while (i < steps.length) {
       this._checkAbort();
+      const cycle = stepCycle[i];
+      const results = await this._runStep(steps[i], i, cycle, io);
 
-      const refinedPath = writtenPath || outPlanPath;
-      latestPlanPath = refinedPath;
-      inPlanPath = refinedPath;
-      this._artifact('plan', refinedPath);
-      this._artifact('review', reviewJsonPath);
-
-      const blocking = blockingIssues(review);
-      await appendAudit(
-        this.pipeline.dir,
-        `Refine cycle ${cycle}: ${blocking.length} blocking issue(s); plan \`${rel(
-          this.projectDir,
-          refinedPath,
-        )}\`.`,
-      );
-      this._phase('refine', cycle, 'done');
-
-      if (!hasBlocking(review)) {
-        await appendAudit(this.pipeline.dir, `Refine complete after ${cycle} cycle(s).`);
-        break;
-      }
-
-      if (cycle >= this.maxRefineCycles) {
-        const decision = await this._gate('refine', cycle, blocking);
-        this._checkAbort();
-        if (decision === 'continue') {
+      // Did any feedback originating in THIS step fire?
+      const loops = fbByFrom.get(i) || [];
+      let rewound = false;
+      for (const fb of loops) {
+        const fired = this._loopFired(fb, results); // CONV-3: gate off the loop's `from` node
+        if (!fired) continue;
+        const st = (loopState[fb.id] ||= { cycle: 1 });
+        if (st.cycle < fb.maxCycles) {
+          st.cycle += 1;
+          for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle; // re-runs bump cycle
           await appendAudit(
             this.pipeline.dir,
-            `Refine gate at cycle ${cycle}: user chose to continue with ${blocking.length} open issue(s).`,
+            `Loop ${fb.id}: blocking issues at step ${i}; rewind to step ${fb.toIdx} (cycle ${st.cycle}).`,
           );
+          i = fb.toIdx;
+          rewound = true;
           break;
         }
-        await appendAudit(
-          this.pipeline.dir,
-          `Refine gate at cycle ${cycle}: user approved another cycle.`,
-        );
-        // loop continues
+        // Cycles exhausted -> gate the user exactly like the old review loop.
+        const decision = await this._gate(fb.id, st.cycle, blockingIssues(this._reviewOf(results, fb.from)));
+        this._checkAbort();
+        if (decision === 'another') {
+          st.cycle += 1;
+          for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
+          await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle - 1}: user approved another cycle.`);
+          i = fb.toIdx;
+          rewound = true;
+          break;
+        }
+        await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
       }
+      if (!rewound) i += 1;
     }
-    return latestPlanPath;
   }
 
   /**
-   * Review loop. Run reviewer -> if blocking, run implementer(fix) -> repeat.
-   * Stops when no blocking issues. Past maxReviewCycles, gates like refine.
+   * Run one step. Single node -> direct; >1 node -> Promise.all (PARALLEL).
+   * Returns an array of { node, result } in node order.
    */
-  async _reviewLoop(planPathForFix) {
-    let cycle = 0;
-    const reviewMdPath = reviewPath(this.projectDir, this.baseName, this.planDatePrefix);
-
-    while (true) {
-      cycle += 1;
-      this._phase('review', cycle, 'start');
-      const reviewJsonPath = join(this.pipeline.dir, `impl-review-cycle${cycle}.json`);
-      const { review } = await runReviewer(this._phaseCtx('reviewer'), {
-        planPath: planPathForFix,
-        reviewMdPath,
-        reviewJsonPath,
-        cycle,
-      });
-      this._checkAbort();
-
-      this._artifact('review', reviewMdPath);
-      this._artifact('review', reviewJsonPath);
-
-      const blocking = blockingIssues(review);
-      await appendAudit(
-        this.pipeline.dir,
-        `Review cycle ${cycle}: ${blocking.length} blocking issue(s).`,
-      );
-      this._phase('review', cycle, 'done');
-
-      if (!hasBlocking(review)) {
-        await appendAudit(this.pipeline.dir, `Review passed after ${cycle} cycle(s).`);
-        break;
-      }
-
-      if (cycle >= this.maxReviewCycles) {
-        const decision = await this._gate('review', cycle, blocking);
-        this._checkAbort();
-        if (decision === 'continue') {
-          await appendAudit(
-            this.pipeline.dir,
-            `Review gate at cycle ${cycle}: user chose to continue with ${blocking.length} open issue(s).`,
-          );
-          break;
-        }
-        await appendAudit(
-          this.pipeline.dir,
-          `Review gate at cycle ${cycle}: user approved another cycle.`,
-        );
-      }
-
-      // Fix pass before the next review.
-      this._phase('implement', cycle, 'start');
-      const fix = await runImplementer(this._phaseCtx('implementer'), {
-        planPath: planPathForFix,
-        reviewPath: reviewMdPath,
-        mode: 'fix',
-      });
-      // Re-stage so any new files created by the fix pass are visible to the
-      // next reviewer's `git diff`.
-      await this._stageWorkingTree();
-      this._checkAbort();
-      await appendAudit(
-        this.pipeline.dir,
-        `Fix pass (review cycle ${cycle}): ${oneLine(fix?.summary) || 'applied fixes'}.`,
-      );
-      this._phase('implement', cycle, 'done');
+  async _runStep(group, stepIndex, cycle, io) {
+    // CONV-6: each node reads a FROZEN snapshot of the inbound IO; nodes never
+    // mutate shared state concurrently. Results merge back in node order after all
+    // nodes settle, so the outcome is independent of completion timing.
+    const snapshot = Object.freeze({ ...io });
+    const results = group.length === 1
+      ? [await this._runNode(group[0], stepIndex, cycle, snapshot)]
+      : await Promise.all(group.map((node) => this._runNode(node, stepIndex, cycle, snapshot)));
+    let stageNeeded = false;
+    for (const { node, result } of results) {
+      this._afterNode(node, result, io);                 // deterministic, node order
+      if (node.runnerType === 'producer' && node.key === 'implementer') stageNeeded = true;
     }
+    // CONV-6: stage ONCE, AWAITED, after the step's producers — so a following
+    // reviewer's `git diff` sees newly-written files (legacy _reviewLoop staged
+    // after every implement pass).
+    if (stageNeeded) await this._stageWorkingTree();
+    return results;
+  }
+
+  /**
+   * Execute a single plan node through its runnerType, threading the shared IO
+   * paths in/out. Records the node step (parallel-safe) and tags all emits.
+   */
+  async _runNode(node, stepIndex, cycle, io) {
+    this._nodeStep(node, stepIndex, cycle, 'start');
+    // Per-cycle artifact paths so loop re-runs never clobber prior outputs.
+    const ctx = this._nodeCtx(node, { stepIndex, cycle });
+    Object.assign(ctx, this._nodeIo(node, cycle, io));
+    let result;
+    try {
+      const runner = this._runners[node.runnerType];
+      if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
+      result = await runner(ctx);
+    } finally {
+      this._nodeStep(node, stepIndex, cycle, 'done');
+    }
+    // CONV-6: no shared-IO mutation here — _runStep merges results in node order.
+    return { node, result };
+  }
+
+  /** Compute the per-node IO fields the runners read, from the shared run state. */
+  _nodeIo(node, cycle, io) {
+    switch (node.key) {
+      case 'planner':
+        return { planFilePath: io.planPath, baseName: this.baseName, answers: io.answers };
+      case 'refiner': {
+        const outPlanPath = planPath(this.projectDir, this.baseName, cycle + 1, this.planDatePrefix);
+        return {
+          inPlanPath: io.planPath,
+          outPlanPath,
+          reviewJsonPath: join(this.pipeline.dir, `refine-review-cycle${cycle}.json`),
+          cycle,
+        };
+      }
+      case 'implementer':
+        return {
+          planPath: io.planPath,
+          reviewPath: io.reviewMdPath,
+          mode: io.reviewMdPath ? 'fix' : 'implement',
+          cycle,
+        };
+      case 'manualTestsChecklist':
+        return { planPath: io.planPath, checklistPath: io.checklistPath };
+      case 'reviewer':
+        return {
+          planPath: io.planPath,
+          reviewMdPath: reviewPath(this.projectDir, this.baseName, this.planDatePrefix),
+          reviewJsonPath: join(this.pipeline.dir, `impl-review-cycle${cycle}.json`),
+          cycle,
+        };
+      case 'manualWebUiTesting':
+        return {
+          checklistPath: io.checklistPath,
+          reviewMdPath: join(this.pipeline.dir, `webui-review-cycle${cycle}.md`),
+          reviewJsonPath: join(this.pipeline.dir, `webui-review-cycle${cycle}.json`),
+          cycle,
+        };
+      default:
+        return { cycle };
+    }
+  }
+
+  /** Fold a node's result back into shared run state + emit artifacts. */
+  _afterNode(node, result, io) {
+    if (!result) return;
+    if (result.planPath) { io.planPath = result.planPath; this._artifact('plan', result.planPath); }
+    if (result.outPlanPath) { io.planPath = result.outPlanPath; this._artifact('plan', result.outPlanPath); }
+    if (result.checklistPath) { io.checklistPath = result.checklistPath; this._artifact('checklist', result.checklistPath); }
+    if (result.review) {
+      // CONV-5: remember the review md so a loop rewind runs the implementer in
+      // `fix` mode against it (see _nodeIo 'implementer').
+      io.reviewMdPath = result.reviewMdPath ?? io.reviewMdPath;
+    }
+    // CONV-6: working-tree staging is awaited ONCE per step in _runStep (not here),
+    // so parallel producers can't race git and the reviewer always sees new files.
+  }
+
+  /** True if the loop's `from` node returned a blocking verdict (CONV-3). */
+  _loopFired(fb, results) {
+    const review = this._reviewOf(results, fb.from);
+    return review ? hasBlocking(review) : false;
+  }
+
+  /**
+   * CONV-3: the verdict of the loop's ORIGINATING node, resolved by `nodeId`,
+   * REGARDLESS of runnerType — so a producer self-loop (the refiner `s1_0->s1_0`)
+   * gates on its own review, reproducing the legacy `_refineLoop`. `loopSource` is
+   * a validation/UI hint, not the runtime gate selector. Falls back to synthesizing
+   * a review from a blocked status when the node exposed issues but no full review.
+   */
+  _reviewOf(results, fromNodeId) {
+    const r = results.find((x) => x.node.nodeId === fromNodeId);
+    if (!r) return null;
+    return r.result?.review || (r.result?.status === 'blocked'
+      ? { issues: (r.result.issues || []).map((i) => ({ severity: i.severity || 'major' })), summary: r.result.summary || '' }
+      : null);
   }
 
   // ── question / gate plumbing ───────────────────────────────────────────────
@@ -546,8 +586,92 @@ class Orchestrator extends EventEmitter {
     };
   }
 
+  /**
+   * Stable step key for a node occurrence. Parallel nodes in the same step share
+   * stepIndex but differ by nodeId; loop re-runs differ by cycle. Format keeps the
+   * legacy `phase#cycle` readability while staying unique per node:
+   *   "<stepIndex>:<nodeId>#<cycle>"  (cycle omitted when 1 and not a loop re-run)
+   */
+  _stepKeyFor(node, stepIndex, cycle) {
+    const c = Number(cycle) > 1 ? `#${cycle}` : '';
+    return `${stepIndex}:${node.nodeId}${c}`;
+  }
+
+  /**
+   * Node execution context. Extends the legacy _phaseCtx shape but is keyed by the
+   * node (model/effort come from the resolved plan node, not a role lookup) and
+   * tags every emit + cost with { nodeId, stepIndex, cycle } so parallel/looped
+   * emits are attributable. `node.agentKeyForPrompt` lets a node reuse an existing
+   * agent's prompt body (the default-workflow nodes set this to their role).
+   * @param {object} node    plan Node { nodeId, key, runnerType, model, effort, ... }
+   * @param {{stepIndex:number, cycle:number}} pos
+   */
+  _nodeCtx(node, pos = {}) {
+    const stepIndex = Number(pos.stepIndex) || 0;
+    const cycle = Number(pos.cycle) > 0 ? Number(pos.cycle) : 1;
+    const stepKey = this._stepKeyFor(node, stepIndex, cycle);
+    return {
+      projectDir: this.projectDir,
+      pipelineDir: this.pipeline.dir,
+      taskPrompt: this.pipeline.promptText,
+      toolInstruction: this.toolInstruction,
+      agentPrompts: this.agentPrompts,
+      checkpointRef: this.checkpointRef,
+      signal: this.abort.signal,
+      node,
+      nodeId: node.nodeId,
+      stepIndex,
+      cycle,
+      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey }),
+      claudeOpts: {
+        bin: this.claude.bin,
+        permissionMode: this.claude.permissionMode,
+        model: node.model || this.claude.model, // per-node, falling back to global
+        effort: node.effort,                     // per-node effort (undefined when unset)
+        mock: this.claude.mock,
+      },
+    };
+  }
+
+  /**
+   * Record/transition a node's step (parallel-safe analogue of _recordStep). The
+   * key is the node-derived stepKey so concurrent nodes never collide. On 'start'
+   * it does NOT pause sibling clocks (parallel nodes run simultaneously); on a
+   * terminal marker it folds just this node's clock.
+   */
+  _nodeStep(node, stepIndex, cycle, status) {
+    const key = this._stepKeyFor(node, stepIndex, cycle);
+    const now = new Date().toISOString();
+    let step = this.state.steps.find((s) => s.key === key);
+    if (!step) {
+      step = {
+        key, phase: node.key, nodeId: node.nodeId, stepIndex, cycle,
+        status, startedAt: now, updatedAt: now, activeMs: 0, runningSince: null,
+      };
+      this.state.steps.push(step);
+    } else {
+      step.status = status;
+      step.updatedAt = now;
+    }
+    if (status === 'start') this._clockResume(key);
+    else this._clockPause(key);
+    this.state.totalActiveMs = sumStepActive(this.state.steps);
+    // CONV-4: drive the live-UI stepper. Mirror the legacy `_phase` emit
+    // (orchestrator.mjs:710-719) but WITHOUT its `_recordStep` call (this method
+    // already records the step). `node.uiPhase` is stamped by resolveWorkflow
+    // (Phase 2 Task 6); on a parallel step the last-started node wins the scalar
+    // phase (per-node attribution lives in state.steps[]). Confirm the 'phase'
+    // payload against app.js `onPhase` (:308) before landing.
+    this.state.phase = node.uiPhase || node.key;
+    this.state.cycle = cycle;
+    this.state.updatedAt = now;
+    this._emit('phase', { phase: this.state.phase, cycle, status });
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */
-  _onAgentEvent(role, e) {
+  _onAgentEvent(role, e, attr = null) {
     if (!e) return;
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
@@ -557,14 +681,14 @@ class Orchestrator extends EventEmitter {
     const cost = e.costUsd != null
       ? Number(e.costUsd)
       : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
-    if (Number.isFinite(cost)) this._recordCost(cost);
+    if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (e.raw && e.raw.type === 'result' && !this.claude.mock) {
-      this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)');
+      this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)', attr);
     }
 
     const text = (e.text || '').trim();
     if (text) {
-      this._log(role, 'info', text);
+      this._log(role, 'info', text, attr);
       return;
     }
     // No human-readable text. Rather than echo the bare stream-json envelope
@@ -573,7 +697,7 @@ class Orchestrator extends EventEmitter {
     // events — tool_result echoes (`user`) and the init `system` event — carry
     // no information and are dropped.
     for (const call of describeToolUses(e.raw, this.projectDir)) {
-      this._log(role, 'debug', `→ ${call}`);
+      this._log(role, 'debug', `→ ${call}`, attr);
     }
   }
 
@@ -750,9 +874,10 @@ class Orchestrator extends EventEmitter {
    * carries the figure.
    * @param {number} costUsd
    */
-  _recordCost(costUsd) {
+  _recordCost(costUsd, stepKey = null) {
     if (!Number.isFinite(costUsd) || costUsd < 0) return;
-    const key = this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase;
+    const key = stepKey
+      || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase);
     const step = this.state.steps.find((s) => s.key === key);
     if (step) step.costUsd = roundUsd((step.costUsd || 0) + costUsd);
     // Derive the pipeline total from the per-step figures so it ALWAYS equals
@@ -811,8 +936,13 @@ class Orchestrator extends EventEmitter {
     this._emit('state', this.getState());
   }
 
-  _log(source, level, text) {
+  _log(source, level, text, attr = null) {
     const evt = { source, level, text, ts: new Date().toISOString() };
+    if (attr) {
+      if (attr.nodeId != null) evt.nodeId = attr.nodeId;
+      if (attr.stepIndex != null) evt.stepIndex = attr.stepIndex;
+      if (attr.cycle != null) evt.cycle = attr.cycle;
+    }
     this._emit('log', evt);
   }
 
@@ -892,11 +1022,6 @@ function firstLine(text) {
     if (t) return t;
   }
   return '';
-}
-
-function oneLine(text) {
-  if (!text) return '';
-  return String(text).replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 function rel(base, p) {
