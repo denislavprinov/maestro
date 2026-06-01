@@ -121,3 +121,25 @@ test('index.html exposes the workflow select + dynamic node/feedback containers'
     assert.ok(indexHtml.includes(`data-role="${role}"`), `lost default stage row for ${role}`);
   }
 });
+
+test('renderModelEffortPair fills a model dropdown (default + models + add) and filters efforts by model', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  // build a bare pair of selects + caption
+  const modelSel = doc.createElement('select');
+  const effortSel = doc.createElement('select');
+  const caption = doc.createElement('small');
+  // seed app state with two models
+  window.__np._setModels([
+    { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'max'] },
+    { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] },
+  ]);
+  window.__np.renderModelEffortPair(modelSel, effortSel, caption, { model: 'claude-haiku-4-5', effort: 'high' });
+  // model dropdown: '(default model)' + 2 models + '+ Add model…' = 4 options
+  assert.equal(modelSel.options.length, 4);
+  assert.equal(modelSel.value, 'claude-haiku-4-5');
+  // effort dropdown filtered to Haiku's two efforts + the '(default effort)' row
+  assert.deepEqual([...effortSel.options].map((o) => o.value), ['', 'medium', 'high']);
+  assert.equal(effortSel.value, 'high');
+  assert.match(caption.textContent, /Haiku 4\.5 · high/);
+});

@@ -64,6 +64,10 @@ const el = {
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
+  workflowSelect: $('#workflowSelect'),
+  wfDefaultStages: $('#wf-default-stages'),
+  wfNodeConfig: $('#wf-node-config'),
+  wfFeedbackConfig: $('#wf-feedback-config'),
 
   history: $('#history'),
   refreshHistory: $('#refresh-history'),
@@ -988,44 +992,48 @@ if (typeof window !== 'undefined') {
     buildNodeConfigRows,
     buildFeedbackRows,
     defaultEffortFor,
+    renderModelEffortPair,
+    _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
   });
 }
 
-function renderStepConfigs() {
-  // Config always edits the NEXT run, so selectors are never locked. (The
-  // multi-run engine in Task 3 owns per-run status; there is no global run
-  // status to gate on anymore.)
-  const locked = false;
+// Paint one model+effort select pair (and its caption) from a saved selection
+// {model,effort}. Shared by the legacy default-stage rows and the dynamic
+// per-node rows so the dropdown contents + effort filtering live in one place.
+function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
+  // Model dropdown: "(default model)" + every model + "+ Add model…".
+  modelSel.innerHTML = '';
+  modelSel.appendChild(option('', '(default model)'));
+  state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom ? ' ·custom' : ''))));
+  modelSel.appendChild(option('__add__', '+ Add model…'));
+  modelSel.value = sel.model || '';
 
+  // Effort dropdown: filtered to the selected model's supported efforts.
+  const model = modelById(modelSel.value);
+  effortSel.innerHTML = '';
+  effortSel.appendChild(option('', '(default effort)'));
+  (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
+  effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
+
+  modelSel.disabled = false;
+  effortSel.disabled = !model; // no model picked => effort is meaningless
+
+  if (caption) {
+    const mLabel = model ? model.label : 'default model';
+    caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`;
+  }
+}
+
+function renderStepConfigs() {
+  // The Default workflow's four rows are keyed by data-role; paint each from the
+  // legacy per-role config (state.config.steps). Config always edits the NEXT
+  // run, so selectors are never locked.
   for (const role of STEP_ROLES) {
     const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
     const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
     const caption = document.querySelector(`.step-current[data-role="${role}"]`);
     if (!modelSel || !effortSel) continue;
-
-    const sel = state.config.steps[role] || {};
-
-    // Model dropdown: "(default model)" + every model + "+ Add model…".
-    modelSel.innerHTML = '';
-    modelSel.appendChild(option('', '(default model)'));
-    state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom ? ' ·custom' : ''))));
-    modelSel.appendChild(option('__add__', '+ Add model…'));
-    modelSel.value = sel.model || '';
-
-    // Effort dropdown: filtered to the selected model's supported efforts.
-    const model = modelById(modelSel.value);
-    effortSel.innerHTML = '';
-    effortSel.appendChild(option('', '(default effort)'));
-    (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
-    effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
-
-    modelSel.disabled = locked;
-    effortSel.disabled = locked || !model; // no model picked => effort is meaningless
-
-    if (caption) {
-      const mLabel = model ? model.label : 'default model';
-      caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`;
-    }
+    renderModelEffortPair(modelSel, effortSel, caption, state.config.steps[role] || {});
   }
 }
 
