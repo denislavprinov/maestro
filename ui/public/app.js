@@ -2411,7 +2411,12 @@ el.form.addEventListener('submit', async (e) => {
 // subscribe would double-replay this run's buffer on the next hello.
 function beginRun(runId, projectDir, title) {
   const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
-  r.configSnapshot = JSON.parse(JSON.stringify({ steps: state.config.steps, models: state.models, workflowId: state.workflowId }));
+  r.configSnapshot = JSON.parse(JSON.stringify({
+    steps: state.config.steps,
+    models: state.models,
+    workflowId: state.workflowId,
+    nodes: (state.config.workflows && state.config.workflows[state.workflowId] && state.config.workflows[state.workflowId].nodes) || {},
+  }));
   hideViewer();
   updateNavCounts();
   showView('running');
@@ -2928,21 +2933,22 @@ function buildRunCard(r) {
 // Map each agent role's snapshot (model label + effort) onto the matching
 // stage's sublabel. The card steps use phase keys; map them to config roles.
 const STEP_TO_ROLE = { plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer', 'manual-checklist': 'manualTestsChecklist', 'manual-web': 'manualWebUiTesting' };
+// Map each node's snapshot (model label + effort) onto its stage sublabel, keyed
+// by node id. The snapshot's node config lives under workflows[workflowId].nodes.
 function fillStageSublabels(node, snap) {
   const models = Array.isArray(snap.models) ? snap.models : [];
-  const steps = snap.steps || {};
-  const labelFor = (role) => {
-    const sel = steps[role] || {};
+  const nodeCfg = (snap.nodes && typeof snap.nodes === 'object') ? snap.nodes : {};
+  const labelFor = (nodeId) => {
+    const sel = nodeCfg[nodeId] || {};
     const m = models.find((x) => x.id === sel.model);
     const modelLabel = m ? m.label : 'default';
     return sel.effort ? `${modelLabel} · ${sel.effort}` : modelLabel;
   };
-  for (const stage of node.querySelectorAll('.stage[data-step]')) {
-    const step = stage.dataset.step;
-    const role = STEP_TO_ROLE[step];
-    if (!role) continue; // preflight/done keep static sublabel
-    const sub = stage.querySelector('.sub');
-    if (sub) sub.textContent = labelFor(role);
+  for (const el of node.querySelectorAll('.stage[data-node-id], .stage-node[data-node-id]')) {
+    const id = el.dataset.nodeId;
+    if (id === 'preflight' || id === 'done') continue; // bookends keep their static sublabel
+    const sub = el.querySelector('.sub'); // parallel rows have no .sub -> skip
+    if (sub) sub.textContent = labelFor(id);
   }
 }
 
