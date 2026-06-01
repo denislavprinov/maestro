@@ -2682,6 +2682,8 @@ async function loadHistDetail(projectDir, id, detail) {
     // alongside a stale error.
     const stale = detail.querySelector('.detail-error');
     if (stale) stale.remove();
+    const host = detail.querySelector('.stages.compact');
+    if (host) buildStepper(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -2708,61 +2710,69 @@ async function loadHistDetail(projectDir, id, detail) {
   }
 }
 
-// Tint the 6-stage stepper inside a history card's .hist-detail from a saved
-// state ({ phase, status, cycle }). Driven by the reached phase, not live events.
+// Tint a history card's stepper from saved state ({ phase, status, cycle, steps,
+// stepper }). Built DOM is addressed by node id; coloring is driven by the
+// reached cell, not live events.
 function paintHistStepper(detail, st) {
+  const manifest = manifestFor(st.stepper);
   const status = String(st.status || '').toLowerCase();
-  const key = normalizePhase(st.phase);
-  const reached = key ? STEP_ORDER.indexOf(key) : -1;
+  const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed';
   const isDone = status === 'done' || status === 'complete' || status === 'completed';
 
-  const durs = durByStage(st.steps, 0, false); // finalized only; now=0 is unused when live=false
+  const reached = histReachedCell(manifest, st);
+  const durs = durByNode(st.steps, 0, false);
+  const costs = costByNode(st.steps);
 
-  for (const stage of detail.querySelectorAll('.stage[data-step]')) {
-    const idx = STEP_ORDER.indexOf(stage.dataset.step);
+  const stages = detail.querySelectorAll('.stages.compact > .stage');
+  manifest.steps.forEach((cell, cellIdx) => {
+    const stage = stages[cellIdx];
+    if (!stage) return;
     const numEl = stage.querySelector('.num');
     stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
     if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
 
-    let kind = null; // 'done' | 'stop' | null(pending)
-    if (isDone) {
-      kind = 'done'; // DONE: every stage complete (incl. the Done step).
-    } else if (idx < reached) {
-      kind = 'done'; // stages before the reached step completed.
-    } else if (idx === reached) {
-      // STOPPED/ERROR halt at the reached step; otherwise mark it reached/done.
-      kind = (status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed') ? 'stop' : 'done';
-    }
-    // idx > reached and idx === doneIdx (when not done) stay pending.
+    let kind = null;
+    if (isDone) kind = 'done';
+    else if (cellIdx < reached) kind = 'done';
+    else if (cellIdx === reached) kind = halted ? 'stop' : 'done';
 
-    if (kind === 'done') {
-      stage.classList.add('s-done');
-      if (numEl) numEl.classList.add('n-green');
-    } else if (kind === 'stop') {
-      stage.classList.add('s-stop');
-      if (numEl) numEl.classList.add('n-red');
+    if (kind) {
+      const [sCls, nCls] = STAGE_NUM[kind];
+      stage.classList.add(sCls);
+      if (numEl) numEl.classList.add(nCls);
     } else if (numEl) {
-      numEl.classList.add('n-grey'); // pending
+      numEl.classList.add('n-grey');
     }
 
-    // Single saved `cycle` scalar — show on refine/review only if present. We do
-    // NOT fabricate separate refine/review counts (no data source for them).
-    const cyEl = stage.querySelector('.cycle');
-    if (cyEl) cyEl.textContent = (CYCLING_PHASES.has(stage.dataset.step) && st.cycle) ? `#${st.cycle}` : '';
-
-    const durEl = stage.querySelector('.dur');
-    if (durEl) {
-      const d = durs[stage.dataset.step];
-      durEl.textContent = d != null ? fmtDuration(d) : '';
+    for (const node of cell.nodes) {
+      const scope = stage.querySelector(`.stage-node[data-node-id="${node.id}"]`) || stage;
+      const cyEl = scope.querySelector('.cycle');
+      if (cyEl) cyEl.textContent = (node.cycles && st.cycle) ? `#${st.cycle}` : '';
+      const durEl = scope.querySelector('.dur');
+      if (durEl) { const d = durs[node.id]; durEl.textContent = d != null ? fmtDuration(d) : ''; }
+      const costEl = scope.querySelector('.cost');
+      if (costEl) {
+        const c = costs[node.id];
+        costEl.textContent = c != null ? fmtUsd(c) : '';
+        costEl.title = c != null ? estTitle(c) : '';
+      }
     }
+  });
+}
 
-    const costEl = stage.querySelector('.cost'); // COST: per-stage figure
-    if (costEl) {
-      const c = costByStage(st.steps)[stage.dataset.step];
-      costEl.textContent = c != null ? fmtUsd(c) : '';
-      costEl.title = c != null ? estTitle(c) : '';
-    }
+// Highest cell index the saved run reached. Uses steps[].nodeId when present
+// (new runs), else the scalar phase mapped through the manifest (old runs).
+function histReachedCell(manifest, st) {
+  let reached = -1;
+  const steps = Array.isArray(st.steps) ? st.steps : [];
+  for (const s of steps) {
+    const loc = locateInManifest(manifest, { nodeId: s.nodeId, phase: s.phase });
+    if (loc.cellIdx > reached) reached = loc.cellIdx;
   }
+  if (reached < 0 && st.phase) {
+    reached = locateInManifest(manifest, { phase: st.phase }).cellIdx;
+  }
+  return reached;
 }
 
 function renderHistoryError(message) {

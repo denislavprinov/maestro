@@ -170,7 +170,7 @@ test('expanding a card toggles aria-expanded, unhides detail, tints stepper from
   // Tinted stepper: phase=implement, status=stopped => preflight/plan/refine done,
   // implement stopped, review/done pending.
   const byStep = {};
-  for (const s of detail.querySelectorAll('.stage[data-step]')) byStep[s.dataset.step] = s;
+  for (const s of detail.querySelectorAll('.stage[data-node-id]')) byStep[s.dataset.nodeId] = s;
   assert.ok(byStep.preflight.classList.contains('s-done'), 'preflight done');
   assert.ok(byStep.plan.classList.contains('s-done'), 'plan done');
   assert.ok(byStep.refine.classList.contains('s-done'), 'refine done');
@@ -241,7 +241,7 @@ test('keyboard: Enter on the head toggles expand', async () => {
 
   // DONE state tints every stage s-done.
   const detail = doc.querySelector('#history .hist-detail');
-  const stages = [...detail.querySelectorAll('.stage[data-step]')];
+  const stages = [...detail.querySelectorAll('.stage[data-node-id]')];
   assert.ok(stages.every((s) => s.classList.contains('s-done')), 'DONE tints all stages done');
 });
 
@@ -313,4 +313,61 @@ test('history load error renders a .hist-empty div (no <li>)', async () => {
   assert.ok(empty, '.hist-empty div present on error');
   assert.match(empty.textContent, /Could not load history: boom/);
   assert.equal(doc.querySelectorAll('#history li').length, 0, 'no <li> in error state');
+});
+
+const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
+
+test('History card renders the persisted manifest nodes on expand', async () => {
+  const customState = {
+    status: 'stopped', phase: 'refine', cycle: 1, steps: [],
+    stepper: {
+      version: 1,
+      steps: [
+        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+        { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
+        { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
+        { kind: 'agents', nodes: [{ id: 's4_0', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', color: 'blue', cycles: false }] },
+        { kind: 'agents', nodes: [{ id: 's5_0', uiPhase: 'manual-web', label: 'Manual web UI testing', color: 'violet', cycles: false }] },
+        { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+      ],
+    },
+  };
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: customState, auditMarkdown: '' }) });
+      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Custom', status: 'stopped', startedAt: '2026-06-02T00:00:00Z' }]);
+      return null;
+    },
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const detail = window.document.querySelector('#history .hist-card .hist-detail');
+  const labels = [...detail.querySelectorAll('.stage .lbl b, .stage .stage-node b')].map((e) => e.textContent);
+  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine Plan', 'Manual Tests Checklist', 'Manual web UI testing', 'Done']);
+  // stopped at refine (cell idx 2) -> that cell is s-stop, earlier done.
+  assert.ok(detail.querySelector('.stage[data-node-id="s1_0"]').classList.contains('s-stop'));
+  assert.ok(detail.querySelector('.stage[data-node-id="s0_0"]').classList.contains('s-done'));
+});
+
+test('History card without a saved manifest still renders the legacy six', async () => {
+  const legacyState = { status: 'done', phase: 'done', steps: [] }; // no .stepper
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: legacyState, auditMarkdown: '' }) });
+      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Old', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
+      return null;
+    },
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const detail = window.document.querySelector('#history .hist-card .hist-detail');
+  const labels = [...detail.querySelectorAll('.stage .lbl b')].map((e) => e.textContent);
+  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
+  assert.ok([...detail.querySelectorAll('.stage')].every((s) => s.classList.contains('s-done')));
 });
