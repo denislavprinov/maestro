@@ -526,23 +526,300 @@ async function deleteWorkflow(id) {
   return true;
 }
 
-// Replaced by the full composer module in the next task.
-let _composerStubInit = false;
-function initComposer() {
-  if (_composerStubInit) return;
-  _composerStubInit = true;
-  const palette = document.getElementById('composer-palette');
-  if (!palette) return;
-  fetchAgents().then((res) => {
-    palette.innerHTML = '';
-    mergePalette(res).forEach((ag) => {
-      const p = document.createElement('div');
-      p.className = 'agent-pill';
-      p.dataset.key = ag.key;
-      p.textContent = ag.displayName;
-      palette.appendChild(p);
-    });
+// ---------------------------------------------------------------------------
+// Pipeline Composer module (ported from docs/pipeline-composer/mockups).
+// Pure serialization lives in composer-core.mjs; this is DOM wiring only.
+// Manual-only behaviors (no jsdom layout / no HTML5 DnD): paintWires geometry,
+// drag pills onto strips/cols, hover-loop link mode, read-only preview paint.
+// SELF-LOOP NOTE: the default's refine loop is a SAME-NODE self-loop (fb_refine
+// s1_0->s1_0). The mockup's loops always spanned distinct nodes, so the bezier/arc
+// path degenerates to a near-invisible zero-width spike for from===to. When porting
+// paintWires, special-case `fb.from === fb.to` (or same-column endpoints) to draw a
+// small lateral lobe with its delete-X offset clear of the node, and add "Reset shows
+// a visible refine self-loop on the Refine node" to the manual checklist below.
+// ---------------------------------------------------------------------------
+const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
+const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
+const COMPOSER_SEQ = '#B7B7BC';
+
+let _composerReady = false;
+const composer = {
+  agents: {},          // key -> {key,displayName,description,color,icon}
+  steps: [],           // Array<Array<{id,key}>> (local ids)
+  feedbacks: [],       // Array<{from,to}> (local ids)
+  saved: [],           // WorkflowTemplate[] from the server
+  linkFrom: null,
+  dragKey: null,
+  uid: 1,
+  els: {},
+};
+const composerMk = (key) => ({ id: 'n' + composer.uid++, key });
+const composerAgent = (key) => composer.agents[key] || { displayName: key, description: '', color: 'blue', icon: '' };
+
+async function initComposer() {
+  if (_composerReady) { composerDrawWires(); return; }
+  _composerReady = true;
+  composer.els = {
+    flow: document.getElementById('composer-flow'),
+    wires: document.getElementById('composer-wires'),
+    palette: document.getElementById('composer-palette'),
+    banner: document.getElementById('composer-link-banner'),
+    linkText: document.getElementById('composer-link-text'),
+    list: document.getElementById('composer-saved-list'),
+    count: document.getElementById('composer-saved-count'),
+  };
+  if (!composer.els.flow) return;
+
+  // toolbar + global listeners (bound once)
+  document.getElementById('composer-reset').addEventListener('click', () => { composerExitLink(); composerReset(); });
+  document.getElementById('composer-clear').addEventListener('click', () => { composerExitLink(); composer.steps = []; composer.feedbacks = []; composerRefresh(); });
+  document.getElementById('composer-save').addEventListener('click', composerSave);
+  document.getElementById('composer-link-cancel').addEventListener('click', composerExitLink);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') composerExitLink(); });
+  composer.els.wires.addEventListener('click', (e) => {
+    const g = e.target.closest('.fb-del'); if (!g) return;
+    composer.feedbacks.splice(+g.dataset.fb, 1); composerRefresh();
   });
+  let rt;
+  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(composerDrawWires, 80); });
+  if (window.ResizeObserver) new window.ResizeObserver(() => composerDrawWires()).observe(composer.els.flow);
+
+  // palette from the registry (or embedded fallback)
+  const agentsRes = await fetchAgents();
+  const pal = mergePalette(agentsRes);
+  composer.agents = {};
+  pal.forEach((a) => { composer.agents[a.key] = a; });
+  composerBuildPalette(pal);
+
+  // initial canvas = the saved default workflow (4-step)
+  await composerReset();
+  await composerLoadSaved();
+}
+
+/* ---- palette ---- */
+function composerBuildPalette(pal) {
+  const palette = composer.els.palette;
+  palette.innerHTML = '';
+  pal.forEach((ag) => {
+    const p = document.createElement('div');
+    p.className = 'agent-pill';
+    p.draggable = true;
+    p.dataset.key = ag.key;
+    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}`;
+    p.addEventListener('dragstart', (e) => {
+      composer.dragKey = ag.key; p.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
+    });
+    p.addEventListener('dragend', () => {
+      composer.dragKey = null; p.classList.remove('dragging');
+      document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
+    });
+    palette.appendChild(p);
+  });
+}
+
+/* ---- node ---- */
+function composerNodeEl(a) {
+  const ag = composerAgent(a.key);
+  const d = document.createElement('div');
+  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
+  d.innerHTML =
+    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
+    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>` +
+    `<div class="nx" title="Remove agent">✕</div>` +
+    `<div class="loop" title="Draw a feedback loop from this agent">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
+  d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
+  d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
+  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { composerAddFeedback(composer.linkFrom, a.id); composerExitLink(); } });
+  return d;
+}
+
+/* ---- drop helpers ---- */
+function composerAllow(e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }
+function composerMakeStrip(index, full) {
+  const s = document.createElement('div');
+  s.className = 'strip' + (full ? ' full' : '');
+  s.addEventListener('dragover', (e) => { composerAllow(e); s.classList.add('over'); });
+  s.addEventListener('dragleave', () => s.classList.remove('over'));
+  s.addEventListener('drop', (e) => {
+    e.preventDefault(); s.classList.remove('over');
+    if (!composer.dragKey) return;
+    composer.steps.splice(index, 0, [composerMk(composer.dragKey)]); composer.dragKey = null; composerRefresh();
+  });
+  return s;
+}
+function composerMakeCol(stepIdx) {
+  const col = document.createElement('div');
+  col.className = 'col';
+  const tag = document.createElement('div'); tag.className = 'col-tag';
+  tag.innerHTML = `Step ${stepIdx + 1}` + (composer.steps[stepIdx].length > 1 ? ' · <em>parallel</em>' : '');
+  col.appendChild(tag);
+  composer.steps[stepIdx].forEach((a) => col.appendChild(composerNodeEl(a)));
+  const hint = document.createElement('div'); hint.className = 'par-hint'; hint.textContent = '+ run in parallel';
+  col.appendChild(hint);
+  col.addEventListener('dragover', (e) => { composerAllow(e); col.classList.add('over'); });
+  col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
+  col.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
+    if (!composer.dragKey) return;
+    composer.steps[stepIdx].push(composerMk(composer.dragKey)); composer.dragKey = null; composerRefresh();
+  });
+  return col;
+}
+
+/* ---- render ---- */
+function composerRefresh() {
+  const flow = composer.els.flow;
+  [...flow.querySelectorAll(':scope > .strip, :scope > .col, :scope > .empty-flow')].forEach((e) => e.remove());
+  if (composer.steps.length === 0) {
+    flow.appendChild(composerMakeStrip(0, true));
+    const empty = document.createElement('div'); empty.className = 'empty-flow';
+    empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14" stroke-linecap="round"/></svg>' +
+      'Drag an agent here to begin<small>Place agents left-to-right for sequence · stack them for parallel steps</small>';
+    flow.appendChild(empty);
+  } else {
+    for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
+    flow.appendChild(composerMakeStrip(composer.steps.length));
+  }
+  requestAnimationFrame(composerDrawWires);
+}
+
+/* ---- mutations ---- */
+function composerRemoveNode(id) {
+  for (let i = 0; i < composer.steps.length; i++) {
+    const j = composer.steps[i].findIndex((a) => a.id === id);
+    if (j >= 0) { composer.steps[i].splice(j, 1); if (composer.steps[i].length === 0) composer.steps.splice(i, 1); break; }
+  }
+  composer.feedbacks = composer.feedbacks.filter((f) => f.from !== id && f.to !== id);
+  if (composer.linkFrom === id) composerExitLink();
+  composerRefresh();
+}
+function composerAddFeedback(from, to) {
+  if (from === to) return;
+  if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
+  composerRefresh();
+}
+
+/* ---- feedback linking mode ---- */
+function composerToggleLink(id) { if (composer.linkFrom === id) composerExitLink(); else composerEnterLink(id); }
+function composerEnterLink(id) {
+  composer.linkFrom = id;
+  composer.els.banner.hidden = false;
+  const a = composer.steps.flat().find((n) => n.id === id);
+  composer.els.linkText.textContent = `Loop from "${composerAgent(a.key).displayName}" → click a target agent`;
+  composer.els.flow.querySelectorAll('.node').forEach((n) => {
+    n.classList.toggle('linking', n.dataset.id === id);
+    n.classList.toggle('link-target', n.dataset.id !== id);
+  });
+}
+function composerExitLink() {
+  composer.linkFrom = null;
+  if (composer.els.banner) composer.els.banner.hidden = true;
+  if (composer.els.flow) composer.els.flow.querySelectorAll('.node').forEach((n) => n.classList.remove('linking', 'link-target'));
+}
+
+/* ---- wires (shared renderer; ns-namespaced markers) ---- */
+function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
+  opts = opts || {};
+  const ns = opts.ns || 'main';
+  if (flowEl.offsetParent === null) return; // view hidden — skip
+  const rect = (id) => {
+    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
+    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
+  };
+  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
+  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
+  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
+  let s = `<defs>` +
+    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
+    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker></defs>`;
+  for (let i = 0; i < steps.length - 1; i++) {
+    steps[i].forEach((a) => {
+      steps[i + 1].forEach((b) => {
+        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
+        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
+        const dx = Math.max(36, (x2 - x1) * 0.5);
+        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${COMPOSER_SEQ}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#arrSeq-${ns})"/>`;
+      });
+    });
+  }
+  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
+  let maxBottom = 0;
+  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
+  feedbacks.forEach((fb, idx) => {
+    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
+    const p = posOf(fb.from);
+    const below = p.len > 1 && p.i === p.len - 1;
+    let sx, sy, tx, ty, rail, mx, my;
+    if (below) {
+      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
+      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
+      my = rail - (rail - Math.max(sy, ty)) * 0.18;
+    } else {
+      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
+      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
+      my = rail + (Math.min(sy, ty) - rail) * 0.18;
+    }
+    mx = (sx + tx) / 2;
+    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}" fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
+    if (opts.del) {
+      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
+        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
+        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
+    }
+  });
+  wiresEl.innerHTML = s;
+}
+function composerDrawWires() {
+  if (!composer.els.flow) return;
+  composerPaintWires(composer.els.flow, composer.els.wires, composer.steps, composer.feedbacks, { ns: 'main', del: true });
+}
+
+/* ---- toolbar actions (server-wired) ---- */
+async function composerReset() {
+  const tpl = await getWorkflow('wf_default');
+  const model = defaultTopologyFromTemplate(tpl, composerMk);
+  composer.steps = model.steps;
+  composer.feedbacks = model.feedbacks;
+  composerRefresh();
+}
+async function composerSave() {
+  if (!composer.steps.length) return;
+  composerExitLink();
+  const name = (window.prompt('Name this pipeline:', '') || '').trim();
+  if (!name) return;
+  const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
+  const saveBtn = document.getElementById('composer-save');
+  let saved;
+  try {
+    saved = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks });
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
+    return;
+  }
+  await composerLoadSaved();
+  // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
+  // expand the first .pl-item (v1 bug: it auto-expanded Default, not the new pipeline).
+  // Expand the row we just saved — match by returned id, then by name; if neither
+  // matches, expand nothing rather than the wrong Default preview.
+  const items = [...composer.els.list.querySelectorAll('.pl-item')];
+  const row = (saved && saved.id && items.find((el) => el.dataset.id === saved.id))
+    || items.find((el) => (el.querySelector('.pl-name')?.textContent || '').trim() === name);
+  if (row) row.querySelector('.pl-row').click();
+  const html = saveBtn.innerHTML;
+  saveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved';
+  saveBtn.style.background = 'var(--green-ink)';
+  setTimeout(() => { saveBtn.innerHTML = html; saveBtn.style.background = ''; }, 1400);
+}
+
+// TEMPORARY (Task 7): count-only stub. Task 8 replaces this with the full
+// saved-list renderer (composerRenderList/composerRenderRO/composerRoNode).
+async function composerLoadSaved() {
+  composer.saved = await listWorkflows();
+  if (composer.els.count) composer.els.count.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
 }
 
 function modelById(id) {
