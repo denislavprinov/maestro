@@ -73,3 +73,67 @@ test('distinctAgents() returns first-seen-ordered unique keys', () => {
   ];
   assert.deepEqual(distinctAgents(steps), ['planner', 'implementer', 'reviewer']);
 });
+
+test('EMBEDDED_AGENTS covers the six canonical keys with color + icon', () => {
+  const keys = ['planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting'];
+  for (const k of keys) {
+    assert.ok(EMBEDDED_AGENTS[k], `missing embedded agent ${k}`);
+    assert.equal(typeof EMBEDDED_AGENTS[k].displayName, 'string');
+    assert.equal(typeof EMBEDDED_AGENTS[k].color, 'string');
+    assert.equal(typeof EMBEDDED_AGENTS[k].icon, 'string');
+  }
+});
+
+test('mergePalette() falls back to the embedded registry, ordered by .order', () => {
+  const pal = mergePalette(null);
+  assert.equal(pal.length, 6);
+  assert.deepEqual(pal.map((a) => a.key), [
+    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting',
+  ]);
+  assert.equal(pal[0].displayName, 'Plan');
+});
+
+test('mergePalette() prefers the server agents array and sorts by order', () => {
+  const agents = [
+    { key: 'reviewer', displayName: 'Review', color: 'blue', icon: '<path/>', order: 4 },
+    { key: 'planner', displayName: 'Plan', color: 'violet', icon: '<path/>', order: 1 },
+  ];
+  const pal = mergePalette({ agents });
+  assert.deepEqual(pal.map((a) => a.key), ['planner', 'reviewer']);
+  assert.equal(pal[0].color, 'violet');
+});
+
+test('defaultTopologyFromTemplate() converts a server template to a canvas model with fresh local ids', () => {
+  const tpl = {
+    id: 'wf_default',
+    name: 'Default',
+    steps: [
+      [{ id: 's0_0', key: 'planner' }],
+      [{ id: 's1_0', key: 'refiner' }],
+      [{ id: 's2_0', key: 'implementer' }],
+      [{ id: 's3_0', key: 'reviewer' }],
+    ],
+    feedbacks: [
+      { id: 'fb_0', from: 's1_0', to: 's0_0' },
+      { id: 'fb_1', from: 's3_0', to: 's2_0' },
+    ],
+  };
+  let n = 0;
+  const mk = (key) => ({ id: `L${n++}`, key }); // deterministic local-id factory
+  const model = defaultTopologyFromTemplate(tpl, mk);
+  assert.deepEqual(model.steps.map((c) => c.map((x) => x.key)),
+    [['planner'], ['refiner'], ['implementer'], ['reviewer']]);
+  // local ids are fresh (from mk), NOT the server s*_* ids
+  assert.equal(model.steps[0][0].id, 'L0');
+  assert.equal(model.steps[3][0].id, 'L3');
+  // feedbacks reference the fresh local ids (refine->plan, review->implement)
+  assert.deepEqual(model.feedbacks, [
+    { from: 'L1', to: 'L0' },
+    { from: 'L3', to: 'L2' },
+  ]);
+});
+
+test('defaultTopologyFromTemplate() tolerates a missing/empty template', () => {
+  const model = defaultTopologyFromTemplate(null, (key) => ({ id: 'x', key }));
+  assert.deepEqual(model, { steps: [], feedbacks: [] });
+});

@@ -49,7 +49,83 @@ export function distinctAgents(steps) {
   return seen;
 }
 
-// Filled in by later tasks (each gated by its own failing test).
-export function defaultTopologyFromTemplate() { return { steps: [], feedbacks: [] }; }
-export function mergePalette() { return []; }
-export const EMBEDDED_AGENTS = {};
+// Embedded agent registry — fallback for the palette when /api/agents is
+// unavailable (e.g. a sibling phase's endpoint not yet wired). Keys are the
+// canonical camelCase agent keys; icon = inner SVG markup, viewBox "0 0 24 24"
+// (glyphs copied from the standalone mockup's ICON map). The live registry from
+// GET /api/agents overrides this whenever present (see mergePalette).
+export const EMBEDDED_AGENTS = {
+  planner: {
+    key: 'planner', displayName: 'Plan', description: 'architecture & breakdown',
+    color: 'violet', order: 1,
+    icon: '<path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/>',
+  },
+  refiner: {
+    key: 'refiner', displayName: 'Refine Plan', description: 'tighten the plan',
+    color: 'green', order: 2,
+    icon: '<path d="M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1" stroke-linecap="round"/><path d="M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z" stroke-linejoin="round"/>',
+  },
+  implementer: {
+    key: 'implementer', displayName: 'Implementation', description: 'write the code',
+    color: 'peach', order: 3,
+    icon: '<path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+  reviewer: {
+    key: 'reviewer', displayName: 'Review Implementation', description: 'verify & report',
+    color: 'blue', order: 4,
+    icon: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+  manualTestsChecklist: {
+    key: 'manualTestsChecklist', displayName: 'Manual Tests Checklist', description: 'draft manual cases',
+    color: 'blue', order: 5,
+    icon: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9.5 4V2.8h5V4" stroke-linejoin="round"/><path d="M8.8 12l1.6 1.6L13.4 10" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+  manualWebUiTesting: {
+    key: 'manualWebUiTesting', displayName: 'Manual web UI testing', description: 'run cases via Playwright',
+    color: 'violet', order: 6,
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5V8.5Z" fill="currentColor" stroke="none"/>',
+  },
+};
+
+// mergePalette(agentsResponse) -> ordered Array<{key,displayName,description,color,icon,order}>.
+// Prefers the live registry (GET /api/agents -> { agents:[…] } or a bare array);
+// falls back to EMBEDDED_AGENTS. Always sorted by .order so the palette is stable.
+export function mergePalette(agentsResponse) {
+  let list = null;
+  if (Array.isArray(agentsResponse)) list = agentsResponse;
+  else if (agentsResponse && Array.isArray(agentsResponse.agents)) list = agentsResponse.agents;
+  if (!list || !list.length) list = Object.values(EMBEDDED_AGENTS);
+  return list
+    .map((a) => ({
+      key: a.key,
+      displayName: a.displayName || a.key,
+      description: a.description || '',
+      color: a.color || 'blue',
+      icon: a.icon || '',
+      order: typeof a.order === 'number' ? a.order : 99,
+    }))
+    .sort((x, y) => x.order - y.order);
+}
+
+// defaultTopologyFromTemplate(tpl, mk) -> canvas model {steps,feedbacks} with
+// FRESH local ids (mk(key) -> {id,key}). The server template's instance ids
+// (s*_*) are deliberately discarded: once on the canvas, nodes get throwaway
+// local ids and topology() re-stamps contract ids on save. Feedback edges are
+// rewired from server ids to the new local ids by walking the same order.
+export function defaultTopologyFromTemplate(tpl, mk) {
+  if (!tpl || !Array.isArray(tpl.steps) || !tpl.steps.length) {
+    return { steps: [], feedbacks: [] };
+  }
+  const remap = {}; // serverId -> localId
+  const steps = tpl.steps.map((col) =>
+    col.map((node) => {
+      const local = mk(node.key);
+      remap[node.id] = local.id;
+      return local;
+    }),
+  );
+  const feedbacks = (tpl.feedbacks || [])
+    .filter((fb) => remap[fb.from] && remap[fb.to])
+    .map((fb) => ({ from: remap[fb.from], to: remap[fb.to] }));
+  return { steps, feedbacks };
+}
