@@ -20,7 +20,7 @@ import { listPipelines, readPipeline } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  AGENT_STEPS, EFFORTS,
+  PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
 } from '../src/core/config.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -394,7 +394,15 @@ app.delete('/api/projects', async (req, res) => {
 // src/core/config.mjs; these routes are thin delegation (mirror /api/projects).
 // ---------------------------------------------------------------------------
 app.get('/api/config', async (req, res) => {
-  const projectDir = resolveProjectDir(req.query.projectDir);
+  const raw = req.query.projectDir;
+  // No project selected yet (e.g. a fresh clone): still return the built-in
+  // models so the picker is never empty. Custom models are per-project, so the
+  // project-less response carries only the predefined Opus/Sonnet/Haiku set.
+  if (raw == null || raw === '') {
+    const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
+    return res.json({ config: { steps: {}, customModels: [] }, models, steps: AGENT_STEPS, efforts: EFFORTS });
+  }
+  const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
     const [config, models] = await Promise.all([readConfig(projectDir), listModels(projectDir)]);

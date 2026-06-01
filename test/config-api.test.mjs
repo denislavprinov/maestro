@@ -31,9 +31,17 @@ test('GET /api/config returns predefined models + empty config + step defs', asy
   assert.ok(j.efforts.includes('xhigh'));
 });
 
-test('GET /api/config without projectDir -> 400', async () => {
+test('GET /api/config without projectDir -> built-in models, empty config', async () => {
   const r = await fetch(`${base}/api/config`);
-  assert.equal(r.status, 400);
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.deepEqual(j.config, { steps: {}, customModels: [] });
+  // Every predefined model is present, none flagged custom (no project = no customs).
+  assert.ok(j.models.some((m) => m.id === 'claude-opus-4-8'));
+  assert.ok(j.models.some((m) => m.id === 'claude-sonnet-4-6'));
+  assert.ok(j.models.some((m) => m.id === 'claude-haiku-4-5'));
+  assert.ok(j.models.every((m) => m.custom === false));
+  assert.ok(j.steps.some((s) => s.key === 'planner'));
 });
 
 test('POST /api/config sets a step; GET reflects it', async () => {
@@ -44,6 +52,25 @@ test('POST /api/config sets a step; GET reflects it', async () => {
   assert.equal(r.status, 200);
   r = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
   assert.deepEqual((await r.json()).config.steps.reviewer, { model: 'claude-opus-4-8', effort: 'max' });
+});
+
+test('GET /api/config lists the 1M long-context variants', async () => {
+  const r = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
+  const j = await r.json();
+  assert.ok(j.models.some((m) => m.id === 'claude-opus-4-8[1m]'));
+  assert.ok(j.models.some((m) => m.id === 'claude-sonnet-4-6[1m]'));
+  // Haiku 1M is intentionally absent (subscription-gated).
+  assert.ok(!j.models.some((m) => m.id === 'claude-haiku-4-5[1m]'));
+});
+
+test('POST /api/config accepts a 1M model + its effort', async () => {
+  let r = await fetch(`${base}/api/config`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectDir: proj, step: 'planner', model: 'claude-opus-4-8[1m]', effort: 'xhigh' }),
+  });
+  assert.equal(r.status, 200);
+  r = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
+  assert.deepEqual((await r.json()).config.steps.planner, { model: 'claude-opus-4-8[1m]', effort: 'xhigh' });
 });
 
 test('POST /api/config with an unsupported effort -> 400', async () => {

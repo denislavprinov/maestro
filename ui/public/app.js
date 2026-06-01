@@ -402,9 +402,11 @@ function onState(r, msg) {
 // Per-step model + effort config
 // ---------------------------------------------------------------------------
 async function loadConfig(projectDir) {
-  if (!projectDir) return;
   try {
-    const res = await fetch(`/api/config?projectDir=${encodeURIComponent(projectDir)}`);
+    // No project => omit projectDir; the server replies with the built-in models
+    // so the picker always shows Opus/Sonnet/Haiku, even on a fresh clone.
+    const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
+    const res = await fetch(`/api/config${qs}`);
     const data = await safeJson(res);
     if (!res.ok) return;
     state.config = data.config || { steps: {}, customModels: [] };
@@ -1174,9 +1176,8 @@ function onProjectChanged() {
     loadConfig(path);
   } else {
     state.projectDir = '';
-    state.config = { steps: {}, customModels: [] };
-    state.models = [];
-    renderStepConfigs(); // clear the selectors
+    // No project yet: still load the built-in models so the picker isn't empty.
+    loadConfig('');
   }
 }
 

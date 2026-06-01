@@ -36,13 +36,22 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
  * canonical dated id for Haiku 4.5 is `claude-haiku-4-5-20251001`; the bare
  * alias `claude-haiku-4-5` is used here and must be confirmed to resolve. Any id
  * that does not resolve can be replaced here or added as a custom model.
+ *
+ * The `[1m]` suffix selects the 1M-token long-context variant. Opus 4.6–4.8 and
+ * Sonnet 4.6 1M ids were verified to resolve via `claude --model`; Haiku 4.5 1M
+ * is intentionally omitted — the CLI rejects it ("long context beta is not yet
+ * available for this subscription").
  */
 export const PREDEFINED_MODELS = [
-  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   efforts: ['medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   efforts: ['medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-opus-4-6',   label: 'Opus 4.6',   efforts: ['medium', 'high', 'max'] },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'] },
-  { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',  efforts: ['medium', 'high'] },
+  { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-4-7',        label: 'Opus 4.7',        efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-4-7[1m]',    label: 'Opus 4.7 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-4-6',        label: 'Opus 4.6',        efforts: ['medium', 'high', 'max'] },
+  { id: 'claude-opus-4-6[1m]',    label: 'Opus 4.6 (1M)',   efforts: ['medium', 'high', 'max'] },
+  { id: 'claude-sonnet-4-6',      label: 'Sonnet 4.6',      efforts: ['medium', 'high', 'max'] },
+  { id: 'claude-sonnet-4-6[1m]',  label: 'Sonnet 4.6 (1M)', efforts: ['medium', 'high', 'max'] },
+  { id: 'claude-haiku-4-5',       label: 'Haiku 4.5',       efforts: ['medium', 'high'] },
 ];
 
 /** Absolute path to <projectDir>/.maestro . */
