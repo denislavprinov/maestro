@@ -508,6 +508,27 @@ app.get('/api/workflows/:id', async (req, res) => {
   }
 });
 
+app.post('/api/workflows', async (req, res) => {
+  const body = req.body || {};
+  // Build the candidate template from the editor payload (topology only).
+  const tpl = {
+    name: typeof body.name === 'string' ? body.name.trim() : '',
+    steps: Array.isArray(body.steps) ? body.steps : [],
+    feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
+  };
+  if (!tpl.name) return badRequest(res, 'name is required');
+  try {
+    const registry = loadAgentRegistry(AGENTS_DIR);
+    const { ok, errors } = validateWorkflow(tpl, registry);
+    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors });
+    // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
+    const workflow = await writeWorkflow(tpl); // CONV-1: await
+    res.status(201).json({ workflow });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Install logic (mirrors scripts/install.mjs): copy agents/*.md and
 // skills/maestro/** into <projectDir>/.claude/...

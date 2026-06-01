@@ -51,3 +51,50 @@ test('GET /api/workflows/:id is 404 for an unknown id', async () => {
   assert.equal(r.status, 404);
   assert.ok((await r.json()).error);
 });
+
+test('POST /api/workflows validates and rejects an empty-steps template -> 400', async () => {
+  const r = await fetch(`${base}/api/workflows`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ name: 'Bad', steps: [], feedbacks: [] }),
+  });
+  assert.equal(r.status, 400);
+  const j = await r.json();
+  assert.ok(Array.isArray(j.errors) && j.errors.length >= 1, 'returns validator errors');
+});
+
+test('POST /api/workflows rejects a node with an unknown agent key -> 400', async () => {
+  const r = await fetch(`${base}/api/workflows`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({
+      name: 'Bogus',
+      steps: [[{ id: 's0_0', key: 'notAnAgent' }]],
+      feedbacks: [],
+    }),
+  });
+  assert.equal(r.status, 400);
+  assert.ok((await r.json()).errors.length >= 1);
+});
+
+test('POST /api/workflows creates a valid template -> 201, then it lists', async () => {
+  const r = await fetch(`${base}/api/workflows`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({
+      name: 'Quick Fix',
+      steps: [
+        [{ id: 's0_0', key: 'planner' }],
+        [{ id: 's1_0', key: 'implementer' }],
+        [{ id: 's2_0', key: 'reviewer' }],
+      ],
+      feedbacks: [{ id: 'fb_0', from: 's2_0', to: 's1_0' }],
+    }),
+  });
+  assert.equal(r.status, 201);
+  const { workflow } = await r.json();
+  assert.equal(workflow.name, 'Quick Fix');
+  assert.match(workflow.id, /^wf_/);
+  assert.ok(workflow.createdAt && workflow.updatedAt, 'stamped on write');
+
+  // It now appears in the list (after the always-present default).
+  const list = await (await fetch(`${base}/api/workflows`)).json();
+  assert.ok(list.workflows.some((w) => w.id === workflow.id && w.name === 'Quick Fix'));
+});
