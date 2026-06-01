@@ -243,6 +243,14 @@ app.post('/api/run', async (req, res) => {
     const maxReviewCycles = clampInt(body.maxReview, 5);
     const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
 
+    // Optional workflowId selects a saved (or built-in default) topology. The
+    // orchestrator resolves topology + per-project run-config into an executable
+    // plan at run start; here we only normalize + reject an unknown id up front
+    // so the client gets a clean 400 instead of a mid-run error event.
+    const workflowId =
+      typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
+    if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
+
     const runId = randomUUID();
     const title = (typeof body.title === 'string' && body.title.trim()) || effectivePrompt.slice(0, 80);
 
@@ -258,6 +266,7 @@ app.post('/api/run', async (req, res) => {
       maxRefineCycles,
       maxReviewCycles,
       agentsDir: AGENTS_DIR,
+      workflowId,
       claude: { permissionMode: 'acceptEdits', mock },
     });
 

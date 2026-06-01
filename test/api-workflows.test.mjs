@@ -151,3 +151,45 @@ test('GET /api/agents returns the palette registry as an ordered array', async (
   const orders = j.agents.map((a) => a.order);
   assert.deepEqual(orders, [...orders].sort((a, b) => a - b), 'ordered by .order');
 });
+
+test('POST /api/run starts with the implicit default workflow', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-run-'));
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true }),
+  });
+  assert.equal(r.status, 200);
+  assert.match((await r.json()).runId, /[0-9a-f-]{8,}/);
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+test('POST /api/run accepts an explicit workflowId', async () => {
+  // Create a custom workflow, then run it.
+  const wf = await (await fetch(`${base}/api/workflows`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({
+      name: 'Run Me',
+      steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'reviewer' }]],
+      feedbacks: [],
+    }),
+  })).json();
+
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-run-'));
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true, workflowId: wf.workflow.id }),
+  });
+  assert.equal(r.status, 200, 'a known workflowId is accepted');
+  assert.ok((await r.json()).runId);
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+test('POST /api/run rejects an unknown workflowId -> 400', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-run-'));
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true, workflowId: 'wf_nope' }),
+  });
+  assert.equal(r.status, 400, 'an unknown workflow is a client error before the run starts');
+  await rm(projectDir, { recursive: true, force: true });
+});
