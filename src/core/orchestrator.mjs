@@ -342,14 +342,41 @@ class Orchestrator extends EventEmitter {
     while (i < steps.length) {
       this._checkAbort();
       const cycle = stepCycle[i];
-      await this._runStep(steps[i], i, cycle, io);
-      // Stage 5a: walk only. The generic feedback loop (rewind on a blocked
-      // `from` node, gate at maxCycles) lands in Stage 5b.
-      i += 1;
+      const results = await this._runStep(steps[i], i, cycle, io);
+
+      // Did any feedback originating in THIS step fire?
+      const loops = fbByFrom.get(i) || [];
+      let rewound = false;
+      for (const fb of loops) {
+        const fired = this._loopFired(fb, results); // CONV-3: gate off the loop's `from` node
+        if (!fired) continue;
+        const st = (loopState[fb.id] ||= { cycle: 1 });
+        if (st.cycle < fb.maxCycles) {
+          st.cycle += 1;
+          for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle; // re-runs bump cycle
+          await appendAudit(
+            this.pipeline.dir,
+            `Loop ${fb.id}: blocking issues at step ${i}; rewind to step ${fb.toIdx} (cycle ${st.cycle}).`,
+          );
+          i = fb.toIdx;
+          rewound = true;
+          break;
+        }
+        // Cycles exhausted -> gate the user exactly like the old review loop.
+        const decision = await this._gate(fb.id, st.cycle, blockingIssues(this._reviewOf(results, fb.from)));
+        this._checkAbort();
+        if (decision === 'another') {
+          st.cycle += 1;
+          for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
+          await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle - 1}: user approved another cycle.`);
+          i = fb.toIdx;
+          rewound = true;
+          break;
+        }
+        await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
+      }
+      if (!rewound) i += 1;
     }
-    // Silence unused-binding lint until 5b wires the loop (kept here on purpose so
-    // the 5b diff is purely additive in _dispatch's body).
-    void fbByFrom; void loopState; void stepCycle;
   }
 
   /**

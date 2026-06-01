@@ -98,3 +98,49 @@ test('parallel step: both nodes run, both emit (tagged), both complete', async (
   assert.ok(st.steps.find((s) => s.nodeId === 'a' && s.status === 'done'));
   assert.ok(st.steps.find((s) => s.nodeId === 'b' && s.status === 'done'));
 });
+
+test('feedback loop fires on blocked verifier, then stops at maxCycles and gates', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primed(dir);
+  // Verifier ALWAYS blocks -> the loop can only stop at maxCycles.
+  let implRuns = 0;
+  let gateAsks = 0;
+  orch._runners = {
+    producer: async (ctx) => { if (ctx.node.key === 'implementer') implRuns += 1; return { status: 'ok', summary: 'impl' }; },
+    verifier: async () => ({ status: 'blocked', issues: [{ severity: 'major', title: 't', detail: 'd', location: 'l' }], review: { issues: [{ severity: 'major' }], summary: 's' } }),
+  };
+  orch.on('question', ({ kind }) => { if (kind === 'gate') gateAsks += 1; });
+  const plan = {
+    id: 'wf_loop', name: 'Loop',
+    steps: [
+      [{ nodeId: 'impl', key: 'implementer', runnerType: 'producer' }],
+      [{ nodeId: 'rev', key: 'reviewer', runnerType: 'verifier', loopSource: true }],
+    ],
+    feedbacks: [{ id: 'fb0', from: 'rev', to: 0, maxCycles: 3, gate: 'hasBlocking' }],
+  };
+  await orch._dispatch(plan);
+  // cycle starts at 1; loop re-runs to step 0 while cycle<maxCycles=3 -> impl runs at
+  // cycles 1,2,3 = 3 times; the 3rd review is still blocked so it gates once (auto->continue).
+  assert.equal(implRuns, 3, 'implementer re-ran up to maxCycles');
+  assert.equal(gateAsks, 1, 'gated the user exactly once at maxCycles');
+});
+
+test('feedback loop does NOT fire when verifier passes', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primed(dir);
+  let implRuns = 0;
+  orch._runners = {
+    producer: async (ctx) => { if (ctx.node.key === 'implementer') implRuns += 1; return { status: 'ok', summary: 'impl' }; },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  const plan = {
+    id: 'wf_ok', name: 'OK',
+    steps: [
+      [{ nodeId: 'impl', key: 'implementer', runnerType: 'producer' }],
+      [{ nodeId: 'rev', key: 'reviewer', runnerType: 'verifier', loopSource: true }],
+    ],
+    feedbacks: [{ id: 'fb0', from: 'rev', to: 0, maxCycles: 3, gate: 'hasBlocking' }],
+  };
+  await orch._dispatch(plan);
+  assert.equal(implRuns, 1, 'no loop -> implementer runs once');
+});
