@@ -13,6 +13,7 @@ import {
   writeWorkflow,
   deleteWorkflow,
   resolveWorkflow,
+  buildStepperManifest,
 } from '../src/core/workflows.mjs';
 import { setNodeModel, setFeedbackCycles } from '../src/core/config.mjs';
 
@@ -251,4 +252,68 @@ test('resolveWorkflow throws for an unknown workflow id', async () => {
   await freshHome();
   const p = await freshProject();
   await assert.rejects(() => resolveWorkflow(p, 'wf_missing', REGISTRY), /wf_missing|not found|unknown/i);
+});
+
+const REG = {
+  planner:     { displayName: 'Plan',                 color: 'violet', description: 'architecture & breakdown' },
+  refiner:     { displayName: 'Refine Plan',          color: 'green',  description: 'tighten the plan' },
+  implementer: { displayName: 'Implementation',       color: 'amber',  description: 'write the code' },
+  reviewer:    { displayName: 'Review Implementation',color: 'blue',   description: 'verify & report' },
+  manualTestsChecklist: { displayName: 'Manual Tests Checklist', color: 'blue',   description: 'draft manual test cases' },
+  manualWebUiTesting:   { displayName: 'Manual web UI testing',  color: 'violet', description: 'drive the browser' },
+};
+
+test('buildStepperManifest: brackets nodes with preflight + done', () => {
+  const plan = {
+    id: 'wf_default', name: 'Default',
+    steps: [
+      [{ nodeId: 's0_0', key: 'planner',     uiPhase: 'plan' }],
+      [{ nodeId: 's1_0', key: 'refiner',     uiPhase: 'refine' }],
+      [{ nodeId: 's2_0', key: 'implementer', uiPhase: 'implement' }],
+      [{ nodeId: 's3_0', key: 'reviewer',    uiPhase: 'review' }],
+    ],
+    feedbacks: [
+      { id: 'fb_refine', from: 's1_0', to: 's1_0' },
+      { id: 'fb_review', from: 's3_0', to: 's2_0' },
+    ],
+  };
+  const m = buildStepperManifest(plan, REG);
+  assert.equal(m.version, 1);
+  assert.equal(m.steps.length, 6); // preflight + 4 + done
+  assert.deepEqual(m.steps[0], { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] });
+  assert.deepEqual(m.steps[5], { kind: 'done',      nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] });
+  assert.deepEqual(m.steps[1].nodes[0], {
+    id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan',
+    color: 'violet', sub: 'architecture & breakdown', cycles: false,
+  });
+  // fb_review targets s2_0 (implementer); fb_refine self-loops s1_0 (refiner).
+  assert.equal(m.steps[2].nodes[0].cycles, true);  // s1_0 refiner — self-loop target
+  assert.equal(m.steps[3].nodes[0].cycles, true);  // s2_0 implementer — review→implement target
+  assert.equal(m.steps[4].nodes[0].cycles, false); // s3_0 reviewer — not a target
+});
+
+test('buildStepperManifest: groups parallel nodes into one cell', () => {
+  const plan = {
+    id: 'wf_x', name: 'X',
+    steps: [
+      [{ nodeId: 's0_0', key: 'planner', uiPhase: 'plan' }],
+      [{ nodeId: 's1_0', key: 'implementer', uiPhase: 'implement' },
+       { nodeId: 's1_1', key: 'manualTestsChecklist', uiPhase: 'manual-checklist' }],
+    ],
+    feedbacks: [],
+  };
+  const m = buildStepperManifest(plan, REG);
+  assert.equal(m.steps.length, 4); // preflight + 2 agent cells (1 single + 1 parallel) + done
+  assert.equal(m.steps[1].nodes.length, 1);
+  assert.equal(m.steps[2].nodes.length, 2); // parallel cell
+  assert.deepEqual(m.steps[2].nodes.map((n) => n.id), ['s1_0', 's1_1']);
+  assert.equal(m.steps[2].nodes[1].label, 'Manual Tests Checklist');
+});
+
+test('buildStepperManifest: falls back to key when registry lacks the agent', () => {
+  const plan = { id: 'w', name: 'w', steps: [[{ nodeId: 'n', key: 'ghost', uiPhase: 'ghost' }]], feedbacks: [] };
+  const m = buildStepperManifest(plan, {});
+  assert.equal(m.steps[1].nodes[0].label, 'ghost'); // key as last-resort label
+  assert.equal(m.steps[1].nodes[0].color, '');
+  assert.equal(m.steps[1].nodes[0].sub, '');
 });

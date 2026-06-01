@@ -268,3 +268,44 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
 
   return { id: tpl.id, name: tpl.name, steps, feedbacks };
 }
+
+/**
+ * Build the UI stepper manifest from a resolved ExecutablePlan + agent registry.
+ * The manifest is the snapshot the Running/History views render from, so it is
+ * persisted into state.json (and flows through every 'state' event). It brackets
+ * the workflow's step-cells with the framework's real Preflight and Done phases.
+ *
+ * @param {object} plan  resolveWorkflow() output: { id, name, steps, feedbacks }
+ * @param {Record<string,object>} registry  loadAgentRegistry() output
+ * @returns {{version:1, steps:Array<{kind:string, nodes:object[]}>}}
+ */
+export function buildStepperManifest(plan, registry) {
+  const reg = registry && typeof registry === 'object' ? registry : {};
+  const fbs = Array.isArray(plan?.feedbacks) ? plan.feedbacks : [];
+  const isCycleTarget = (nodeId) => fbs.some((fb) => fb && fb.to === nodeId);
+
+  const agentCells = (Array.isArray(plan?.steps) ? plan.steps : []).map((group) => ({
+    kind: 'agents',
+    nodes: group.map((node) => {
+      const meta = reg[node.key] || {};
+      return {
+        id: node.nodeId,
+        key: node.key,
+        uiPhase: node.uiPhase || node.key,
+        label: meta.displayName || node.key,
+        color: meta.color || '',
+        sub: meta.description || '',
+        cycles: isCycleTarget(node.nodeId),
+      };
+    }),
+  }));
+
+  return {
+    version: 1,
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+      ...agentCells,
+      { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+    ],
+  };
+}
