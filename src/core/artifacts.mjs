@@ -251,6 +251,28 @@ export async function writeState(pipelineDir, stateObj) {
 }
 
 /**
+ * The pipeline's total spend for the history list. Prefer the persisted
+ * `totalCostUsd`; when it is missing/non-number (older or partially written
+ * state.json), fall back to summing per-step `costUsd` so a run that recorded
+ * step costs is never shown as blank. Returns null only when there is genuinely
+ * no cost data at all.
+ * @param {object|null} state
+ * @returns {number|null}
+ */
+function pipelineTotalCost(state) {
+  if (typeof state?.totalCostUsd === 'number') return state.totalCostUsd;
+  let sum = 0;
+  let any = false;
+  for (const s of Array.isArray(state?.steps) ? state.steps : []) {
+    if (Number.isFinite(s?.costUsd)) {
+      sum += s.costUsd;
+      any = true;
+    }
+  }
+  return any ? Math.round(sum * 1e4) / 1e4 : null;
+}
+
+/**
  * List all pipelines for a project, newest first.
  * Each entry: { id, dir, title, status, startedAt, mtime }.
  * Directories without a readable state.json fall back to filesystem metadata.
@@ -287,7 +309,7 @@ export async function listPipelines(projectDir) {
       title: state?.title ?? ent.name,
       status: state?.status ?? 'unknown',
       startedAt: state?.startedAt ?? null,
-      totalCostUsd: typeof state?.totalCostUsd === 'number' ? state.totalCostUsd : null,
+      totalCostUsd: pipelineTotalCost(state),
       mtime,
     });
   }
