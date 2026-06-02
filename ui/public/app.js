@@ -366,6 +366,15 @@ function buildStepper(host, manifest) {
   });
 }
 
+// Resolve a node's model·effort caption from the manifest. Maps model id -> label
+// via the globally-loaded state.models (fallback to the raw id); "default" when the
+// node has no explicit model (it runs on the pipeline's global default model).
+function nodeModelEffortLabel(node) {
+  const m = node && node.model ? modelById(node.model) : null;
+  const label = node && node.model ? (m ? m.label : node.model) : 'default';
+  return node && node.effort ? `${label} · ${node.effort}` : label;
+}
+
 // The label column for a single-node cell: bold label, sub caption, and the
 // cycle/dur/cost <em> slots paint* fills. Color accent when the node has one.
 function buildStageLabel(node) {
@@ -377,10 +386,17 @@ function buildStageLabel(node) {
   const sub = document.createElement('small');
   sub.className = 'sub';
   sub.textContent = node.sub || '';
+  lbl.append(b, sub);
+  if (node.uiPhase) { // agent node -> show model·effort; bookends keep just .sub
+    const me = document.createElement('small');
+    me.className = 'me';
+    me.textContent = nodeModelEffortLabel(node);
+    lbl.append(me);
+  }
   const cycle = document.createElement('em'); cycle.className = 'cycle';
   const dur = document.createElement('em'); dur.className = 'dur';
   const cost = document.createElement('em'); cost.className = 'cost';
-  lbl.append(b, sub, cycle, dur, cost);
+  lbl.append(cycle, dur, cost);
   return lbl;
 }
 
@@ -2865,8 +2881,7 @@ function buildRunCard(r) {
   const node = tpl.content.firstElementChild.cloneNode(true);
   node.dataset.runId = r.runId;
 
-  // Build the stepper from the run's manifest BEFORE fillStageSublabels runs
-  // (it fills .sub inside these stages). r.stepper may be null -> legacy default.
+  // Build the stepper from the run's manifest. r.stepper may be null -> legacy default.
   const stepHost = node.querySelector('.stages.compact');
   if (stepHost) buildStepper(stepHost, r.stepper);
 
@@ -2874,10 +2889,6 @@ function buildRunCard(r) {
   if (titleEl) titleEl.textContent = r.title;
   const metaEl = node.querySelector('.rm-text');
   if (metaEl) metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}`;
-
-  // Stage sublabels: only meaningful for a run THIS tab started (we have the
-  // config snapshot). preflight/done keep their static labels.
-  if (r.local && r.configSnapshot) fillStageSublabels(node, r.configSnapshot);
 
   // Hydrate the log from any events that arrived before the card existed.
   const logEl = node.querySelector('.log');
@@ -2893,25 +2904,6 @@ function buildRunCard(r) {
   }
 
   return node;
-}
-
-// Map each node's snapshot (model label + effort) onto its stage sublabel, keyed
-// by node id. The snapshot's node config lives under workflows[workflowId].nodes.
-function fillStageSublabels(node, snap) {
-  const models = Array.isArray(snap.models) ? snap.models : [];
-  const nodeCfg = (snap.nodes && typeof snap.nodes === 'object') ? snap.nodes : {};
-  const labelFor = (nodeId) => {
-    const sel = nodeCfg[nodeId] || {};
-    const m = models.find((x) => x.id === sel.model);
-    const modelLabel = m ? m.label : 'default';
-    return sel.effort ? `${modelLabel} · ${sel.effort}` : modelLabel;
-  };
-  for (const el of node.querySelectorAll('.stage[data-node-id], .stage-node[data-node-id]')) {
-    const id = el.dataset.nodeId;
-    if (id === 'preflight' || id === 'done') continue; // bookends keep their static sublabel
-    const sub = el.querySelector('.sub'); // parallel rows have no .sub -> skip
-    if (sub) sub.textContent = labelFor(id);
-  }
 }
 
 // Paint the stepper from the run model.

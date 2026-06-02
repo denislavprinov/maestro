@@ -99,6 +99,39 @@ test('manifestFor falls back to the legacy default when state has no stepper', a
     ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
 });
 
+test('buildStepper renders per-node model·effort from the manifest into .me', async () => {
+  const { window } = await bootLive();
+  window.__np._setModels([{ id: 'opus', label: 'Opus 4.8', efforts: ['low', 'high'] }]);
+  const host = window.document.createElement('div');
+  host.className = 'stages compact';
+  const manifest = {
+    version: 1,
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet',
+                                  sub: 'architecture & breakdown', model: 'opus', effort: 'high', cycles: false }] },
+      { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green',
+                                  sub: 'tighten the plan', model: '', effort: '', cycles: true }] },
+      { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+    ],
+  };
+  window.__np.buildStepper(host, manifest);
+
+  // Description preserved in .sub; model·effort in its own .me slot.
+  const plan = host.querySelector('.stage[data-node-id="s0_0"]');
+  assert.equal(plan.querySelector('.sub').textContent, 'architecture & breakdown');
+  assert.equal(plan.querySelector('.me').textContent, 'Opus 4.8 · high');
+
+  // Unset model -> "default"; description still shown.
+  const refine = host.querySelector('.stage[data-node-id="s1_0"]');
+  assert.equal(refine.querySelector('.sub').textContent, 'tighten the plan');
+  assert.equal(refine.querySelector('.me').textContent, 'default');
+
+  // Bookends (preflight/done) have no .me (gated on node.uiPhase).
+  const pre = host.querySelector('.stage[data-node-id="preflight"]');
+  assert.equal(pre.querySelector('.me'), null);
+});
+
 test('Running card renders the run\'s own manifest and paints by nodeId', async () => {
   const ctx = await bootLive();
   ctx.selectProject();
