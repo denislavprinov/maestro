@@ -209,3 +209,71 @@ test('durByNode buckets per nodeId, falling back to uiPhase for legacy steps', a
   const b = fn([{ phase: 'refine', activeMs: 800, runningSince: null }], 0, false);
   assert.equal(b['refine'], 800); // legacy: node id == uiPhase
 });
+
+test('clarify folds into the Plan cell on a per-node manifest (nodeId-tagged)', async () => {
+  // New runs persist a per-node stepper (plan node id 's0_0') AND tag the clarify
+  // step with that id. normalizePhase can't help here (it maps clarify -> 'plan',
+  // which is NOT the node id 's0_0'); the explicit nodeId is what folds it.
+  const stepper = {
+    version: 1,
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
+      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', cycles: false }] },
+      { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
+    ],
+  };
+  const state = {
+    phase: 'done', status: 'done', cycle: 1, totalActiveMs: 3000, stepper,
+    steps: [
+      { key: 'clarify#1', phase: 'clarify', nodeId: 's0_0', activeMs: 1000, runningSince: null },
+      { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', activeMs: 2000, runningSince: null },
+    ],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
+      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      return null;
+    },
+  });
+  ctx.selectProject(); ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const planStage = ctx.window.document.querySelector('#history .hist-detail .stage[data-node-id="s0_0"]');
+  assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s on the s0_0 cell');
+});
+
+test('an untagged clarify step (old run) does NOT fold on a per-node manifest', async () => {
+  // Backward-compat: pre-fix saved runs have clarify#1 with no nodeId. On a
+  // per-node stepper its FIGURE buckets to 'plan' (via normalizePhase), which is not
+  // the node id 's0_0' -> paints on nothing. Exactly today's behavior; must not crash.
+  const stepper = {
+    version: 1,
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
+      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', cycles: false }] },
+      { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
+    ],
+  };
+  const state = {
+    phase: 'done', status: 'done', cycle: 1, totalActiveMs: 3000, stepper,
+    steps: [
+      { key: 'clarify#1', phase: 'clarify', activeMs: 1000, runningSince: null }, // no nodeId (legacy)
+      { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', activeMs: 2000, runningSince: null },
+    ],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
+      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      return null;
+    },
+  });
+  ctx.selectProject(); ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const planStage = ctx.window.document.querySelector('#history .hist-detail .stage[data-node-id="s0_0"]');
+  assert.equal(planStage.querySelector('.dur').textContent, '2s', 'only the plan step (2000) shows; clarify not folded');
+});

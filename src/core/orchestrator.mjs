@@ -225,7 +225,7 @@ class Orchestrator extends EventEmitter {
       this._checkAbort();
 
       // 4) Planner clarify (single round).
-      const answers = await this._clarify();
+      const answers = await this._clarify(plannerNodeIdOf(plan));
       this._checkAbort();
 
       // 5) Dispatch the resolved workflow (already snapshotted into state.stepper
@@ -280,8 +280,13 @@ class Orchestrator extends EventEmitter {
    * re-ask loop — when the planner has no questions we skip straight to plan.
    * Returns the answers array ([{ id, question, choice }]).
    */
-  async _clarify() {
-    this._phase('clarify', 1, 'start');
+  async _clarify(plannerNodeId = null) {
+    // Tag the clarify round with the planner node id so its activeMs + costUsd
+    // bucket onto the Plan cell from the first tick. Pipeline totals are derived
+    // as Σ steps, so this only changes attribution — never the totals.
+    // plannerNodeId is null on a workflow with no plan-phase node; clarify then
+    // stays unattributed (legacy behavior).
+    this._phase('clarify', 1, 'start', plannerNodeId);
     const { questions } = await runPlannerClarify(this._phaseCtx('planner'), {
       round: 1,
       priorAnswers: [], // single round: there is never a prior round to feed back
@@ -843,10 +848,10 @@ class Orchestrator extends EventEmitter {
     }
   }
 
-  _phase(phase, cycle, status) {
+  _phase(phase, cycle, status, nodeId = null) {
     this.state.phase = phase;
     this.state.cycle = cycle;
-    this._recordStep(phase, cycle, status);
+    this._recordStep(phase, cycle, status, nodeId);
     this.state.updatedAt = new Date().toISOString();
     this._emit('phase', { phase, cycle, status });
     this._emit('state', this.getState());
@@ -854,16 +859,23 @@ class Orchestrator extends EventEmitter {
     this._persist().catch(() => {});
   }
 
-  _recordStep(phase, cycle, status) {
+  _recordStep(phase, cycle, status, nodeId = null) {
     const key = cycle ? `${phase}#${cycle}` : phase;
     const now = new Date().toISOString();
     let step = this.state.steps.find((s) => s.key === key);
     if (!step) {
       step = { key, phase, cycle, status, startedAt: now, updatedAt: now, activeMs: 0, runningSince: null };
+      // Attribute this phase's figures to a stepper node (clarify -> the plan
+      // node) so the UI buckets it onto that cell. Totals are derived as Σ steps,
+      // so labelling a step changes attribution only — it adds no ms/cost.
+      if (nodeId) step.nodeId = nodeId;
       this.state.steps.push(step);
     } else {
       step.status = status;
       step.updatedAt = now;
+      // Idempotent: a later marker (e.g. 'done') passes no nodeId and must not
+      // clear the tag set at 'start'; never clobber an existing tag.
+      if (nodeId && !step.nodeId) step.nodeId = nodeId;
     }
     if (status === 'start') {
       this._clockPauseAll();   // close out any prior running step
@@ -981,6 +993,28 @@ class Orchestrator extends EventEmitter {
 }
 
 // ── module-level pure helpers ──────────────────────────────────────────────────
+
+/**
+ * Resolve the planner node's id from a resolved ExecutablePlan: the first node
+ * whose UI bucket is the plan phase (uiPhase === 'plan'), else the first node
+ * keyed 'planner'. Returns null when there is no plan-phase node (a non-standard
+ * workflow) — callers then leave clarify unattributed (legacy behavior).
+ * Never hardcodes 's0_0'; works for any workflow whose first step is the planner.
+ * plan.steps is the resolveWorkflow() shape: Array<Array<node>> (groups of nodes).
+ * @param {{steps?:Array<Array<{nodeId:string,key:string,uiPhase?:string}>>}} plan
+ * @returns {string|null}
+ */
+export function plannerNodeIdOf(plan) {
+  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+  for (const group of steps) {
+    for (const node of Array.isArray(group) ? group : []) {
+      if (node && (node.uiPhase === 'plan' || node.key === 'planner')) {
+        return node.nodeId || null;
+      }
+    }
+  }
+  return null;
+}
 
 function numOr(v, d) {
   const n = Number(v);

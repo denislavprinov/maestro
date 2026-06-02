@@ -165,11 +165,13 @@ test('DEFAULT_WORKFLOW dispatch reproduces the legacy phase order + loop gating 
     if (status === 'start') phases.push(cycle ? `${phase}#${cycle}` : phase);
   });
   const nodeStarts = [];
-  // node steps are recorded in state.steps with nodeId; snapshot their first-seen order.
+  // agent-dispatch steps are recorded in state.steps with nodeId; snapshot their first-seen
+  // order. Exclude the clarify step (phase 'clarify'), which now also carries a nodeId for
+  // UI attribution but is not an agent dispatch node.
   const seen = new Set();
   orch.on('state', (st) => {
     for (const s of st.steps) {
-      if (s.nodeId && !seen.has(s.key)) { seen.add(s.key); nodeStarts.push(s.phase); }
+      if (s.nodeId && s.phase !== 'clarify' && !seen.has(s.key)) { seen.add(s.key); nodeStarts.push(s.phase); }
     }
   });
   let gateAsks = 0;

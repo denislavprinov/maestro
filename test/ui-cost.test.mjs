@@ -133,3 +133,13 @@ test('costByNode buckets per nodeId and by uiPhase fallback', async () => {
   assert.equal(fn([{ nodeId: 's0_0', phase: 'planner', costUsd: 0.12 }])['s0_0'], 0.12);
   assert.equal(fn([{ phase: 'plan', costUsd: 0.05 }])['plan'], 0.05);
 });
+
+test('costByNode folds a nodeId-tagged clarify step onto the plan node', async () => {
+  const { window } = await boot();
+  const fn = window.__np.costByNode;
+  const out = fn([
+    { key: 'clarify#1', phase: 'clarify', nodeId: 's0_0', costUsd: 0.01 },
+    { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', costUsd: 0.02 },
+  ]);
+  assert.equal(out['s0_0'], 0.03);
+});
