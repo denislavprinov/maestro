@@ -285,11 +285,28 @@ test('buildStepperManifest: brackets nodes with preflight + done', () => {
   assert.deepEqual(m.steps[1].nodes[0], {
     id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan',
     color: 'violet', sub: 'architecture & breakdown', cycles: false,
+    model: '', effort: '',
   });
   // fb_review targets s2_0 (implementer); fb_refine self-loops s1_0 (refiner).
   assert.equal(m.steps[2].nodes[0].cycles, true);  // s1_0 refiner — self-loop target
   assert.equal(m.steps[3].nodes[0].cycles, true);  // s2_0 implementer — review→implement target
   assert.equal(m.steps[4].nodes[0].cycles, false); // s3_0 reviewer — not a target
+});
+
+test('buildStepperManifest: carries per-node model + effort from the plan', () => {
+  const plan = {
+    id: 'wf_x', name: 'X',
+    steps: [
+      [{ nodeId: 's0_0', key: 'planner', uiPhase: 'plan', model: 'opus', effort: 'high' }],
+      [{ nodeId: 's1_0', key: 'refiner', uiPhase: 'refine' }], // unset -> empty strings
+    ],
+    feedbacks: [],
+  };
+  const m = buildStepperManifest(plan, REG);
+  assert.equal(m.steps[1].nodes[0].model, 'opus');   // step[0] is preflight; agent cell is [1]
+  assert.equal(m.steps[1].nodes[0].effort, 'high');
+  assert.equal(m.steps[2].nodes[0].model, '');
+  assert.equal(m.steps[2].nodes[0].effort, '');
 });
 
 test('buildStepperManifest: groups parallel nodes into one cell', () => {

@@ -277,7 +277,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
  *
  * @param {object} plan  resolveWorkflow() output: { id, name, steps, feedbacks }
  * @param {Record<string,object>} registry  loadAgentRegistry() output
- * @returns {{version:1, steps:Array<{kind:string, nodes:object[]}>}}
+ * @returns {{version:1, steps:Array<{kind:string, nodes:object[]}>}}  node shape includes model, effort
  */
 export function buildStepperManifest(plan, registry) {
   const reg = registry && typeof registry === 'object' ? registry : {};
@@ -296,6 +296,8 @@ export function buildStepperManifest(plan, registry) {
         color: meta.color || '',
         sub: meta.description || '',
         cycles: isCycleTarget(node.nodeId),
+        model: node.model || '',
+        effort: node.effort || '',
       };
     }),
   }));
