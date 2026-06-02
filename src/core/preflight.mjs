@@ -151,21 +151,34 @@ export function buildInstruction(tool, kind) {
     }
     if (kind === 'output-cached') {
       return (
-        'A graphify knowledge graph has already been built for this project at ' +
-        '<projectDir>/graphify-out/. BEFORE analyzing or planning, read ' +
-        'graphify-out/GRAPH_REPORT.md and/or graphify-out/graph.json so your ' +
-        'understanding of the codebase is grounded in real structure rather than ' +
-        'assumptions. (No graphify binary or Skill was detected, so do not try ' +
-        'to invoke it — just read the cached output.)'
+        'A graphify knowledge graph has ALREADY been built for this project at ' +
+        '<projectDir>/graphify-out/. No graphify binary or Skill was detected, so ' +
+        'do NOT try to invoke or rebuild it — just READ the cached output. BEFORE ' +
+        'analyzing or planning, read graphify-out/GRAPH_REPORT.md for the overview, ' +
+        'then open graphify-out/graph.json to trace specific symbols and their ' +
+        'edges, so your understanding is grounded in real structure rather than ' +
+        'assumptions.'
       );
     }
-    // 'cli' (or unspecified, treated as CLI for safety)
+    // 'cli' (or unspecified, treated as CLI for safety).
+    // `graphify query` does literal token-matching to pick BFS start nodes, so a
+    // natural-language PHRASE matches almost nothing (only stray tokens, often in
+    // test files) and yields noise — which makes agents give up and fall back to
+    // grep. The instruction therefore teaches one-concept-at-a-time querying and
+    // points at the already-built graph instead of a nonexistent build command.
     return (
-      'A code knowledge-graph CLI named "graphify" is available on PATH. ' +
-      'BEFORE analyzing or planning, run it via Bash to build/refresh ' +
-      '<projectDir>/graphify-out/, then read graphify-out/GRAPH_REPORT.md and ' +
-      'graphify-out/graph.json. Ground your work in the real codebase structure ' +
-      'rather than assumptions.'
+      'A code knowledge-graph CLI named "graphify" is available on PATH, and a ' +
+      'graph has ALREADY been built at <projectDir>/graphify-out/ (do NOT rebuild). ' +
+      'BEFORE analyzing or planning, ground yourself in the real codebase: first ' +
+      'read graphify-out/GRAPH_REPORT.md for the overview, then query the graph ' +
+      'via Bash. Query ONE concept at a time — a single symbol or term, NOT a ' +
+      'natural-language phrase (phrases match almost nothing and return noise). ' +
+      'Useful commands:\n' +
+      '  graphify query "<concept>"    # BFS neighborhood of one term, e.g. "effort"\n' +
+      '  graphify explain "<symbol>"   # one node plus its direct connections\n' +
+      '  graphify path "<A>" "<B>"     # how two symbols are connected\n' +
+      'Run several single-concept queries rather than one long one. Use ' +
+      'Glob/Grep/Read only for what the graph cannot answer.'
     );
   }
   if (tool === 'code-review-graph') {

@@ -152,6 +152,11 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     let resultText = '';
     let assistantText = '';
     let stderrBuf = '';
+    // In stream-json mode claude reports failures (auth, unknown/unavailable
+    // model, API errors) as a terminal `result` event with is_error:true on
+    // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
+    // non-zero exit surfaces the real cause instead of an opaque "no stderr".
+    let errorDetail = '';
     let settled = false;
 
     const onAbort = () => {
@@ -196,6 +201,15 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       const text = extractText(evt);
       if (evt?.type === 'assistant' && text) assistantText += text;
       if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
+      // Remember the most specific error text we see, for the non-zero-exit path.
+      if (evt?.type === 'result' && evt.is_error) {
+        errorDetail =
+          (typeof evt.result === 'string' && evt.result.trim()) ||
+          (typeof evt.error === 'string' && evt.error.trim()) ||
+          errorDetail;
+      } else if (!errorDetail && typeof evt?.error === 'string' && evt.error.trim()) {
+        errorDetail = evt.error.trim();
+      }
       const cost = extractResultCost(evt);
       safeEmit(onEvent, {
         type: evt?.type || 'event',
@@ -222,7 +236,8 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         return;
       }
       if (code !== 0) {
-        finish(rejectP, new Error(`${bin} exited with code ${code}: ${stderrBuf.trim() || 'no stderr'}`));
+        const detail = stderrBuf.trim() || errorDetail || 'no stderr';
+        finish(rejectP, new Error(`${bin} exited with code ${code}: ${detail}`));
         return;
       }
       const text = resultText || assistantText;
