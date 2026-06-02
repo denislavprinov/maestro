@@ -11,10 +11,16 @@
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve, join } from 'node:path';
+import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
 
 import { createOrchestrator } from '../core/orchestrator.mjs';
+import {
+  addProject,
+  listProjects,
+  removeProject,
+  normalizeProjectPath,
+} from '../core/projects.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -126,10 +132,16 @@ function fail(msg) {
 const HELP = `orchestrate — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
 
 Usage:
-  orchestrate --prompt "<task>" [--project <dir>] [options]
-  orchestrate --file <task.md> [--project <dir>] [options]
-  orchestrate --ui
-  orchestrate --install <targetDir> [--force]
+  maestro <subcommand> [args]
+  maestro --prompt "<task>" [--project <dir>] [options]
+  maestro --file <task.md> [--project <dir>] [options]
+  maestro --ui
+  maestro --install <targetDir> [--force]
+
+Subcommands:
+  add [name] [--path <dir>]   Register a project. Defaults: name = basename(path), path = cwd.
+  list                        List registered projects (tab-separated; missing dirs are flagged).
+  remove <name>               Remove a registered project by name (case-insensitive).
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -289,9 +301,88 @@ function runInstall(targetDir, passthrough) {
   });
 }
 
+// ── project registry subcommands ──────────────────────────────────────────────
+
+/** Parse a tiny argv slice for the `add` subcommand. Supports --path/--path=<dir>. */
+function parseAddArgs(argv) {
+  const positionals = [];
+  let pathArg = null;
+  for (let i = 0; i < argv.length; i++) {
+    let a = argv[i];
+    let inline;
+    const eq = a.indexOf('=');
+    if (a.startsWith('--') && eq !== -1) {
+      inline = a.slice(eq + 1);
+      a = a.slice(0, eq);
+    }
+    if (a === '--path') {
+      const v = inline !== undefined ? inline : argv[++i];
+      if (v === undefined) fail('Flag --path requires a value.');
+      pathArg = v;
+    } else if (a.startsWith('-')) {
+      fail(`Unknown flag: ${a}`);
+    } else {
+      positionals.push(a);
+    }
+  }
+  return { name: positionals[0], path: pathArg };
+}
+
+async function cmdAdd(argv) {
+  const { name: rawName, path: rawPath } = parseAddArgs(argv);
+  // Always route through normalizeProjectPath so display, storage, and
+  // basename() all see exactly the same string addProject will persist.
+  const target = normalizeProjectPath(rawPath) || resolve(process.cwd());
+  const name = (rawName && rawName.trim()) || basename(target);
+  try {
+    await addProject({ name, path: target });
+    out(`Added project "${name}" -> ${target}`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`maestro: ${err?.message || err}\n`);
+    return 1;
+  }
+}
+
+async function cmdList() {
+  const items = await listProjects();
+  if (items.length === 0) {
+    out('No projects registered. Use `maestro add` to register one.');
+    return 0;
+  }
+  for (const p of items) {
+    const tail = p.exists ? '' : `\t${c('gray', '[missing]')}`;
+    out(`${p.name}\t${p.path}${tail}`);
+  }
+  return 0;
+}
+
+async function cmdRemove(argv) {
+  const name = (argv[0] || '').trim();
+  if (!name) fail('Usage: maestro remove <name>');
+  const before = await listProjects();
+  const after = await removeProject(name);
+  if (after.length === before.length) {
+    out(`No project named "${name}"`);
+    return 1;
+  }
+  out(`Removed project "${name}"`);
+  return 0;
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
+const SUBCOMMANDS = new Set(['add', 'list', 'remove']);
+
 async function main() {
+  const sub = process.argv[2];
+  if (SUBCOMMANDS.has(sub)) {
+    const rest = process.argv.slice(3);
+    if (sub === 'add') return cmdAdd(rest);
+    if (sub === 'list') return cmdList();
+    if (sub === 'remove') return cmdRemove(rest);
+  }
+
   const flags = parseArgs(process.argv.slice(2));
 
   if (flags.help) {
