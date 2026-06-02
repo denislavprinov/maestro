@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+import { writeFile as fsWriteFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+
 import {
   sanitizeBranchName,
   suggestBranchName,
@@ -14,6 +17,8 @@ import {
   resolveDefaultBranch,
   createWorktree,
   removeWorktree,
+  isValidSourceRef,
+  worktreePathForBranch,
 } from '../src/core/worktree.mjs';
 
 const created = [];
@@ -103,11 +108,11 @@ test('removeWorktree prunes the dir + branch', async () => {
   assert.ok(!list.includes('maestro/gone'));
 });
 
-test('createWorktree throws a useful error when sourceBranch is missing', async () => {
+test('createWorktree throws a useful error when sourceBranch does not resolve', async () => {
   const repo = await freshRepo();
   await assert.rejects(
     () => createWorktree({ projectDir: repo, pipelineId: 'oops', sourceBranch: 'no-such-branch', featureBranch: 'maestro/x' }),
-    /git worktree add failed/,
+    /not a valid ref/,
   );
 });
 
@@ -115,4 +120,102 @@ test('createWorktree throws a useful error when sourceBranch is missing', async 
 test('currentBranch returns the HEAD branch name', async () => {
   const repo = await freshRepo();
   assert.equal(await currentBranch(repo), 'main');
+});
+
+// ── M1: sourceBranch validation / argument-injection ──────────────────────────
+test('isValidSourceRef accepts a real branch, rejects unknown + leading-dash', async () => {
+  const repo = await freshRepo();
+  assert.equal(await isValidSourceRef(repo, 'main'), true);
+  assert.equal(await isValidSourceRef(repo, 'no-such'), false);
+  assert.equal(await isValidSourceRef(repo, '--force'), false);
+  assert.equal(await isValidSourceRef(repo, '-q'), false);
+  assert.equal(await isValidSourceRef(repo, ''), false);
+});
+
+test('createWorktree refuses an option-like sourceBranch (M1 injection)', async () => {
+  const repo = await freshRepo();
+  await assert.rejects(
+    () => createWorktree({ projectDir: repo, pipelineId: 'inj', sourceBranch: '--force', featureBranch: 'maestro/x' }),
+    /not a valid ref/,
+  );
+  // git never created a stray worktree dir for the rejected run.
+  assert.ok(!existsSync(join(repo, '.maestro', 'worktrees', 'inj')));
+});
+
+// ── S2: pipelineId path traversal ─────────────────────────────────────────────
+test('createWorktree rejects a traversal pipelineId (S2)', async () => {
+  const repo = await freshRepo();
+  for (const bad of ['../escape', '..', '.', 'a/b', 'a\\b']) {
+    await assert.rejects(
+      () => createWorktree({ projectDir: repo, pipelineId: bad, sourceBranch: 'main', featureBranch: 'maestro/x' }),
+      /invalid pipelineId|escapes base/,
+      `expected rejection for ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+// ── M2: branch already checked out in a live worktree ─────────────────────────
+test('createWorktree fails actionably when the branch is in use by a live worktree (M2)', async () => {
+  const repo = await freshRepo();
+  spawnSync('git', ['-C', repo, 'branch', 'maestro/dup']);
+  const first = await createWorktree({ projectDir: repo, pipelineId: 'one', sourceBranch: 'main', featureBranch: 'maestro/dup' });
+  assert.equal(first.reusedExisting, true);
+  assert.equal(await worktreePathForBranch(repo, 'maestro/dup'), first.worktreeDir);
+  await assert.rejects(
+    () => createWorktree({ projectDir: repo, pipelineId: 'two', sourceBranch: 'main', featureBranch: 'maestro/dup' }),
+    /already checked out in worktree/,
+  );
+});
+
+test('createWorktree reuse succeeds again after the stale worktree is pruned (M2)', async () => {
+  const repo = await freshRepo();
+  spawnSync('git', ['-C', repo, 'branch', 'maestro/resume2']);
+  const wt = await createWorktree({ projectDir: repo, pipelineId: 'p1', sourceBranch: 'main', featureBranch: 'maestro/resume2' });
+  // Simulate a crash that left the dir orphaned, then a resume: removing the
+  // dir + prune frees the branch so the next reuse attaches cleanly.
+  await rm(wt.worktreeDir, { recursive: true, force: true });
+  const again = await createWorktree({ projectDir: repo, pipelineId: 'p2', sourceBranch: 'main', featureBranch: 'maestro/resume2' });
+  assert.equal(again.reusedExisting, true);
+});
+
+// ── M3: removeWorktree is non-silent + force-correct ──────────────────────────
+test('removeWorktree force:true removes an agent-dirtied worktree + reports steps (M3)', async () => {
+  const repo = await freshRepo();
+  const wt = await createWorktree({ projectDir: repo, pipelineId: 'dirty', sourceBranch: 'main', featureBranch: 'maestro/dirty' });
+  await fsWriteFile(join(wt.worktreeDir, 'agent-edit.txt'), 'modified by agent\n');
+  const res = await removeWorktree({ projectDir: repo, worktreeDir: wt.worktreeDir, branch: wt.branch, force: true });
+  assert.equal(res.ok, true, JSON.stringify(res.steps));
+  assert.ok(!existsSync(wt.worktreeDir), 'dir should be gone');
+  assert.ok(!(await listLocalBranches(repo)).includes('maestro/dirty'));
+  assert.ok(res.steps.some((s) => s.step === 'worktree-remove'));
+});
+
+test('removeWorktree non-force surfaces failure on a dirty worktree (M3)', async () => {
+  const repo = await freshRepo();
+  const wt = await createWorktree({ projectDir: repo, pipelineId: 'dirty2', sourceBranch: 'main', featureBranch: 'maestro/dirty2' });
+  await fsWriteFile(join(wt.worktreeDir, 'agent-edit.txt'), 'modified\n');
+  const res = await removeWorktree({ projectDir: repo, worktreeDir: wt.worktreeDir, branch: wt.branch, force: false });
+  assert.equal(res.ok, false, 'non-force on a dirty worktree must report failure, not silently no-op');
+  assert.ok(existsSync(wt.worktreeDir), 'dir survives the refused non-force removal');
+  const removeStep = res.steps.find((s) => s.step === 'worktree-remove');
+  assert.ok(removeStep && /modified or untracked|use --force/i.test(removeStep.stderr));
+});
+
+// ── m1: detached HEAD default-branch fallback ─────────────────────────────────
+test('resolveDefaultBranch falls back to the HEAD SHA on a detached HEAD with no branches (m1)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'maestro-detached-'));
+  created.push(dir);
+  const g = (a) => spawnSync('git', a, { cwd: dir });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+  // Override any machine-global init.defaultBranch=main so the fallback chain
+  // actually reaches the SHA branch (m1) instead of returning that config value.
+  g(['config', 'init.defaultBranch', '']);
+  await writeFile(join(dir, 'a'), 'a'); g(['add', '-A']); g(['commit', '-qm', 'init']);
+  const sha = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD']).stdout.toString().trim();
+  // Detach + delete every local branch so only the SHA remains.
+  g(['checkout', '-q', '--detach', sha]);
+  g(['branch', '-D', 'main']);
+  const resolved = await resolveDefaultBranch(dir);
+  assert.equal(resolved, sha, 'should return the SHA, never the literal "main"');
 });

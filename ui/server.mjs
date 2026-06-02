@@ -28,7 +28,7 @@ import {
 } from '../src/core/workflows.mjs';
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { listLocalBranches, currentBranch } from '../src/core/worktree.mjs';
+import { listLocalBranches, currentBranch, isValidSourceRef } from '../src/core/worktree.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,6 +37,10 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 const PORT = Number(process.env.PORT) || 4317;
+// Bind to loopback by default (S1). Power users who knowingly want LAN exposure
+// can set MAESTRO_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
+// applies unless they also front it with auth.
+const HOST = process.env.MAESTRO_HOST || '127.0.0.1';
 
 // ---------------------------------------------------------------------------
 // Run registry. Each entry holds the live orchestrator + a ring buffer of the
@@ -71,6 +75,12 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const sockets = new Set();
 
 wss.on('connection', (ws, req) => {
+  // S1: WS upgrades bypass the express middleware chain, so re-apply the
+  // loopback guard here (same DNS-rebinding protection as the HTTP routes).
+  if (!isLocalRequest(req)) {
+    try { ws.close(1008, 'forbidden'); } catch { /* already closing */ }
+    return;
+  }
   sockets.add(ws);
   // Optional ?runId=... -> replay that run's buffered events so a reconnecting
   // client immediately sees the full state.
@@ -205,7 +215,43 @@ function wireRun(entry) {
 // Express middleware + static
 // ---------------------------------------------------------------------------
 app.use(express.json({ limit: '8mb' }));
+
+// S1: maestro's UI/API has no auth and runs agents with permissionMode
+// 'acceptEdits' — it is a single-user *localhost* tool. The server binds to
+// loopback (see HOST below); this guard is the DNS-rebinding belt to that
+// suspenders: reject any request whose Host (or browser Origin) is not a
+// loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
+// drive the API. Override MAESTRO_HOST only if you understand the exposure.
+app.use((req, res, next) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ error: 'forbidden: maestro is a localhost-only tool' });
+  }
+  next();
+});
+
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+/** Hostname (no port) from a Host header value or full Origin URL, or null. */
+function hostnameOf(value) {
+  if (!value) return null;
+  try {
+    return new URL(value.includes('://') ? value : `http://${value}`).hostname;
+  } catch {
+    return null;
+  }
+}
+/** True when both Host and (if present) Origin are loopback. */
+function isLocalRequest(req) {
+  const host = hostnameOf(req.headers.host);
+  if (!host || !LOCAL_HOSTNAMES.has(host)) return false;
+  const origin = req.headers.origin;
+  if (origin) {
+    const oh = hostnameOf(origin);
+    if (!oh || !LOCAL_HOSTNAMES.has(oh)) return false;
+  }
+  return true;
+}
 
 function badRequest(res, message) {
   res.status(400).json({ error: message });
@@ -264,6 +310,13 @@ app.post('/api/run', async (req, res) => {
       feature: typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
     };
+    // M1: never hand an unvalidated sourceBranch to `git worktree add`. Reject a
+    // leading-dash (option injection) or unknown ref here so the client gets a
+    // clean 400 instead of a mid-run error event. featureBranch is sanitized
+    // downstream by sanitizeBranchName, so it needs no ref check.
+    if (branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
+      return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
+    }
 
     const orch = createOrchestrator({
       projectDir,
@@ -766,10 +819,11 @@ if (isMain) {
     console.error(`[maestro-ui] server error: ${err && err.message ? err.message : err}`);
   });
 
-  server.listen(PORT, () => {
-    const url = `http://localhost:${PORT}`;
-    console.log(`[maestro-ui] listening on ${url}`);
-    console.log(`[maestro-ui] WebSocket on ws://localhost:${PORT}/ws`);
+  server.listen(PORT, HOST, () => {
+    const shown = HOST === '127.0.0.1' || HOST === '::1' ? 'localhost' : HOST;
+    const url = `http://${shown}:${PORT}`;
+    console.log(`[maestro-ui] listening on ${url} (bound to ${HOST})`);
+    console.log(`[maestro-ui] WebSocket on ws://${shown}:${PORT}/ws`);
   });
 }
 

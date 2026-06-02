@@ -49,3 +49,48 @@ test('GET /api/branches 400s without projectDir', async () => {
   const r = await fetch(`${base}/api/branches`);
   assert.equal(r.status, 400);
 });
+
+test('GET /api/branches on a non-git dir returns empty branches + null current', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'maestro-nogit-'));
+  created.push(dir);
+  const r = await fetch(`${base}/api/branches?projectDir=${encodeURIComponent(dir)}`);
+  assert.equal(r.status, 200);
+  const data = await r.json();
+  assert.deepEqual(data.branches, []);
+  assert.equal(data.current, null);
+});
+
+test('POST /api/run rejects an option-like sourceBranch with 400 (M1)', async () => {
+  const repo = await freshRepo();
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectDir: repo, prompt: 'x', mock: true, sourceBranch: '--force' }),
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /sourceBranch/);
+});
+
+test('POST /api/run rejects an unknown sourceBranch with 400 (M1)', async () => {
+  const repo = await freshRepo();
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectDir: repo, prompt: 'x', mock: true, sourceBranch: 'no-such-branch' }),
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /sourceBranch/);
+});
+
+// S1: a request whose Host is not loopback is refused (DNS-rebinding guard).
+test('non-loopback Host header is forbidden (S1)', async () => {
+  const status = await new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port: srv.address().port, path: '/api/projects', method: 'GET', headers: { Host: 'evil.example.com' } },
+      (res) => { res.resume(); resolve(res.statusCode); },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(status, 403);
+});

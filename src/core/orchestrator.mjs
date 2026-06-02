@@ -17,7 +17,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join, basename, resolve } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 
 import {
   createPipeline,
@@ -37,7 +37,7 @@ import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import {
-  createWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
+  createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
 } from './worktree.mjs';
 
 /**
@@ -293,6 +293,10 @@ class Orchestrator extends EventEmitter {
         pipelineDir: this.pipeline?.dir || null,
       });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
+    } finally {
+      // C1: always tear the worktree down. By now this.state.status is the
+      // terminal value (done/stopped/error), which decides branch retention.
+      await this._teardownWorktree().catch(() => {});
     }
   }
 
@@ -333,6 +337,46 @@ class Orchestrator extends EventEmitter {
       `Worktree: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
     );
     this._emit('state', this.getState());
+  }
+
+  /**
+   * Tear down the per-pipeline worktree (C1). Retention policy:
+   *   - done  → remove the checkout dir, KEEP the feature branch so the user
+   *             can merge the agent's work.
+   *   - error/stopped → remove the dir; also delete the branch, but only when we
+   *             created it this run (never delete a resumed/pre-existing branch).
+   * Always force:true — agents have edited files, so the non-force path would
+   * refuse and leak. Idempotent; safe to call when setup never ran.
+   */
+  async _teardownWorktree() {
+    const info = this.branchInfo;
+    if (!info || !info.worktreeDir) return;
+    this.branchInfo = null; // guard against a double teardown
+    const keepBranch = this.state.status === 'done' || info.reusedExisting;
+    const res = await removeWorktree({
+      projectDir: this.projectDir,
+      worktreeDir: info.worktreeDir,
+      branch: keepBranch ? null : info.branch,
+      force: true,
+    });
+    for (const s of res.steps.filter((x) => !x.ok)) {
+      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`);
+    }
+    if (this.pipeline) {
+      const branchNote = keepBranch
+        ? `kept branch \`${info.branch}\``
+        : `removed branch \`${info.branch}\``;
+      await appendAudit(
+        this.pipeline.dir,
+        `Worktree removed at \`${info.worktreeDir}\` (${branchNote}).`,
+      ).catch(() => {});
+    }
+    // Reflect the post-teardown reality in state for any late observer.
+    if (this.state.branch) {
+      this.state.branch.worktreeRemoved = true;
+      this.state.branch.branchKept = keepBranch;
+    }
+    this.workDir = this.projectDir;
   }
 
   // ── phase helpers ─────────────────────────────────────────────────────────────
@@ -784,8 +828,26 @@ class Orchestrator extends EventEmitter {
   // ── git checkpoint ─────────────────────────────────────────────────────────
 
   async _ensureGitCheckpoint() {
-    const isRepo = await this._git(['rev-parse', '--is-inside-work-tree']);
-    if (!isRepo.ok || isRepo.stdout.trim() !== 'true') {
+    // C2: `--is-inside-work-tree` is true even when projectDir merely sits
+    // *inside* an enclosing repo (no .git of its own). Acting on that parent
+    // repo would silently create maestro/* branches + checkpoint commits in the
+    // developer's real repo. Require projectDir to BE the repo toplevel; if it
+    // isn't (no repo, or only a parent repo), `git init` a dedicated repo here.
+    const projReal = await realpath(this.projectDir).catch(() => resolve(this.projectDir));
+    const top = await this._git(['rev-parse', '--show-toplevel']);
+    let topReal = null;
+    if (top.ok && top.stdout.trim()) {
+      topReal = await realpath(top.stdout.trim()).catch(() => top.stdout.trim());
+    }
+    const isOwnRepo = topReal === projReal;
+    if (!isOwnRepo) {
+      if (topReal) {
+        this._log(
+          'git',
+          'info',
+          `projectDir is nested in repo ${topReal}; initializing a dedicated repo to isolate worktrees.`,
+        );
+      }
       await this._git(['init']);
       // Ensure an identity exists for the commit (local, non-destructive).
       await this._git(['config', 'user.email', 'orchestrator@local']);

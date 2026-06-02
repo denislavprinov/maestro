@@ -11,8 +11,8 @@
 // single source of truth for what reaches `git branch`.
 
 import { spawn } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdir, rm, realpath } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
 import { runClaude } from './claude-runner.mjs';
@@ -107,7 +107,9 @@ export async function currentBranch(projectDir) {
 
 /**
  * Best-effort default-branch resolution. HEAD branch, then init.defaultBranch,
- * then origin/HEAD, then first local branch, finally 'main'.
+ * then origin/HEAD, then first local branch. On a detached HEAD with no local
+ * branches, fall back to the HEAD SHA (always a valid commit-ish for
+ * `worktree add`) and only then to the literal 'main' (m1).
  */
 export async function resolveDefaultBranch(projectDir) {
   const head = await currentBranch(projectDir);
@@ -119,7 +121,43 @@ export async function resolveDefaultBranch(projectDir) {
     return originHead.stdout.trim().replace(/^origin\//, '');
   }
   const branches = await listLocalBranches(projectDir);
-  return branches.sort()[0] || 'main';
+  if (branches.length) return branches.sort()[0];
+  // Detached HEAD, no branches: a raw SHA is a valid source for `worktree add`.
+  const sha = await git(projectDir, ['rev-parse', 'HEAD']);
+  if (sha.ok && sha.stdout.trim()) return sha.stdout.trim();
+  return 'main';
+}
+
+/**
+ * True iff `ref` resolves to a commit in `projectDir`. Rejects any value
+ * beginning with '-' (would be parsed as a git option). The single source of
+ * truth for "is this a usable worktree source" — used both by createWorktree
+ * (throws) and the API (clean 400) so an injected `--force`/`-q`/unknown ref
+ * never reaches `git worktree add`. (M1)
+ */
+export async function isValidSourceRef(projectDir, ref) {
+  if (typeof ref !== 'string' || !ref || /^-/.test(ref)) return false;
+  const r = await git(projectDir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  return r.ok && !!r.stdout.trim();
+}
+
+/**
+ * Parse `git worktree list --porcelain` and return the path of the worktree
+ * that currently has `branch` checked out, or null. Used to detect the
+ * "branch already in use" conflict before a reuse `worktree add` (M2).
+ */
+export async function worktreePathForBranch(projectDir, branch) {
+  const r = await git(projectDir, ['worktree', 'list', '--porcelain']);
+  if (!r.ok) return null;
+  let curPath = null;
+  for (const line of r.stdout.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) curPath = line.slice('worktree '.length).trim();
+    else if (line.startsWith('branch ')) {
+      const ref = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '');
+      if (ref === branch) return curPath;
+    }
+  }
+  return null;
 }
 
 /**
@@ -132,18 +170,50 @@ export async function createWorktree({ projectDir, pipelineId, sourceBranch, fea
   if (!projectDir) throw new Error('projectDir required');
   if (!pipelineId) throw new Error('pipelineId required');
   if (!sourceBranch) throw new Error('sourceBranch required');
+  // S2: pipelineId becomes a path segment and is later passed to a recursive
+  // remove — reject anything that could escape the worktrees base.
+  if (!/^[A-Za-z0-9._-]+$/.test(pipelineId) || pipelineId === '.' || pipelineId === '..') {
+    throw new Error(`invalid pipelineId: ${JSON.stringify(pipelineId)}`);
+  }
   const branch = sanitizeBranchName(featureBranch);
   if (!branch) throw new Error('featureBranch resolves to empty after sanitize');
 
   const base = join(resolve(projectDir), WORKTREES_DIRNAME);
   await mkdir(base, { recursive: true });
-  const worktreeDir = join(base, pipelineId);
+  // Canonicalize the base so worktreeDir matches what `git worktree list`
+  // reports (git emits realpaths). Without this the M2 self-equality check below
+  // mis-fires on symlinked roots (e.g. macOS /tmp -> /private/tmp).
+  const baseReal = await realpath(base).catch(() => resolve(base));
+  const worktreeDir = join(baseReal, pipelineId);
+  // Belt-and-braces: the sanitized id can't traverse, but assert containment
+  // so a future caller can't turn this into a delete-anything primitive.
+  if (!worktreeDir.startsWith(baseReal + sep)) {
+    throw new Error(`worktree path escapes base: ${worktreeDir}`);
+  }
 
   const branches = await listLocalBranches(projectDir);
   const reusedExisting = branches.includes(branch);
-  const args = reusedExisting
-    ? ['worktree', 'add', worktreeDir, branch]
-    : ['worktree', 'add', '-b', branch, worktreeDir, sourceBranch];
+
+  let args;
+  if (reusedExisting) {
+    // M2: git forbids checking out one branch in two worktrees at once. Reap
+    // stale registrations first; if a *live* worktree still holds it, fail with
+    // an actionable message rather than a raw exit-128 mid-pipeline.
+    await git(projectDir, ['worktree', 'prune']);
+    const inUse = await worktreePathForBranch(projectDir, branch);
+    if (inUse && resolve(inUse) !== resolve(worktreeDir)) {
+      throw new Error(`branch "${branch}" is already checked out in worktree ${inUse}`);
+    }
+    args = ['worktree', 'add', '--', worktreeDir, branch];
+  } else {
+    // M1: validate the source resolves to a real commit (rejects leading-dash
+    // option injection and unknown refs); '--' stops git parsing the trailing
+    // positionals as options as a second line of defense.
+    if (!(await isValidSourceRef(projectDir, sourceBranch))) {
+      throw new Error(`sourceBranch is not a valid ref: ${JSON.stringify(sourceBranch)}`);
+    }
+    args = ['worktree', 'add', '-b', branch, '--', worktreeDir, sourceBranch];
+  }
   const r = await git(projectDir, args, { signal });
   if (!r.ok) {
     throw new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
@@ -152,19 +222,38 @@ export async function createWorktree({ projectDir, pipelineId, sourceBranch, fea
 }
 
 /**
- * Remove a worktree dir + (optionally) its branch. Best-effort.
+ * Remove a worktree dir + (optionally) its branch. Returns
+ * { ok, steps: [{ step, ok, stderr }] } so callers can log/assert — failures are
+ * never silently swallowed (M3).
+ *
+ * IMPORTANT: the non-force path only succeeds on a *pristine* checkout — git
+ * refuses to remove a worktree with modified/untracked files. Agents always
+ * edit files, so teardown of an agent-run worktree MUST pass force:true or it
+ * leaks. With force:true the dir is also removed directly as a backstop, and
+ * the registration is pruned so a later reuse of the branch won't trip M2.
  */
 export async function removeWorktree({ projectDir, worktreeDir, branch, force = false } = {}) {
+  const steps = [];
   if (worktreeDir) {
     const args = force
       ? ['worktree', 'remove', '--force', worktreeDir]
       : ['worktree', 'remove', worktreeDir];
-    await git(projectDir, args);
-    if (force) await rm(worktreeDir, { recursive: true, force: true }).catch(() => {});
+    const r = await git(projectDir, args);
+    steps.push({ step: 'worktree-remove', ok: r.ok, stderr: r.stderr.trim() });
+    if (force) {
+      const fsRes = await rm(worktreeDir, { recursive: true, force: true })
+        .then(() => null)
+        .catch((e) => e.message);
+      if (fsRes) steps.push({ step: 'rm-dir', ok: false, stderr: fsRes });
+    }
+    // Reap the (now-missing) registration so it can't collide on reuse.
+    await git(projectDir, ['worktree', 'prune']);
   }
   if (branch) {
-    await git(projectDir, ['branch', force ? '-D' : '-d', branch]);
+    const r = await git(projectDir, ['branch', force ? '-D' : '-d', branch]);
+    steps.push({ step: 'branch-delete', ok: r.ok, stderr: r.stderr.trim() });
   }
+  return { ok: steps.every((s) => s.ok), steps };
 }
 
 function firstLine(text) {

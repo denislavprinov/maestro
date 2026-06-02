@@ -131,11 +131,11 @@ function parseArgs(argv) {
 }
 
 function fail(msg) {
-  process.stderr.write(`orchestrate: ${msg}\n`);
+  process.stderr.write(`maestro: ${msg}\n`);
   process.exit(2);
 }
 
-const HELP = `orchestrate — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
+const HELP = `maestro — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
 
 Usage:
   maestro <subcommand> [args]
@@ -414,7 +414,7 @@ async function main() {
   }
 
   if (!flags.prompt && !flags.file) {
-    // Allow a bare positional prompt: `orchestrate "do the thing"`.
+    // Allow a bare positional prompt: `maestro "do the thing"`.
     if (flags._.length) {
       flags.prompt = flags._.join(' ');
     } else {
@@ -519,6 +519,6 @@ async function main() {
 main()
   .then((code) => process.exit(code ?? 0))
   .catch((err) => {
-    process.stderr.write(`orchestrate: fatal: ${err?.stack || err?.message || err}\n`);
+    process.stderr.write(`maestro: fatal: ${err?.stack || err?.message || err}\n`);
     process.exit(1);
   });

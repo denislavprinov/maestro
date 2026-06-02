@@ -1,7 +1,7 @@
 // test/orchestrator-worktree.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -62,6 +62,66 @@ test('explicit featureBranch is honored verbatim (after sanitize)', async () => 
   });
   await orch.run();
   assert.equal(orch.getState().branch.feature, 'feat/my-thing');
+});
+
+// ── C1: worktree lifecycle (teardown actually runs) ──────────────────────────
+function branchList(dir) {
+  return spawnSync('git', ['-C', dir, 'branch', '--format=%(refname:short)'])
+    .stdout.toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+test('C1: on done the worktree dir is removed but the feature branch is kept', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'Add login flow', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  const result = await orch.run();
+  assert.equal(result.status, 'done', JSON.stringify(result));
+  const feature = orch.getState().branch.feature;
+  const wtDir = orch.getState().branch.worktreeDir;
+  assert.ok(!existsSync(wtDir), `worktree dir should be removed, still present: ${wtDir}`);
+  assert.ok(branchList(repo).includes(feature), `feature branch ${feature} should be KEPT on success`);
+});
+
+test('C1: on stop the worktree dir AND the freshly-created branch are removed', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  // Stop as soon as the worktree exists; the next _checkAbort aborts the run.
+  orch.on('state', (s) => { if (s.branch && s.branch.feature) orch.stop(); });
+  const result = await orch.run();
+  assert.equal(result.status, 'stopped', JSON.stringify(result));
+  const feature = orch.getState().branch.feature;
+  const wtDir = orch.getState().branch.worktreeDir;
+  assert.ok(!existsSync(wtDir), 'worktree dir should be removed on stop');
+  assert.ok(!branchList(repo).includes(feature), `freshly-created branch ${feature} should be removed on stop`);
+});
+
+// ── C2: nested projectDir must NOT mutate the enclosing repo ──────────────────
+test('C2: a projectDir nested in an enclosing repo gets its own repo, parent untouched', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'maestro-parent-'));
+  created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']);
+  gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n');
+  gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+
+  // Nested dir with NO .git of its own (this is the C2 footgun).
+  const sub = join(parent, 'sub');
+  await mkdir(sub, { recursive: true });
+  await writeFile(join(sub, 'app.txt'), 'app\n');
+
+  const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+  const result = await orch.run();
+  assert.equal(result.status, 'done', JSON.stringify(result));
+
+  assert.ok(existsSync(join(sub, '.git')), 'sub should have been given its OWN git repo');
+  const feature = orch.getState().branch.feature;
+  assert.ok(branchList(sub).includes(feature), `feature branch should live in sub's repo`);
+  assert.ok(!branchList(parent).includes(feature), `parent repo must NOT have ${feature}`);
+  assert.ok(!branchList(parent).some((b) => b.startsWith('maestro/')), 'parent repo must have no maestro/* branches');
 });
 
 test('source branch defaults to actual HEAD when not "main"', async () => {
