@@ -28,6 +28,7 @@ import {
 } from '../src/core/workflows.mjs';
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { listLocalBranches, currentBranch } from '../src/core/worktree.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -257,6 +258,13 @@ app.post('/api/run', async (req, res) => {
     // createPipeline copies them into <pipeline>/extras/.
     const extras = await writeExtras(runId, body.extras);
 
+    const branch = {
+      source: typeof body.sourceBranch === 'string' && body.sourceBranch.trim()
+        ? body.sourceBranch.trim() : null,
+      feature: typeof body.featureBranch === 'string' && body.featureBranch.trim()
+        ? body.featureBranch.trim() : null,
+    };
+
     const orch = createOrchestrator({
       projectDir,
       prompt: effectivePrompt,
@@ -264,6 +272,7 @@ app.post('/api/run', async (req, res) => {
       extras,
       agentsDir: AGENTS_DIR,
       workflowId,
+      branch,
       claude: { permissionMode: 'acceptEdits', mock },
     });
 
@@ -395,6 +404,20 @@ app.post('/api/install', async (req, res) => {
 // Project registry: GET list / POST add / DELETE remove. Thin delegation to
 // src/core/projects.mjs (which owns validation + persistence).
 // ---------------------------------------------------------------------------
+app.get('/api/branches', async (req, res) => {
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const [branches, current] = await Promise.all([
+      listLocalBranches(projectDir),
+      currentBranch(projectDir),
+    ]);
+    res.json({ branches, current });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.get('/api/projects', async (_req, res) => {
   try {
     res.json({ projects: await listProjects() });

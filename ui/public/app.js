@@ -50,6 +50,8 @@ const el = {
   addProjectCancel: $('#addProjectCancel'),
   addProjectMsg: $('#addProjectMsg'),
   title: $('#title'),
+  sourceBranch: $('#sourceBranch'),
+  featureBranch: $('#featureBranch'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
   markdownPane: $('#markdown-pane'),
@@ -584,6 +586,9 @@ function costByNode(steps) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg && msg.branch && msg.branch.feature) {
+    r.branchFeature = msg.branch.feature;
+  }
   if (msg.stepper && r.stepper == null) {
     r.stepper = msg.stepper;
     // The manifest arrived after the card was built (or replaced the default):
@@ -2224,11 +2229,30 @@ function onProjectChanged() {
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
     loadHistory(path);
     loadConfig(path);
+    refreshBranches(path);
   } else {
     state.projectDir = '';
     // No project yet: still load the built-in models so the picker isn't empty.
     loadConfig('');
+    refreshBranches('');
   }
+}
+
+async function refreshBranches(projectDir) {
+  if (!el.sourceBranch) return;
+  el.sourceBranch.innerHTML = '';
+  if (!projectDir) return;
+  try {
+    const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
+    const data = await r.json();
+    const branches = Array.isArray(data.branches) ? data.branches : [];
+    for (const b of branches) {
+      const opt = document.createElement('option');
+      opt.value = b; opt.textContent = b;
+      if (b === data.current) opt.selected = true;
+      el.sourceBranch.appendChild(opt);
+    }
+  } catch { /* leave the select empty; server falls back to HEAD */ }
 }
 
 el.projectSelect.addEventListener('change', () => {
@@ -2334,6 +2358,8 @@ el.form.addEventListener('submit', async (e) => {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
     mock: el.mock.checked,
+    sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
+    featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
   };
 
   if (source === 'markdown') {
@@ -2883,7 +2909,10 @@ function buildRunCard(r) {
   const titleEl = node.querySelector('.run-title');
   if (titleEl) titleEl.textContent = r.title;
   const metaEl = node.querySelector('.rm-text');
-  if (metaEl) metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}`;
+  if (metaEl) {
+    const branchTxt = r.branchFeature ? ` · ${r.branchFeature}` : '';
+    metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}${branchTxt}`;
+  }
 
   // Hydrate the log from any events that arrived before the card existed.
   const logEl = node.querySelector('.log');

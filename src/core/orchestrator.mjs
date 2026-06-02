@@ -36,6 +36,9 @@ import { runPlannerClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import {
+  createWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
+} from './worktree.mjs';
 
 /**
  * Default location of the agent prompt markdown files, relative to this module.
@@ -87,6 +90,16 @@ class Orchestrator extends EventEmitter {
     this.workflowId = this.opts.workflowId || 'wf_default';
     this._runners = this.opts.runners || defaultRunners;
 
+    // Worktree isolation: workDir is the per-pipeline checkout. Until
+    // _setupWorktree() runs, it mirrors projectDir so the existing tests/paths
+    // (dispatcher tests that bypass run()) behave identically.
+    this.workDir = this.projectDir;
+    this.branchOpts = {
+      source: (this.opts.branch && this.opts.branch.source) || null,
+      feature: (this.opts.branch && this.opts.branch.feature) || null,
+    };
+    this.branchInfo = null;
+
     this.abort = new AbortController();
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this.agentPrompts = null;
@@ -112,6 +125,7 @@ class Orchestrator extends EventEmitter {
       pipelineDir: null,
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
+      branch: null,     // { source, feature, worktreeDir, reusedExisting } after _setupWorktree
     };
   }
 
@@ -229,6 +243,11 @@ class Orchestrator extends EventEmitter {
       this._phase('preflight', 0, 'done');
       this._checkAbort();
 
+      // 3b) Set up the per-pipeline worktree. All subsequent claude spawns cwd
+      // into this.workDir; artifacts continue to live under this.projectDir.
+      await this._setupWorktree();
+      this._checkAbort();
+
       // 4) Planner clarify (single round).
       const answers = await this._clarify(plannerNodeIdOf(plan));
       this._checkAbort();
@@ -275,6 +294,45 @@ class Orchestrator extends EventEmitter {
       });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     }
+  }
+
+  // ── worktree setup ───────────────────────────────────────────────────────────
+
+  async _setupWorktree() {
+    this._log('worktree', 'info', 'Resolving source/feature branches…');
+    const source = this.branchOpts.source || (await resolveDefaultBranch(this.projectDir));
+    const featureRaw = this.branchOpts.feature
+      ? sanitizeBranchName(this.branchOpts.feature)
+      : await suggestBranchName({
+          prompt: this.pipeline.promptText,
+          pipelineId: this.pipeline.id,
+          mock: this.claude.mock,
+          projectDir: this.projectDir,
+          signal: this.abort.signal,
+          onEvent: (e) => this._onAgentEvent('worktree', e),
+        });
+    const info = await createWorktree({
+      projectDir: this.projectDir,
+      pipelineId: this.pipeline.id,
+      sourceBranch: source,
+      featureBranch: featureRaw,
+      signal: this.abort.signal,
+    });
+    this.workDir = info.worktreeDir;
+    this.branchInfo = info;
+    this.state.branch = {
+      source: info.sourceBranch,
+      feature: info.branch,
+      worktreeDir: info.worktreeDir,
+      reusedExisting: info.reusedExisting,
+    };
+    await this._persist();
+    const reuseNote = info.reusedExisting ? ' (resumed existing branch)' : '';
+    await appendAudit(
+      this.pipeline.dir,
+      `Worktree: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
+    );
+    this._emit('state', this.getState());
   }
 
   // ── phase helpers ─────────────────────────────────────────────────────────────
@@ -590,7 +648,7 @@ class Orchestrator extends EventEmitter {
     // braces for the (guarded) case where stepModels is null.
     const step = (this.stepModels && this.stepModels[role]) || {};
     return {
-      projectDir: this.projectDir,
+      projectDir: this.workDir,
       pipelineDir: this.pipeline.dir,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
@@ -633,7 +691,7 @@ class Orchestrator extends EventEmitter {
     const cycle = Number(pos.cycle) > 0 ? Number(pos.cycle) : 1;
     const stepKey = this._stepKeyFor(node, stepIndex, cycle);
     return {
-      projectDir: this.projectDir,
+      projectDir: this.workDir,
       pipelineDir: this.pipeline.dir,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
@@ -772,7 +830,8 @@ class Orchestrator extends EventEmitter {
    * checkpoint commit remains the single diff base. Best-effort; never throws.
    */
   async _stageWorkingTree() {
-    const res = await this._git(['add', '-A', '-N']);
+    // Stage inside the worktree so the reviewer's `git diff` sees agent edits.
+    const res = await this._git(['add', '-A', '-N'], { cwd: this.workDir });
     if (!res.ok && res.stderr && res.stderr.trim()) {
       this._log('git', 'debug', `git add -A -N: ${res.stderr.trim()}`);
     }
@@ -782,12 +841,12 @@ class Orchestrator extends EventEmitter {
    * Run a git command in the project dir. Never throws; returns
    * { ok, code, stdout, stderr }. Honors the abort signal.
    */
-  _git(args) {
+  _git(args, { cwd } = {}) {
     return new Promise((resolveP) => {
       let child;
       try {
         child = spawn('git', args, {
-          cwd: this.projectDir,
+          cwd: cwd || this.projectDir,
           stdio: ['ignore', 'pipe', 'pipe'],
           signal: this.abort.signal,
         });
