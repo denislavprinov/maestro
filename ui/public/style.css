@@ -550,7 +550,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 .col{display:flex;flex-direction:column;gap:18px;align-items:center;justify-content:center;align-self:center;padding:14px 10px;border-radius:20px;position:relative;z-index:1;transition:background .14s,outline-color .14s;outline:2px dashed transparent;outline-offset:0;}
 .col.over{background:rgba(91,166,204,.10);outline-color:var(--blue);}
-.col .col-tag{position:absolute;top:8px;left:50%;transform:translate(-50%,-100%);font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);text-transform:uppercase;white-space:nowrap;}
+/* left:10px tracks .col padding:14px 10px — tag left edge lines up with card left edge (was centered, causing feedback arcs to cut through text) */
+.col .col-tag{position:absolute;top:8px;left:10px;transform:translateY(-100%);font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);text-transform:uppercase;white-space:nowrap;}
 .col .col-tag em{font-style:normal;color:var(--blue-ink);}
 .col .par-hint{position:absolute;bottom:6px;left:50%;transform:translate(-50%,100%);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:var(--blue-ink);text-transform:uppercase;opacity:0;transition:opacity .14s;white-space:nowrap;}
 .col.over .par-hint{opacity:1;}
