@@ -168,6 +168,19 @@ class Orchestrator extends EventEmitter {
       this.state.startedAt = new Date().toISOString();
       this._setStatus('running');
 
+      // Resolve the workflow topology + per-node run-config and snapshot the UI
+      // stepper manifest BEFORE any blocking work (preflight/clarify). It depends
+      // only on workflowId + run-config + registry — none of clarify's output — so
+      // Running/History render the right nodes (and per-node model·effort) at once
+      // instead of the legacy default until clarify ends. resolveWorkflow reads
+      // projectDir (NOT the pipeline dir, which doesn't exist yet), so this is safe
+      // here. pipelineDir is null in this first event; it is persisted + re-emitted
+      // after createPipeline below.
+      const registry = await loadAgentRegistry();
+      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
+      this.state.stepper = buildStepperManifest(plan, registry);
+      this._emit('state', this.getState());
+
       // 1) Load agent prompts + preflight tool detection (parallel; both safe).
       this._phase('preflight', 0, 'start');
       const [agentPrompts, tools, stepModels] = await Promise.all([
@@ -215,19 +228,9 @@ class Orchestrator extends EventEmitter {
       const answers = await this._clarify();
       this._checkAbort();
 
-      // 5) Resolve the workflow topology + per-project run-config -> ExecutablePlan,
-      //    then dispatch it. The default workflow (wf_default) routes through the
-      //    SAME dispatcher and reproduces today's Plan->Refine->Implement->Review
-      //    (the planner PLAN node is the first dispatched step; clarify above is a
-      //    pre-step, not a plan node).
-      const registry = await loadAgentRegistry();
-      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
-      // Snapshot the stepper manifest the Running/History views render from. It
-      // rides in state.json + every 'state' event via getState() (deep clone).
-      // Stamp + persist + emit BEFORE dispatch so clients render the right nodes
-      // before the first node 'phase' event lands. (this.pipeline already exists —
-      // it was created at orchestrator.mjs:188 — so _persist() writes state.json.)
-      this.state.stepper = buildStepperManifest(plan, registry);
+      // 5) Dispatch the resolved workflow (already snapshotted into state.stepper
+      //    at run start). Persist now that this.pipeline exists, and re-emit the
+      //    full state (with pipelineDir) for any client that connected mid-preflight.
       await this._persist();
       this._emit('state', this.getState());
       await appendAudit(this.pipeline.dir, `Workflow: **${plan.name}** (${plan.id}).`);
