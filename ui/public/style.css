@@ -23,6 +23,7 @@
   --blue-bg:#DEEFF7; --blue:#5BA6CC; --blue-ink:#3782A8;
   --violet-bg:#EAE6F8; --violet:#8C7FD6; --violet-ink:#6353B8;
   --amber-bg:#FCE8C8; --amber:#E6962A; --amber-ink:#A66510;
+  --seq:#B7B7BC;
 
   --r-card:24px;
   --r-ctrl:14px;
@@ -590,8 +591,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .builder-foot{display:flex;align-items:center;gap:14px;padding:16px 24px;border-top:1px solid var(--line);background:var(--panel);flex-wrap:wrap;}
 .legend{display:flex;align-items:center;gap:20px;font-size:12px;color:var(--ink-2);font-weight:600;}
 .legend .lg{display:flex;align-items:center;gap:8px;}
-.legend .ll{width:28px;border-top:2.5px dashed var(--ink-3);}
-.legend .ll.fb{border-top:2.5px dashed var(--amber);}
+.legend .ll{width:12px;height:12px;border-radius:50%;background:var(--seq);display:inline-block;flex:none;}
+.legend .ll.fb{background:var(--amber);}
+.legend .ll.sl{background:var(--violet);}
 .builder-foot .sp{flex:1;}
 .link-banner{display:inline-flex;align-items:center;gap:11px;background:var(--amber-bg);color:var(--amber-ink);font-weight:600;font-size:12.5px;padding:8px 9px 8px 15px;border-radius:999px;}
 .link-banner[hidden]{display:none;}
