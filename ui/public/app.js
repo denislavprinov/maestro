@@ -62,7 +62,6 @@ const el = {
   extras: $('#extras'),
   extrasNote: $('#extrasNote'),
   mock: $('#mock'),
-  installBtn: $('#install-btn'),
   startBtn: $('#start-btn'),
   formMsg: $('#form-msg'),
 
@@ -2524,34 +2523,6 @@ if (runListEl) {
     sw.setAttribute('aria-checked', String(on));
   });
 }
-
-// ---------------------------------------------------------------------------
-// Install agents
-// ---------------------------------------------------------------------------
-el.installBtn.addEventListener('click', async () => {
-  const projectDir = selectedProjectPath();
-  if (!projectDir) return setFormMsg('Select a project first.', 'err');
-  el.installBtn.disabled = true;
-  setFormMsg('Installing agents + /maestro skill...', '');
-  try {
-    const res = await fetch('/api/install', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      setFormMsg(`Install failed: ${data.error || res.status}`, 'err');
-    } else {
-      const n = (data.copied || []).length;
-      setFormMsg(`Installed ${n} file(s) into ${data.target || projectDir + '/.claude'}. ${data.hint || ''}`, 'ok');
-    }
-  } catch (e) {
-    setFormMsg(`Install error: ${e.message}`, 'err');
-  } finally {
-    el.installBtn.disabled = false;
-  }
-});
 
 // ---------------------------------------------------------------------------
 // History
