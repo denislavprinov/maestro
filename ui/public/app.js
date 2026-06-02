@@ -409,10 +409,12 @@ function buildParallelNode(node) {
   if (node.color) row.classList.add('acc-' + node.color);
   const b = document.createElement('b');
   b.textContent = node.label || node.id;
+  const sub = document.createElement('small'); sub.className = 'sub'; sub.textContent = node.sub || '';
+  const me = document.createElement('small'); me.className = 'me'; me.textContent = nodeModelEffortLabel(node);
   const cycle = document.createElement('em'); cycle.className = 'cycle';
   const dur = document.createElement('em'); dur.className = 'dur';
   const cost = document.createElement('em'); cost.className = 'cost';
-  row.append(b, cycle, dur, cost);
+  row.append(b, sub, me, cycle, dur, cost);
   return row;
 }
 

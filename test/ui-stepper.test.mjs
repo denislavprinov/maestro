@@ -132,6 +132,28 @@ test('buildStepper renders per-node model·effort from the manifest into .me', a
   assert.equal(pre.querySelector('.me'), null);
 });
 
+test('buildStepper renders .sub + .me on parallel-cell nodes', async () => {
+  const { window } = await bootLive();
+  window.__np._setModels([{ id: 'sonnet', label: 'Sonnet 4.6', efforts: [] }]);
+  const host = window.document.createElement('div');
+  host.className = 'stages compact';
+  const manifest = {
+    version: 1,
+    steps: [
+      { kind: 'agents', nodes: [
+        { id: 's1_0', uiPhase: 'implement', label: 'Implementation', sub: 'write the code', model: 'sonnet', effort: '', cycles: false },
+        { id: 's1_1', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', sub: 'draft manual test cases', model: '', effort: '', cycles: false },
+      ] },
+    ],
+  };
+  window.__np.buildStepper(host, manifest);
+  const a = host.querySelector('.stage-node[data-node-id="s1_0"]');
+  assert.equal(a.querySelector('.sub').textContent, 'write the code');
+  assert.equal(a.querySelector('.me').textContent, 'Sonnet 4.6'); // no effort -> just the model label
+  const b = host.querySelector('.stage-node[data-node-id="s1_1"]');
+  assert.equal(b.querySelector('.me').textContent, 'default');
+});
+
 test('Running card renders the run\'s own manifest and paints by nodeId', async () => {
   const ctx = await bootLive();
   ctx.selectProject();
