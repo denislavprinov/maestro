@@ -520,6 +520,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stage .lbl .dur{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--ink-2);font-style:normal;margin-top:2px;}
 .stage .lbl .dur:empty{display:none;}
 .stage.active .lbl .dur{color:rgba(255,255,255,.82);}
+.stage .lbl .me{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);font-style:normal;margin-top:2px;}
+.stage .lbl .me:empty{display:none;}
+.stage.active .lbl .me{color:rgba(255,255,255,.72);}
 .run-meta .run-time{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
 .run-meta .run-time:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .h-meta .hist-time{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
@@ -639,6 +642,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stages.compact .stage.parallel .stage-node .dur,
 .stages.compact .stage.parallel .stage-node .cost{font-family:var(--mono);font-size:10.5px;font-style:normal;color:var(--ink-2);}
 .stage .lbl .cycle:empty,.stage .lbl .dur:empty,.stage .stage-node em:empty{display:none;}
+.stages.compact .stage.parallel .stage-node .sub{color:var(--ink-3);font-size:10.5px;font-weight:500;}
+.stages.compact .stage.parallel .stage-node .me{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);}
+.stages.compact .stage.parallel .stage-node .me:empty{display:none;}
 
 /* Node color accent (mirrors the composer's .acc swatches) on the label edge.
    Cover ALL six registry colors — the default implementer is amber. */
