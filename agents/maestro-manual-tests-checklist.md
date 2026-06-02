@@ -57,4 +57,4 @@ After writing the file, emit a short assistant note with the absolute path of th
 - Keep assistant chatter minimal; the markdown file is your real output.
 
 ## Graph tooling
-If the prompt says **graphify** is available, use graphify to map the user-facing surfaces before drafting cases. Else if it says **code-review-graph** is available, use code-review-graph. If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with git + Glob/Grep/Read.
+If the prompt says **graphify** is available, use graphify to map the user-facing surfaces before drafting cases, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with git + Glob/Grep/Read.

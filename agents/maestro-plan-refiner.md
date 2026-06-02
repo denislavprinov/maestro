@@ -59,4 +59,4 @@ After writing both files, emit a short assistant note with the absolute paths of
 - Keep prose minimal; the files are your real output.
 
 ## Graph tooling
-If the prompt says **graphify** is available, use graphify to ground your review in the codebase. Else if it says **code-review-graph** is available, use code-review-graph. If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.
+If the prompt says **graphify** is available, use graphify to ground your review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.

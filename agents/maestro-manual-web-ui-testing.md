@@ -58,4 +58,4 @@ After writing the JSON, emit a short assistant note with the absolute path of `r
 - Keep assistant chatter minimal; the verdict JSON is your real output.
 
 ## Graph tooling
-If the prompt says **graphify** is available, use graphify to understand the UI's routes/components before testing. Else if it says **code-review-graph** is available, use code-review-graph. If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.
+If the prompt says **graphify** is available, use graphify to understand the UI's routes/components before testing, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.

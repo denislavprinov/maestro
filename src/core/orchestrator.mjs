@@ -195,7 +195,9 @@ class Orchestrator extends EventEmitter {
       this._log(
         'preflight',
         'info',
-        tools.tool ? `Detected tool: ${tools.tool}` : 'No knowledge-graph tooling detected',
+        tools.tool
+          ? `Detected tool: ${tools.tool}${tools.kind ? ` (${tools.kind})` : ''}`
+          : 'No knowledge-graph tooling detected',
       );
 
       // 2) Create the pipeline directory + audit.
@@ -216,7 +218,10 @@ class Orchestrator extends EventEmitter {
       this._artifact('pipeline', this.pipeline.dir);
       await appendAudit(this.pipeline.dir, `Pipeline created (id ${this.pipeline.id}).`);
       if (tools.tool) {
-        await appendAudit(this.pipeline.dir, `Preflight: using **${tools.tool}**.`);
+        await appendAudit(
+          this.pipeline.dir,
+          `Preflight: using **${tools.tool}**${tools.kind ? ` (${tools.kind})` : ''}.`,
+        );
       }
 
       // 3) Ensure a git repo + checkpoint commit.

@@ -87,21 +87,31 @@ async function pipShows(pkg) {
 }
 
 /**
- * Detect graphify. ANY of:
- *  - `which graphify`
- *  - ~/.claude/skills/graphify/SKILL.md exists
- *  - <projectDir>/graphify-out exists
- *  - pipx list / pip show graphify mentions graphify
+ * Detect graphify and HOW it is installed. Returns:
+ *   { found: boolean, kind: 'cli'|'skill'|'output-cached'|null }
+ *
+ * The `kind` controls the instruction wording so the agent picks the right
+ * dispatch mechanism (Bash CLI vs Skill tool vs read cached output). Priority:
+ *   1. `which graphify`            → 'cli'   (executable on PATH)
+ *   2. pipx / pip shows graphify   → 'cli'   (importable / on PATH soon)
+ *   3. ~/.claude/skills/graphify/  → 'skill' (Claude Code skill, no binary)
+ *   4. <projectDir>/graphify-out   → 'output-cached' (graph exists from prior run)
+ *
+ * Ordering matters: a host with both a CLI and a skill prefers the CLI because
+ * an agent can drive it directly. An `output-cached` win is the weakest — it
+ * means a graph exists but we don't know how it was built.
  */
 async function detectGraphify(projectDir) {
-  const checks = await Promise.all([
-    whichOk('graphify'),
-    pathExists(join(homedir(), '.claude', 'skills', 'graphify', 'SKILL.md')),
-    pathExists(join(projectDir, 'graphify-out')),
-    pipxMentions('graphify'),
-    pipShows('graphify'),
-  ]);
-  return checks.some(Boolean);
+  if (await whichOk('graphify')) return { found: true, kind: 'cli' };
+  if (await pipxMentions('graphify')) return { found: true, kind: 'cli' };
+  if (await pipShows('graphify')) return { found: true, kind: 'cli' };
+  if (await pathExists(join(homedir(), '.claude', 'skills', 'graphify', 'SKILL.md'))) {
+    return { found: true, kind: 'skill' };
+  }
+  if (await pathExists(join(projectDir, 'graphify-out'))) {
+    return { found: true, kind: 'output-cached' };
+  }
+  return { found: false, kind: null };
 }
 
 /**
@@ -123,23 +133,47 @@ async function detectCodeReviewGraph(projectDir) {
 
 /**
  * Build the human-readable instruction injected into agent system prompts.
+ * The wording is branched by `kind` so the agent uses the right dispatch
+ * mechanism (Bash CLI, Skill tool, or simply reading cached output).
  */
-function buildInstruction(tool) {
+export function buildInstruction(tool, kind) {
   if (tool === 'graphify') {
+    if (kind === 'skill') {
+      return (
+        'A code knowledge-graph SKILL named "graphify" is available. It is a ' +
+        'Claude Code skill, NOT a shell command — do NOT try to run it via Bash. ' +
+        'BEFORE analyzing or planning, invoke it via the `Skill` tool, e.g. ' +
+        '`Skill(skill: "graphify", args: "<your question about the code>")`. ' +
+        'Use its output to ground your work in real codebase structure rather ' +
+        'than assumptions. A cached graph may already exist at ' +
+        '<projectDir>/graphify-out/ — consult it if present.'
+      );
+    }
+    if (kind === 'output-cached') {
+      return (
+        'A graphify knowledge graph has already been built for this project at ' +
+        '<projectDir>/graphify-out/. BEFORE analyzing or planning, read ' +
+        'graphify-out/GRAPH_REPORT.md and/or graphify-out/graph.json so your ' +
+        'understanding of the codebase is grounded in real structure rather than ' +
+        'assumptions. (No graphify binary or Skill was detected, so do not try ' +
+        'to invoke it — just read the cached output.)'
+      );
+    }
+    // 'cli' (or unspecified, treated as CLI for safety)
     return (
-      'A code knowledge-graph tool named "graphify" is available in this ' +
-      'environment. Before analyzing or planning, use graphify to build/query a ' +
-      'knowledge graph of the relevant code (e.g. run it to produce graphify-out/ ' +
-      'and consult it) so your understanding of the codebase is grounded in real ' +
-      'structure rather than assumptions.'
+      'A code knowledge-graph CLI named "graphify" is available on PATH. ' +
+      'BEFORE analyzing or planning, run it via Bash to build/refresh ' +
+      '<projectDir>/graphify-out/, then read graphify-out/GRAPH_REPORT.md and ' +
+      'graphify-out/graph.json. Ground your work in the real codebase structure ' +
+      'rather than assumptions.'
     );
   }
   if (tool === 'code-review-graph') {
     return (
-      'A code-analysis tool named "code-review-graph" is available in this ' +
-      'environment. Use it to build a graph of the codebase and inform your ' +
-      'analysis, planning, and review with its output rather than relying on ' +
-      'assumptions about code structure.'
+      'A code-analysis CLI named "code-review-graph" is available in this ' +
+      'environment. Run it via Bash to build a graph of the codebase and inform ' +
+      'your analysis, planning, and review with its output rather than relying ' +
+      'on assumptions about code structure.'
     );
   }
   return '';
@@ -148,28 +182,36 @@ function buildInstruction(tool) {
 /**
  * Detect optional tooling for a project directory.
  * @param {string} projectDir
- * @returns {Promise<{graphify:boolean, codeReviewGraph:boolean, tool:('graphify'|'code-review-graph'|null), instruction:string}>}
+ * @returns {Promise<{
+ *   graphify:boolean,
+ *   codeReviewGraph:boolean,
+ *   tool:('graphify'|'code-review-graph'|null),
+ *   kind:('cli'|'skill'|'output-cached'|null),
+ *   instruction:string,
+ * }>}
  */
 export async function detectTools(projectDir) {
   const dir = projectDir || process.cwd();
-  let graphify = false;
+  let graphifyInfo = { found: false, kind: null };
   let codeReviewGraph = false;
   try {
-    [graphify, codeReviewGraph] = await Promise.all([
+    [graphifyInfo, codeReviewGraph] = await Promise.all([
       detectGraphify(dir),
       detectCodeReviewGraph(dir),
     ]);
   } catch {
     // Absolute belt-and-suspenders: detection must never throw.
-    graphify = false;
+    graphifyInfo = { found: false, kind: null };
     codeReviewGraph = false;
   }
   // BOTH installed => prefer graphify.
-  const tool = graphify ? 'graphify' : codeReviewGraph ? 'code-review-graph' : null;
+  const tool = graphifyInfo.found ? 'graphify' : codeReviewGraph ? 'code-review-graph' : null;
+  const kind = tool === 'graphify' ? graphifyInfo.kind : tool === 'code-review-graph' ? 'cli' : null;
   return {
-    graphify,
+    graphify: graphifyInfo.found,
     codeReviewGraph,
     tool,
-    instruction: buildInstruction(tool),
+    kind,
+    instruction: buildInstruction(tool, kind),
   };
 }
