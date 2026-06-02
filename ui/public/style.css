@@ -287,7 +287,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stage-cfg .meta b{display:block;font-weight:600;font-size:14.5px;}
 .stage-cfg .meta small{color:var(--ink-3);font-size:12px;}
 .stage-cfg .picks{display:flex;gap:10px;flex:0 0 auto;}
-.stage-cfg .select-wrap{width:130px;}
+.stage-cfg .select-wrap{width:180px;}
 .stage-cfg .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
 .acc.violet{background:var(--violet);} .acc.green{background:var(--green);}
 .acc.peach{background:var(--peach);} .acc.blue{background:var(--blue);}
