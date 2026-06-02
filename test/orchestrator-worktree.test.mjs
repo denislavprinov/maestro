@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
@@ -96,6 +96,33 @@ test('C1: on stop the worktree dir AND the freshly-created branch are removed', 
   const wtDir = orch.getState().branch.worktreeDir;
   assert.ok(!existsSync(wtDir), 'worktree dir should be removed on stop');
   assert.ok(!branchList(repo).includes(feature), `freshly-created branch ${feature} should be removed on stop`);
+});
+
+test('on done the agent work is COMMITTED to the kept feature branch', async () => {
+  const repo = await freshRepo();
+  const mainSha = spawnSync('git', ['-C', repo, 'rev-parse', 'main']).stdout.toString().trim();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'Add login flow', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  // Simulate an agent editing a file inside the worktree as soon as it exists.
+  let injected = false;
+  orch.on('state', (s) => {
+    if (!injected && s.branch && s.branch.worktreeDir && existsSync(s.branch.worktreeDir)) {
+      injected = true;
+      writeFileSync(join(s.branch.worktreeDir, 'agent-output.txt'), 'work from the agent\n');
+    }
+  });
+  const result = await orch.run();
+  assert.equal(result.status, 'done', JSON.stringify(result));
+  assert.ok(injected, 'precondition: a file was injected into the worktree');
+  const feature = orch.getState().branch.feature;
+
+  // The kept branch must have advanced past main and contain the agent's file.
+  const featSha = spawnSync('git', ['-C', repo, 'rev-parse', feature]).stdout.toString().trim();
+  assert.notEqual(featSha, mainSha, 'feature branch should carry a new commit, not still equal main');
+  const fileInCommit = spawnSync('git', ['-C', repo, 'show', `${feature}:agent-output.txt`]);
+  assert.equal(fileInCommit.status, 0, 'agent-output.txt must be committed on the kept feature branch');
+  assert.match(fileInCommit.stdout.toString(), /work from the agent/);
 });
 
 // ── C2: nested projectDir must NOT mutate the enclosing repo ──────────────────

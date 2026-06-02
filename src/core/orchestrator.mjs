@@ -353,6 +353,12 @@ class Orchestrator extends EventEmitter {
     if (!info || !info.worktreeDir) return;
     this.branchInfo = null; // guard against a double teardown
     const keepBranch = this.state.status === 'done' || info.reusedExisting;
+    // Commit the agent's work onto the feature branch BEFORE removal. Without
+    // this, removeWorktree(force:true) discards the working tree and the kept
+    // branch carries no changes (the staging in _stageWorkingTree is intent-to-add
+    // for the reviewer's diff only — it never creates a commit). Only when we are
+    // keeping the branch; on a discarded branch there is nothing to preserve.
+    if (keepBranch) await this._commitWork(info).catch(() => {});
     const res = await removeWorktree({
       projectDir: this.projectDir,
       worktreeDir: info.worktreeDir,
@@ -377,6 +383,60 @@ class Orchestrator extends EventEmitter {
       this.state.branch.branchKept = keepBranch;
     }
     this.workDir = this.projectDir;
+  }
+
+  /**
+   * Commit every change in the worktree onto the feature branch so the kept
+   * branch actually carries the agent's work after the worktree is removed.
+   * Best-effort: never throws; logs and returns null on any failure. Skips
+   * cleanly when the working tree is clean (no diff from the checkpoint), which
+   * is the truthful "no change needed" outcome. Records the SHA on state.branch.
+   * @param {{worktreeDir:string, branch:string}} info the branch being kept
+   * @returns {Promise<string|null>} the new commit SHA, or null when nothing committed.
+   */
+  async _commitWork(info) {
+    const cwd = info?.worktreeDir;
+    if (!cwd) return null;
+    const status = await this._git(['status', '--porcelain'], { cwd });
+    if (!status.ok) {
+      this._log('git', 'warn', `commit skipped: git status failed: ${status.stderr.trim()}`);
+      return null;
+    }
+    if (!status.stdout.trim()) {
+      this._log('git', 'info', 'No changes to commit (working tree clean).');
+      return null;
+    }
+    const add = await this._git(['add', '-A'], { cwd });
+    if (!add.ok) {
+      this._log('git', 'warn', `commit skipped: git add failed: ${add.stderr.trim()}`);
+      return null;
+    }
+    const title = this.state.title || this.baseName || 'changes';
+    const msg = `maestro: ${title}${this.pipeline ? `\n\nPipeline ${this.pipeline.id}` : ''}`;
+    // Plain commit first (uses the repo's configured identity); fall back to a
+    // local identity so a repo with no user.name/email still commits — mirrors
+    // _ensureGitCheckpoint's belt-and-braces.
+    let commit = await this._git(['commit', '-m', msg], { cwd });
+    if (!commit.ok) {
+      commit = await this._git(
+        ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator', 'commit', '-m', msg],
+        { cwd },
+      );
+    }
+    if (!commit.ok) {
+      this._log('git', 'warn', `commit failed: ${commit.stderr.trim() || `exit ${commit.code}`}`);
+      return null;
+    }
+    const ref = await this._git(['rev-parse', 'HEAD'], { cwd });
+    const sha = ref.ok ? ref.stdout.trim() : null;
+    if (this.state.branch) this.state.branch.commit = sha;
+    if (sha && this.pipeline) {
+      await appendAudit(
+        this.pipeline.dir,
+        `Committed agent work to \`${info.branch}\` at \`${sha.slice(0, 10)}\`.`,
+      ).catch(() => {});
+    }
+    return sha;
   }
 
   // ── phase helpers ─────────────────────────────────────────────────────────────
