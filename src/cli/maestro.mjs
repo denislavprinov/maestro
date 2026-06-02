@@ -46,6 +46,8 @@ function parseArgs(argv) {
     mock: false,
     auto: false,
     install: null,
+    sourceBranch: undefined,
+    featureBranch: undefined,
     help: false,
     _: [],
   };
@@ -59,6 +61,8 @@ function parseArgs(argv) {
     '--permission-mode',
     '--workflow',
     '--install',
+    '--source-branch',
+    '--branch',
   ]);
   const map = {
     '--project': 'project',
@@ -70,6 +74,8 @@ function parseArgs(argv) {
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
+    '--source-branch': 'sourceBranch',
+    '--branch': 'featureBranch',
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -125,11 +131,11 @@ function parseArgs(argv) {
 }
 
 function fail(msg) {
-  process.stderr.write(`orchestrate: ${msg}\n`);
+  process.stderr.write(`maestro: ${msg}\n`);
   process.exit(2);
 }
 
-const HELP = `orchestrate — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
+const HELP = `maestro — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
 
 Usage:
   maestro <subcommand> [args]
@@ -153,6 +159,8 @@ Options:
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode (default acceptEdits)
   --workflow <id>          Saved workflow id to run (default: wf_default)
+  --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
+  --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
   --ui                     Launch the web UI (ui/server.mjs) and exit
@@ -406,7 +414,7 @@ async function main() {
   }
 
   if (!flags.prompt && !flags.file) {
-    // Allow a bare positional prompt: `orchestrate "do the thing"`.
+    // Allow a bare positional prompt: `maestro "do the thing"`.
     if (flags._.length) {
       flags.prompt = flags._.join(' ');
     } else {
@@ -424,6 +432,7 @@ async function main() {
     title: flags.title || undefined,
     extras,
     workflowId: flags.workflow || undefined,
+    branch: { source: flags.sourceBranch, feature: flags.featureBranch },
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,
@@ -510,6 +519,6 @@ async function main() {
 main()
   .then((code) => process.exit(code ?? 0))
   .catch((err) => {
-    process.stderr.write(`orchestrate: fatal: ${err?.stack || err?.message || err}\n`);
+    process.stderr.write(`maestro: fatal: ${err?.stack || err?.message || err}\n`);
     process.exit(1);
   });

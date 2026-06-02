@@ -106,6 +106,20 @@
                   <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
                 </div>
 
+                <!-- Branch fields -->
+                <div class="field">
+                  <label for="sourceBranch">Source branch</label>
+                  <div class="select-wrap">
+                    <select id="sourceBranch" class="select"></select>
+                  </div>
+                  <small class="hint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
+                </div>
+
+                <div class="field">
+                  <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
+                  <input id="featureBranch" class="input" type="text" placeholder="leave empty — Claude will propose a name" spellcheck="false" />
+                </div>
+
                 <!-- Task source -->
                 <div class="field">
                   <label>Task source</label>
