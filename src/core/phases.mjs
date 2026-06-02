@@ -23,6 +23,37 @@ const READ_WRITE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skil
 // Implementer additionally gets MultiEdit for larger, multi-hunk edits.
 const IMPLEMENTER_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Grep', 'Glob', 'Skill'];
 
+/**
+ * Effective `--allowedTools` for a node: the role's baseline file/exec tools UNION
+ * the agent's frontmatter-declared tools (e.g. the Playwright MCP `browser_*` tools).
+ *
+ * Frontmatter only ADDS to the baseline — an agent that omits Write still keeps it
+ * (so it can write its artifact JSON), and declaring MCP tools in the `.md` is all a
+ * future agent needs to have them granted to its headless `claude -p` run. The list
+ * is de-duplicated with the base entries kept first (stable, readable argv order).
+ *
+ * `declared` is `ctx.node?.tools`, already parsed from frontmatter by resolveWorkflow
+ * (workflows.mjs parseFrontmatterTools). It is undefined for the clarify pre-step
+ * (which runs off _phaseCtx and has no node), so callers pass it straight through and
+ * get the base list back unchanged.
+ *
+ * @param {string[]} base       the role's default allow-list (READ_WRITE_TOOLS / IMPLEMENTER_TOOLS)
+ * @param {string[]|undefined} declared  node.tools from frontmatter, may be undefined
+ * @returns {string[]} de-duplicated union, base entries first
+ */
+export function effectiveAllowedTools(base, declared) {
+  const out = Array.isArray(base) ? [...base] : [];
+  const seen = new Set(out);
+  for (const t of Array.isArray(declared) ? declared : []) {
+    const name = String(t || '').trim();
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
 // ── inline fallbacks (used only when agents/*.md is missing/empty) ──────────────
 const FALLBACK_PROMPTS = {
   'planner-clarify':
@@ -92,7 +123,12 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     cwd: ctx.projectDir,
     systemPrompt,
     prompt,
-    allowedTools,
+    // Grant the role's baseline tools PLUS whatever the agent declared in its
+    // frontmatter (e.g. the Playwright MCP browser_* tools). ctx.node is present
+    // for every dispatched node (orchestrator._nodeCtx); the clarify pre-step has
+    // no node, so this falls back to the base list. Fixes "Browser permission not
+    // granted" for the Manual Web UI Testing agent and makes future MCP agents work.
+    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools),
     permissionMode: c.permissionMode || 'acceptEdits',
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
