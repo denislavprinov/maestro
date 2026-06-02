@@ -447,7 +447,6 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     totalCostUsd: 0,   // pipeline total for the card meta line
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
-    configSnapshot: null,
     logLines: [],
     el: null,
     _finished: false,
@@ -455,7 +454,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
 }
 
 // Upsert a run model. Only assigns DEFINED keys from the partial, and callers
-// must never pass logLines/el/configSnapshot in a partial — those heavy/DOM
+// must never pass logLines/el in a partial — those heavy/DOM
 // fields are owned locally and must not be clobbered by a hello/tagged event.
 function upsertRun(partial) {
   let r = runs.get(partial.runId);
@@ -2389,18 +2388,12 @@ el.form.addEventListener('submit', async (e) => {
   }
 });
 
-// Create the local run model for a run THIS tab just started, snapshot the
-// config it was launched with, and switch to the Running view. We do NOT send a
-// subscribe here: live events arrive via the server's broadcast, and a
-// subscribe would double-replay this run's buffer on the next hello.
+// Create the local run model for a run THIS tab just started and switch to the
+// Running view. We do NOT send a subscribe here: live events arrive via the
+// server's broadcast, and a subscribe would double-replay this run's buffer on
+// the next hello.
 function beginRun(runId, projectDir, title) {
   const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
-  r.configSnapshot = JSON.parse(JSON.stringify({
-    steps: state.config.steps,
-    models: state.models,
-    workflowId: state.workflowId,
-    nodes: (state.config.workflows && state.config.workflows[state.workflowId] && state.config.workflows[state.workflowId].nodes) || {},
-  }));
   hideViewer();
   updateNavCounts();
   showView('running');

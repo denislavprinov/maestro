@@ -371,3 +371,47 @@ test('History card without a saved manifest still renders the legacy six', async
   assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
   assert.ok([...detail.querySelectorAll('.stage')].every((s) => s.classList.contains('s-done')));
 });
+
+test('History card shows per-node model·effort from the saved manifest', async () => {
+  const customState = {
+    status: 'done', phase: 'done', cycle: 0, steps: [],
+    stepper: {
+      version: 1,
+      steps: [
+        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+        { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet',
+                                    sub: 'architecture & breakdown', model: 'opus', effort: 'high', cycles: false }] },
+        { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green',
+                                    sub: 'tighten the plan', model: '', effort: '', cycles: true }] },
+        { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+      ],
+    },
+  };
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/config')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          config: { steps: {}, customModels: [] },
+          models: [{ id: 'opus', label: 'Opus 4.8', efforts: ['high'] }],
+          efforts: ['high'],
+        }) });
+      }
+      if (url.includes('/api/runs/')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: customState, auditMarkdown: '' }) });
+      }
+      if (url.includes('/api/runs?')) {
+        return runsList([{ id: 'p1', title: 'Custom', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
+      }
+      return null;
+    },
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
+
+  const detail = window.document.querySelector('#history .hist-card .hist-detail');
+  assert.equal(detail.querySelector('.stage[data-node-id="s0_0"] .sub').textContent, 'architecture & breakdown');
+  assert.equal(detail.querySelector('.stage[data-node-id="s0_0"] .me').textContent, 'Opus 4.8 · high');
+  assert.equal(detail.querySelector('.stage[data-node-id="s1_0"] .me').textContent, 'default');
+});
