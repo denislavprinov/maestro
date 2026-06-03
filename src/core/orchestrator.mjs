@@ -36,6 +36,7 @@ import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields } from './channels.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
 } from './worktree.mjs';
@@ -109,6 +110,7 @@ class Orchestrator extends EventEmitter {
     const _gt = Number(this.opts.graphBuildTimeoutMs ?? process.env.MAESTRO_GRAPH_TIMEOUT_MS);
     this.graphBuildTimeoutMs = Number.isFinite(_gt) && _gt > 0 ? _gt : 120000;
     this.checkpointRef = null;
+    this.registry = null; // ▲ v3: set in run(); used by _dispatch's D4 validation
     this.pipeline = null; // { id, dir, promptText }
     this.baseName = null;
     this.planDatePrefix = null; // DD-MM-YY captured once so -vN versions share it
@@ -195,6 +197,7 @@ class Orchestrator extends EventEmitter {
       // here. pipelineDir is null in this first event; it is persisted + re-emitted
       // after createPipeline below.
       const registry = await loadAgentRegistry();
+      this.registry = registry; // ▲ v3: expose for run-start workflow validation (D4)
       const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
       this.state.stepper = buildStepperManifest(plan, registry);
       this._emit('state', this.getState());
@@ -539,6 +542,17 @@ class Orchestrator extends EventEmitter {
   async _dispatch(plan, runArgs = {}) {
     const steps = Array.isArray(plan?.steps) ? plan.steps : [];
     const feedbacks = Array.isArray(plan?.feedbacks) ? plan.feedbacks : [];
+
+    // D4: surface channel-reachability / governance warnings where they matter — a
+    // saved-then-illegalized pipeline runs anyway, but the operator sees why a (e.g.)
+    // reviewer with no upstream code reviewed an empty diff. Non-fatal. The resolved
+    // node carries .nodeId; reconstruct the {id,key} template the validator expects.
+    try {
+      const tpl = { steps: steps.map((g) => g.map((n) => ({ id: n.nodeId, key: n.key }))), feedbacks };
+      const v = validateWorkflow(tpl, this.registry || {});
+      for (const w of v.warnings || []) await appendAudit(this.pipeline.dir, `Workflow warning: ${w}`);
+    } catch { /* validation is best-effort at run time */ }
+
     // Map: source step index -> feedbacks originating there. `from` resolves to the
     // index of the step containing the from-node; `to` is a step index (tolerate a
     // node id or a numeric index).
