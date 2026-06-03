@@ -4,11 +4,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listPipelines } from '../src/core/artifacts.mjs';
+import { listPipelines, artifactPaths } from '../src/core/artifacts.mjs';
 
 async function pipelineWith(state) {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-cost-home-'));
+  process.env.MAESTRO_HOME = home;
   const proj = await mkdtemp(join(tmpdir(), 'maestro-cost-'));
-  const dir = join(proj, 'ai-artifacts', 'pipelines', state.id);
+  const dir = join(artifactPaths(proj).pipelines, state.id);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'state.json'), JSON.stringify(state), 'utf8');
   return proj;

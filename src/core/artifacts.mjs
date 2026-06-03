@@ -1,14 +1,18 @@
 // src/core/artifacts.mjs
 // Filesystem layout, naming, and pipeline persistence/audit helpers.
 //
-// All paths returned are absolute and rooted at <projectDir>/ai-artifacts.
-// Pipelines are self-describing: each gets a directory containing the prompt,
-// any extra files, a human-readable audit log (pipeline.md), and machine state
-// (state.json).
+// All paths returned are absolute and rooted in the EXTERNAL store at
+// <maestroHome>/store/<projectKey>/ (see store.mjs) — NOT inside the project
+// working tree. This keeps history machine-wide and out of git. Pipelines are
+// self-describing: each gets a directory containing the prompt, any extra files,
+// a human-readable audit log (pipeline.md), and machine state (state.json).
 
 import { mkdir, writeFile, readFile, copyFile, readdir, stat, appendFile } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { projectKey, projectStorePath, canonicalProjectRoot } from './store.mjs';
+import { listProjects } from './projects.mjs';
 
 /**
  * Convert an arbitrary string to a safe kebab-case slug.
@@ -42,12 +46,15 @@ export function today() {
 }
 
 /**
- * Absolute artifact directory paths under <projectDir>/ai-artifacts.
+ * Absolute artifact directory paths in the external store for `projectDir`,
+ * i.e. <maestroHome>/store/<projectKey(projectDir)>/{plans,reviews,pipelines}.
+ * Every reader/writer (plans, reviews, pipeline history) routes through here, so
+ * redirecting this one function moves all three out of the working tree at once.
  * @param {string} projectDir
  * @returns {{root:string, plans:string, reviews:string, pipelines:string}}
  */
 export function artifactPaths(projectDir) {
-  const root = join(resolve(projectDir), 'ai-artifacts');
+  const root = projectStorePath(projectKey(projectDir));
   return {
     root,
     plans: join(root, 'plans'),
@@ -57,16 +64,34 @@ export function artifactPaths(projectDir) {
 }
 
 /**
- * Ensure every artifact directory exists.
- * @param {string} projectDir
- * @returns {Promise<{root:string, plans:string, reviews:string, pipelines:string}>}
+ * Read or create the per-project meta.json. Returns the meta object either way.
+ * Never throws: a failed write still returns the computed meta so callers
+ * (createPipeline) get a project name without re-reading disk.
  */
+async function ensureMeta(projectDir, root) {
+  const metaPath = join(root, 'meta.json');
+  try { return JSON.parse(await readFile(metaPath, 'utf8')); } catch { /* not written yet */ }
+  const canonical = canonicalProjectRoot(projectDir);
+  let name = basename(canonical) || 'project';
+  try {
+    const projects = await listProjects();
+    const hit = projects.find((pr) => {
+      try { return realpathSync(pr.path) === canonical; } catch { return resolve(pr.path) === canonical; }
+    });
+    if (hit) name = hit.name;
+  } catch { /* registry optional */ }
+  const meta = { key: projectKey(projectDir), path: canonical, name, firstSeenAt: new Date().toISOString() };
+  try { await writeFile(metaPath, JSON.stringify(meta, null, 2) + '\n', 'utf8'); } catch { /* never block a run */ }
+  return meta;
+}
+
 export async function ensureArtifactDirs(projectDir) {
   const p = artifactPaths(projectDir);
   await mkdir(p.plans, { recursive: true });
   await mkdir(p.reviews, { recursive: true });
   await mkdir(p.pipelines, { recursive: true });
-  return p;
+  const meta = await ensureMeta(projectDir, p.root);
+  return { ...p, meta };
 }
 
 /**

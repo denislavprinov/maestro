@@ -4,11 +4,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listPipelines } from '../src/core/artifacts.mjs';
+import { listPipelines, artifactPaths } from '../src/core/artifacts.mjs';
 
 test('listPipelines surfaces totalActiveMs from saved state', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-dur-home-'));
+  process.env.MAESTRO_HOME = home;
   const proj = await mkdtemp(join(tmpdir(), 'maestro-'));
-  const dir = join(proj, 'ai-artifacts', 'pipelines', '01-06-26-x-abcd1234');
+  const dir = join(artifactPaths(proj).pipelines, '01-06-26-x-abcd1234');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'state.json'), JSON.stringify({
     id: 'abcd1234', title: 'x', status: 'done', startedAt: '2026-06-01T00:00:00.000Z',
@@ -20,8 +22,10 @@ test('listPipelines surfaces totalActiveMs from saved state', async () => {
 });
 
 test('totalActiveMs falls back to summing steps when absent', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-dur-home-'));
+  process.env.MAESTRO_HOME = home;
   const proj = await mkdtemp(join(tmpdir(), 'maestro-'));
-  const dir = join(proj, 'ai-artifacts', 'pipelines', '01-06-26-y-bcde2345');
+  const dir = join(artifactPaths(proj).pipelines, '01-06-26-y-bcde2345');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'state.json'), JSON.stringify({
     id: 'bcde2345', title: 'y', status: 'done',
@@ -32,8 +36,10 @@ test('totalActiveMs falls back to summing steps when absent', async () => {
 });
 
 test('totalActiveMs is null for a pre-timer state with no timing data', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-dur-home-'));
+  process.env.MAESTRO_HOME = home;
   const proj = await mkdtemp(join(tmpdir(), 'maestro-'));
-  const dir = join(proj, 'ai-artifacts', 'pipelines', '01-06-26-z-cdef3456');
+  const dir = join(artifactPaths(proj).pipelines, '01-06-26-z-cdef3456');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'state.json'), JSON.stringify({
     id: 'cdef3456', title: 'z', status: 'done',
