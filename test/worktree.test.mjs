@@ -46,13 +46,53 @@ test('sanitizeBranchName: kebab, strips junk, forbids leading slash', () => {
   assert.ok(sanitizeBranchName('a'.repeat(120)).length <= 80);
 });
 
-test('suggestBranchName (mock): derives from prompt deterministically', async () => {
+test('suggestBranchName: keyword slug from prompt, drops stopwords', async () => {
+  // "with" is filler; dropped. No LLM, fully deterministic, no cost.
   const name = await suggestBranchName({
     prompt: 'Add login screen with Google SSO',
     pipelineId: 'abc12345',
-    mock: true,
   });
-  assert.match(name, /^maestro\/add-login-screen-with-google-sso-abc12345$/);
+  assert.equal(name, 'maestro/add-login-screen-google-sso-abc12345');
+});
+
+test('suggestBranchName: keyword slug drops leading filler verbs/articles', async () => {
+  const name = await suggestBranchName({
+    prompt: 'Build a central machine-wide pipeline history store',
+    pipelineId: 'deadbeef',
+  });
+  // build + a dropped; first 6 significant words kept.
+  assert.equal(name, 'maestro/central-machine-wide-pipeline-history-store-deadbeef');
+});
+
+test('suggestBranchName: title wins over prompt when given', async () => {
+  const name = await suggestBranchName({
+    prompt: 'Build a central machine-wide pipeline history store',
+    title: 'Central History Store',
+    pipelineId: 'abc12345',
+  });
+  assert.equal(name, 'maestro/central-history-store-abc12345');
+});
+
+test('suggestBranchName: caps significant words to keep names short', async () => {
+  const name = await suggestBranchName({
+    prompt: 'alpha beta gamma delta epsilon zeta eta theta',
+    pipelineId: 'cafef00d',
+  });
+  assert.equal(name, 'maestro/alpha-beta-gamma-delta-epsilon-zeta-cafef00d');
+});
+
+test('suggestBranchName: all-stopword prompt falls back to raw slug', async () => {
+  const name = await suggestBranchName({
+    prompt: 'build the a',
+    pipelineId: 'abc12345',
+  });
+  // every word is a stopword -> do not emit an empty core; keep the raw slug.
+  assert.equal(name, 'maestro/build-the-a-abc12345');
+});
+
+test('suggestBranchName: empty prompt and no title -> feature fallback', async () => {
+  const name = await suggestBranchName({ prompt: '', pipelineId: 'abc12345' });
+  assert.equal(name, 'maestro/feature-abc12345');
 });
 
 test('listLocalBranches returns the initial branch', async () => {

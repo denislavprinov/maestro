@@ -315,13 +315,10 @@ class Orchestrator extends EventEmitter {
     const source = this.branchOpts.source || (await resolveDefaultBranch(this.projectDir));
     const featureRaw = this.branchOpts.feature
       ? sanitizeBranchName(this.branchOpts.feature)
-      : await suggestBranchName({
+      : suggestBranchName({
           prompt: this.pipeline.promptText,
+          title: this.opts.title || null,
           pipelineId: this.pipeline.id,
-          mock: this.claude.mock,
-          projectDir: this.projectDir,
-          signal: this.abort.signal,
-          onEvent: (e) => this._onAgentEvent('worktree', e),
         });
     const info = await createWorktree({
       projectDir: this.projectDir,

@@ -15,15 +15,25 @@ import { mkdir, rm, realpath } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
-import { runClaude } from './claude-runner.mjs';
 
 const WORKTREES_DIRNAME = join('.maestro', 'worktrees');
 const BRANCH_PREFIX = 'maestro/';
 const MAX_BRANCH_LEN = 80;
-// suggestBranchName trims the prompt before sending it to claude so large
-// pasted plans don't balloon the request payload (the suggester only needs the
-// gist for a 3-6 word name).
-const SUGGEST_PROMPT_BUDGET = 600;
+// Keep branch names short and readable: at most this many significant words
+// survive into the slug (the shortId is appended after).
+const MAX_BRANCH_WORDS = 6;
+// Generic filler dropped from a prompt-derived slug so the name carries the
+// meaningful nouns, not boilerplate. Articles, prepositions, conjunctions,
+// pronouns, and the imperative scaffolding that prefixes most task prompts
+// ("build a…", "let's create…"). Deliberately conservative — domain verbs like
+// add/fix/refactor are kept because they carry intent.
+const BRANCH_STOPWORDS = new Set([
+  'a', 'an', 'the', 'to', 'of', 'for', 'and', 'or', 'in', 'on', 'into', 'with',
+  'at', 'by', 'from', 'we', 'i', 'you', 'it', 'that', 'this', 'these', 'those',
+  'lets', 'let', 'please', 'just', 'also', 'should', 'would', 'could', 'can',
+  'will', 'want', 'wants', 'need', 'needs', 'make', 'build', 'create', 'some',
+  'our', 'my',
+]);
 
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws. */
 function git(cwd, args, { signal } = {}) {
@@ -56,38 +66,35 @@ export function sanitizeBranchName(raw) {
 }
 
 /**
- * Propose a branch name from the prompt. In mock mode (or when claude is
- * unavailable / errors), derive it deterministically from the slug. Always
- * returns a sanitized "<prefix><slug>-<shortId>" string.
+ * Reduce free text to a short, meaningful kebab slug: slugify, drop generic
+ * stopwords, keep the first MAX_BRANCH_WORDS significant words. If stopword
+ * removal would empty the slug (every word was filler), keep the raw words so
+ * we never return nothing. Returns '' only for empty/punctuation-only input.
  */
-export async function suggestBranchName({ prompt, pipelineId, mock = false, projectDir, signal, onEvent } = {}) {
-  const shortId = String(pipelineId || '').slice(0, 8) || 'run';
-  const fallback = sanitizeBranchName(
-    `${BRANCH_PREFIX}${slugify(firstLine(prompt) || 'feature').slice(0, 40)}-${shortId}`,
-  );
-  if (mock) return fallback;
+function keywordSlug(text) {
+  const line = firstLine(text);
+  if (!line) return ''; // slugify('') yields 'untitled'; let the caller pick 'feature'
+  const words = slugify(line).split('-').filter(Boolean);
+  if (!words.length) return '';
+  const kept = words.filter((w) => !BRANCH_STOPWORDS.has(w));
+  return (kept.length ? kept : words).slice(0, MAX_BRANCH_WORDS).join('-');
+}
 
-  const trimmed = String(prompt || '').trim().slice(0, SUGGEST_PROMPT_BUDGET);
-  const ask =
-    'Suggest a concise kebab-case git branch name (max 6 words, no spaces, ' +
-    'no leading slash, no trailing punctuation) for this task. Reply with ONLY ' +
-    'the name on a single line, no quotes, no prose:\n\n' + trimmed;
-  try {
-    const { text } = await runClaude({
-      cwd: projectDir || process.cwd(),
-      prompt: ask,
-      allowedTools: [],
-      permissionMode: 'default',
-      mock: false,
-      signal,
-      onEvent,
-    });
-    const first = (text || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
-    const sane = sanitizeBranchName(`${BRANCH_PREFIX}${first}-${shortId}`);
-    return sane || fallback;
-  } catch {
-    return fallback;
-  }
+/**
+ * Propose a feature branch name WITHOUT an LLM (so preflight stays free and
+ * fully deterministic). Title-first: a caller-supplied title is the clearest
+ * intent, so slugify it directly; otherwise derive a keyword slug from the
+ * prompt's first line. Always returns a sanitized "<prefix><slug>-<shortId>".
+ */
+export function suggestBranchName({ prompt, title, pipelineId } = {}) {
+  const shortId = String(pipelineId || '').slice(0, 8) || 'run';
+  // A title is explicit intent — slugify it verbatim (only word-cap for length),
+  // never strip stopwords (would mangle deliberate names like "A/B Testing").
+  const fromTitle = title
+    ? slugify(title).split('-').filter(Boolean).slice(0, MAX_BRANCH_WORDS).join('-')
+    : '';
+  const core = fromTitle || keywordSlug(prompt) || 'feature';
+  return sanitizeBranchName(`${BRANCH_PREFIX}${core}-${shortId}`);
 }
 
 /** All local branch names (no remotes). Empty array on a non-repo. */
