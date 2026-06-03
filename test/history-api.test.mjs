@@ -46,3 +46,10 @@ test('GET /api/history/:key/:id returns detail; unknown -> 404', async () => {
   assert.equal((await r.json()).state.title, 'Alpha run');
   assert.equal((await fetch(`${base}/api/history/alpha-00000001/nope`)).status, 404);
 });
+
+test('GET /api/history/:key/:id rejects a traversing/malformed key -> 404', async () => {
+  for (const bad of ['..%2f..%2fevil', '..%2f..%2fetc', 'not-a-key', 'abc/def']) {
+    const r = await fetch(`${base}/api/history/${bad}/x`);
+    assert.equal(r.status, 404, `key ${bad} must be rejected`);
+  }
+});

@@ -453,6 +453,9 @@ app.get('/api/history', async (_req, res) => {
 // GET /api/history/:key/:id  -> saved pipeline markdown + state, by store key
 // ---------------------------------------------------------------------------
 app.get('/api/history/:key/:id', async (req, res) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(req.params.key)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
   try {
     const data = await readPipelineByKey(req.params.key, req.params.id);
     if (!data) return res.status(404).json({ error: 'pipeline not found' });
