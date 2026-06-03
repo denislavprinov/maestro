@@ -216,6 +216,49 @@ export function worktreeGraphInstruction() {
 }
 
 /**
+ * Run `graphify update <dir>` headlessly to build/refresh an AST graph at
+ * <dir>/graphify-out/. Spawned with cwd=cwd so graphify's stray cwd-relative
+ * manifest write lands inside the same worktree, never the main repo. Bounded
+ * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed.
+ * Never throws. Resolves { ok, code, timedOut, stderr }.
+ */
+export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
+  return new Promise((resolveP) => {
+    let child;
+    try {
+      child = spawn('graphify', ['update', dir], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      resolveP({ ok: false, code: -1, timedOut: false, stderr: err.message });
+      return;
+    }
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveP(val);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      done({ ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' });
+    }, timeoutMs);
+    child.stdout?.on('data', () => {});
+    child.stderr?.on('data', (d) => {
+      stderr += d.toString();
+    });
+    child.on('error', (err) => done({ ok: false, code: -1, timedOut, stderr: stderr || err.message }));
+    child.on('close', (code) => done({ ok: code === 0, code: code ?? -1, timedOut, stderr }));
+  });
+}
+
+/**
  * Detect optional tooling for a project directory.
  * @param {string} projectDir
  * @returns {Promise<{
