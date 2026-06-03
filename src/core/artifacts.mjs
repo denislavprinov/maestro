@@ -156,6 +156,8 @@ function resolveAgainst(base, p) {
 export async function createPipeline(projectDir, opts = {}) {
   const { prompt, promptFile, extras = [], title } = opts;
   const paths = await ensureArtifactDirs(projectDir);
+  const key = projectKey(projectDir);
+  const projectName = (paths.meta && paths.meta.name) || basename(resolve(projectDir));
 
   // Resolve the prompt text from inline text or a markdown file.
   let promptText = typeof prompt === 'string' ? prompt : '';
@@ -211,6 +213,8 @@ export async function createPipeline(projectDir, opts = {}) {
     id,
     title: resolvedTitle,
     projectDir: resolve(projectDir),
+    projectKey: key,
+    projectName,
     status: 'created',
     phase: 'created',
     cycle: 0,
