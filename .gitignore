@@ -5,3 +5,5 @@ ai-artifacts/
 *.log
 graphify-out/
 .maestro/
+.maestro-smoke/
+.maestro-test/
