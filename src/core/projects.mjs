@@ -9,13 +9,19 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { getMaestroRoot, defaultRoot } from './settings.mjs';
 
-/** Absolute path to the ~/.maestro directory (honors MAESTRO_HOME for tests). */
+/**
+ * Absolute path to the .maestro data directory. Base resolution precedence:
+ *   1. MAESTRO_HOME env (non-empty)  — tests/smoke isolation + CLI override
+ *   2. persisted Settings root        — the user-chosen "Maestro root folder"
+ *   3. defaultRoot()                  — the OS home
+ * Read fresh every call, so a saved root applies to new operations w/o restart.
+ */
 export function maestroHome() {
-  const base =
-    process.env.MAESTRO_HOME && process.env.MAESTRO_HOME.trim() ? process.env.MAESTRO_HOME : homedir();
+  const env = process.env.MAESTRO_HOME;
+  const base = env && env.trim() ? env : (getMaestroRoot() || defaultRoot());
   return join(resolve(base), '.maestro');
 }
 
