@@ -76,3 +76,24 @@ test('▲ C1: planner writes the canonical v1 plan; refiner writes -v2 (no path 
   assert.ok(planPaths.some((p) => /\/\d\d-\d\d-\d\d-[^/]+\.md$/.test(p) && !/-v\d+\.md$/.test(p)), 'canonical v1 plan file exists');
   assert.ok(planPaths.some((p) => /-v2\.md$/.test(p)), 'refiner v2 plan file exists');
 });
+
+test('two implementers separated by a reviewer: trailing impl fixes the reviewer review, not a stale one', async () => {
+  // Derivation (do not guess):
+  //  impl#1: bus.review null (seed) -> 'implement'; publishes code -> bus.review := null.
+  //  reviewer: publishes bus.review = { mdPath: impl-review.md }.
+  //  impl#2: reviewer is its immediate predecessor, no intervening code publish ->
+  //          binds that review (md present) -> 'fix'.
+  // Hence exactly ['implement','fix']. A LATER (3rd) implementer would be 'implement'
+  // again because impl#2's code publish clears the review.
+  const shape = { steps: [['planner'],['implementer'],['reviewer'],['implementer']], feedbacks: [] };
+  const { modes } = await runShapeUnderMock(shape);
+  assert.deepEqual(modes, ['implement', 'fix']);
+});
+
+test('refiner before implementer does NOT flip the first implement to fix (▲ C2)', async () => {
+  // planner -> refiner -> implementer. The refiner publishes only a private (md-less)
+  // review, so the implementer's first pass must be 'implement', not 'fix'.
+  const shape = { steps: [['planner'],['refiner'],['implementer']], feedbacks: [] };
+  const { modes } = await runShapeUnderMock(shape);
+  assert.deepEqual(modes, ['implement']);
+});
