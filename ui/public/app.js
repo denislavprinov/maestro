@@ -79,6 +79,12 @@ const el = {
   viewerTitle: $('#viewer-title'),
   viewer: $('#viewer'),
   viewerClose: $('#viewer-close'),
+
+  settingsRoot: $('#settingsRoot'),
+  settingsRootDefault: $('#settingsRootDefault'),
+  settingsSave: $('#settingsSave'),
+  settingsReset: $('#settingsReset'),
+  settingsMsg: $('#settingsMsg'),
 };
 
 // ---------------------------------------------------------------------------
@@ -2451,6 +2457,56 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
+// Settings view: the machine-wide Maestro root folder.
+// ---------------------------------------------------------------------------
+function setSettingsMsg(text, kind) {
+  if (!el.settingsMsg) return;
+  el.settingsMsg.textContent = text || '';
+  el.settingsMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+async function loadSettings() {
+  if (!el.settingsRoot) return;
+  try {
+    const res = await fetch('/api/settings');
+    const data = await safeJson(res);
+    if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    el.settingsRoot.value = data.root || '';
+    el.settingsRoot.placeholder = data.default || '';
+    if (el.settingsRootDefault) el.settingsRootDefault.textContent = data.default ? `Default: ${data.default}` : '';
+    setSettingsMsg('');
+  } catch (e) { setSettingsMsg(e.message, 'err'); }
+}
+
+async function saveSettings(root) {
+  if (!el.settingsSave) return;
+  el.settingsSave.disabled = true;
+  if (el.settingsReset) el.settingsReset.disabled = true;
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    el.settingsRoot.value = data.root || '';
+    el.settingsRoot.placeholder = data.default || '';
+    setSettingsMsg('Saved. New runs use this root.');
+    // The root relocates the project registry + workflows; reload projects so
+    // the UI reflects what's available under the new root.
+    loadProjects();
+  } catch (e) { setSettingsMsg(e.message, 'err'); }
+  finally {
+    el.settingsSave.disabled = false;
+    if (el.settingsReset) el.settingsReset.disabled = false;
+  }
+}
+
+if (el.settingsSave) el.settingsSave.addEventListener('click', () => saveSettings((el.settingsRoot.value || '').trim()));
+if (el.settingsReset) el.settingsReset.addEventListener('click', () => saveSettings(''));
+
+// ---------------------------------------------------------------------------
 // Per-card Stop. POST /api/stop; on success the server emits state(stopped) +
 // done, which finishRun handles (card drops out + History refresh). On failure
 // re-enable the button and log to that card.
@@ -3111,11 +3167,11 @@ function updateNavCounts() {
 }
 
 // ---------------------------------------------------------------------------
-// Router: sidebar nav (+ responsive top-nav) toggle between the three views.
+// Router: sidebar nav (+ responsive top-nav) toggle between the views.
 // ---------------------------------------------------------------------------
 const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
-const VIEW_NAMES = ['new', 'running', 'history', 'composer'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'settings'];
 
 function showView(name) {
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -3126,6 +3182,7 @@ function showView(name) {
     else { const d = selectedProjectPath(); if (d) loadHistory(d); }
   }
   if (name === 'composer') initComposer();
+  if (name === 'settings') loadSettings();
 }
 
 // Nav clicks only update the hash; the single hashchange listener drives
