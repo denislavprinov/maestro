@@ -231,3 +231,27 @@ test('_buildWorktreeGraph: success builds in the worktree and sets the worktree 
   assert.equal(orch.toolInstruction, worktreeGraphInstruction());
   assert.ok(existsSync(join(work, 'graphify-out')), 'graph built inside the worktree');
 });
+
+test('_buildWorktreeGraph: success is fail-safe even when the audit write fails', async () => {
+  const dir = await makeTmpDir();
+  const work = await makeTmpDir('maestro-work-');
+  const binDir = await makeTmpDir('maestro-bin-');
+  await fakeGraphify(binDir, '#!/bin/sh\nmkdir -p "$2/graphify-out"\nexit 0\n');
+  const orch = newOrch(dir);
+  orch.workDir = work;
+  orch.state.tools = { kind: 'cli' };
+  // pipeline.dir is a FILE, so appendAudit's write rejects (ENOTDIR) — the method must still not throw.
+  const notADir = join(await makeTmpDir('maestro-pipe-'), 'iam-a-file');
+  writeFileSync(notADir, 'x');
+  orch.pipeline = { dir: notADir };
+  orch.toolInstruction = 'SENTINEL';
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    await orch._buildWorktreeGraph(); // must NOT throw despite the failing audit write
+  } finally {
+    process.env.PATH = prevPath;
+  }
+  assert.equal(orch.toolInstruction, worktreeGraphInstruction(), 'instruction still set on success');
+  assert.ok(existsSync(join(work, 'graphify-out')), 'graph still built inside the worktree');
+});

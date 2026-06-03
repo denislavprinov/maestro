@@ -376,7 +376,7 @@ class Orchestrator extends EventEmitter {
     if (res.ok) {
       this.toolInstruction = worktreeGraphInstruction();
       this._log('graph', 'info', 'graphify graph built in worktree.');
-      await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in worktree (AST-only).');
+      await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in worktree (AST-only).').catch(() => {});
     } else {
       this.toolInstruction = '';
       this._log(
