@@ -16,8 +16,8 @@
 
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
-import { join, basename, resolve } from 'node:path';
-import { readFile, realpath } from 'node:fs/promises';
+import { join, basename, resolve, dirname } from 'node:path';
+import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
 
 import {
   createPipeline,
@@ -34,7 +34,7 @@ import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runPlannerClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
-import { allocate, bindInputs, publish, legacyFields } from './channels.mjs';
+import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
@@ -111,6 +111,7 @@ class Orchestrator extends EventEmitter {
     this.graphBuildTimeoutMs = Number.isFinite(_gt) && _gt > 0 ? _gt : 120000;
     this.checkpointRef = null;
     this.registry = null; // ▲ v3: set in run(); used by _dispatch's D4 validation
+    this.extrasFiles = []; // attached files copied into <pipeline>/extras (set in _dispatch)
     this.pipeline = null; // { id, dir, promptText }
     this.baseName = null;
     this.planDatePrefix = null; // DD-MM-YY captured once so -vN versions share it
@@ -584,6 +585,23 @@ class Orchestrator extends EventEmitter {
       code: { kind: 'worktree', dir: this.workDir, baseRef: this.checkpointRef },
     };
 
+    // Prompt-as-entry-artifact: fill any materializable channel the topology requires
+    // before any step produces it (a pipeline that starts mid-stream — implementer or
+    // refiner first). The user prompt + attached files stand in for the missing
+    // artifact, written to the channel's seeded path so EVERY consumer (the first
+    // agent AND any downstream one, e.g. a later reviewer) binds it via the normal bus.
+    // Disk-only: we write the file at bus[c].path; the handle (and its path) is
+    // unchanged, so the frozen per-step snapshots already point at the now-existing
+    // file. A real producer later overwrites the file (latest-writer-wins), as today.
+    this.extrasFiles = await this._collectExtras();
+    for (const c of entrySeedChannels(steps)) {
+      const handle = bus[c];
+      if (!handle?.path) continue;
+      await mkdir(dirname(handle.path), { recursive: true }); // plans/ dir is lazy
+      await writeFile(handle.path, renderPromptArtifact(this.pipeline.promptText, this.extrasFiles), 'utf8');
+      await appendAudit(this.pipeline.dir, `Seeded "${c}" from the user prompt (no upstream producer).`);
+    }
+
     let i = 0;
     while (i < steps.length) {
       this._checkAbort();
@@ -820,6 +838,19 @@ class Orchestrator extends EventEmitter {
     return `${stepIndex}:${node.nodeId}${c}`;
   }
 
+  /** List the user's attached files copied into <pipeline>/extras/ (basename + abs
+   *  path), sorted for deterministic seeded-file content. Empty when none were
+   *  attached or the dir is absent. */
+  async _collectExtras() {
+    try {
+      const dir = join(this.pipeline.dir, 'extras');
+      const names = (await readdir(dir)).sort();
+      return names.map((name) => ({ name, path: join(dir, name) }));
+    } catch {
+      return [];
+    }
+  }
+
   /**
    * Node execution context. Extends the legacy _phaseCtx shape but is keyed by the
    * node (model/effort come from the resolved plan node, not a role lookup) and
@@ -845,6 +876,8 @@ class Orchestrator extends EventEmitter {
       nodeId: node.nodeId,
       stepIndex,
       cycle,
+      isEntry: stepIndex === 0,
+      extras: this.extrasFiles || [],
       onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey }),
       claudeOpts: {
         bin: this.claude.bin,

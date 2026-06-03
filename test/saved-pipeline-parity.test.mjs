@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
@@ -37,8 +37,14 @@ async function runShapeUnderMock(shape) {
     // leak a patched producer to later tests in this file).
     orch._runners = { ...orch._runners };
     const realProducer = orch._runners.producer;
+    const planReads = [];
     orch._runners.producer = async (ctx) => {
-      if (ctx?.node?.key === 'implementer') modes.push(ctx.mode);
+      if (ctx?.node?.key === 'implementer') {
+        modes.push(ctx.mode);
+        let content = null;
+        try { content = await readFile(ctx.planPath, 'utf8'); } catch { /* may not exist */ }
+        planReads.push({ planPath: ctx.planPath, content });
+      }
       return realProducer(ctx);
     };
     // ▲ v3 (V3-B): artifacts come via the 'artifact' EVENT ({kind,path}); getState()
@@ -47,7 +53,7 @@ async function runShapeUnderMock(shape) {
     orch.on('artifact', (e) => artifacts.push(e));
     const res = await orch.run();
     assert.equal(res.status, 'done', 'pipeline converges');
-    return { modes, artifacts };
+    return { modes, artifacts, planReads };
   } finally {
     if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   }
@@ -96,4 +102,21 @@ test('refiner before implementer does NOT flip the first implement to fix (▲ C
   const shape = { steps: [['planner'],['refiner'],['implementer']], feedbacks: [] };
   const { modes } = await runShapeUnderMock(shape);
   assert.deepEqual(modes, ['implement']);
+});
+
+test('implement-only seeds the plan from the prompt without changing implementer modes', async () => {
+  const { planReads, modes } = await runShapeUnderMock(SHAPES['implement-only']);
+  assert.ok(planReads.length >= 1, 'implementer ran');
+  const first = planReads[0];
+  assert.ok(first.content, `seeded plan file exists at ${first.planPath}`);
+  assert.match(first.content, /## Original request/);
+  assert.match(first.content, /demo/); // the prompt text the harness passes to makeOrch
+  // Seeding fills plan CONTENT only — it must NOT flip the implementer's mode.
+  assert.deepEqual(modes, ['implement', 'fix'], 'no mode drift from seeding');
+});
+
+test('default (planner-first) does NOT seed — no prompt-seed banner in the plan', async () => {
+  const { planReads } = await runShapeUnderMock(SHAPES['default']);
+  assert.ok(planReads.length >= 1);
+  assert.doesNotMatch(planReads[0].content || '', /No upstream agent produced this artifact/);
 });
