@@ -255,3 +255,73 @@ test('_buildWorktreeGraph: success is fail-safe even when the audit write fails'
   assert.equal(orch.toolInstruction, worktreeGraphInstruction(), 'instruction still set on success');
   assert.ok(existsSync(join(work, 'graphify-out')), 'graph still built inside the worktree');
 });
+
+// A real git repo whose tracked .gitignore excludes graphify-out/ (mirrors the
+// product repo), so the worktree checkout inherits the ignore rule.
+async function freshRepoIgnoringGraph() {
+  const dir = await makeTmpDir('maestro-int-');
+  const g = (args) => spawnSync('git', args, { cwd: dir });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t']);
+  g(['config', 'user.name', 't']);
+  await writeFile(join(dir, 'seed.txt'), 'seed\n', 'utf8');
+  await writeFile(join(dir, '.gitignore'), 'node_modules/\ngraphify-out/\n', 'utf8');
+  g(['add', '-A']);
+  g(['commit', '-qm', 'init']);
+  return dir;
+}
+
+test('integration: in-worktree graph is present but never leaks (reviewer diff, kept commit, main)', async () => {
+  const repo = await freshRepoIgnoringGraph();
+  const pipelineDir = await makeTmpDir('maestro-pipe-');
+  const orch = createOrchestrator({
+    projectDir: repo,
+    prompt: 'integration',
+    auto: true,
+    claude: { mock: true },
+    branch: { source: 'main', feature: 'feat/graph-int' },
+  });
+  // Minimal real preflight state that _setupWorktree/_commitWork rely on.
+  orch.pipeline = { id: 'p-int', dir: pipelineDir, promptText: 'integration' };
+  orch.state.id = 'p-int';
+  orch.state.pipelineDir = pipelineDir;
+  // The reviewer diffs against the checkpoint; main's HEAD is exactly that base.
+  orch.checkpointRef = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout.toString().trim();
+
+  // Real worktree off main (checks out the tracked .gitignore).
+  await orch._setupWorktree();
+  const wt = orch.workDir;
+  assert.notEqual(wt, repo, 'a worktree should have been created');
+
+  // Stand in for _buildWorktreeGraph's output + a real agent edit.
+  mkdirSync(join(wt, 'graphify-out'), { recursive: true });
+  writeFileSync(join(wt, 'graphify-out', 'graph.json'), '{}\n');
+  writeFileSync(join(wt, 'graphify-out', 'GRAPH_REPORT.md'), '# report\n');
+  writeFileSync(join(wt, 'agent-output.txt'), 'work from the agent\n');
+
+  // (a) the graph is physically present in the worktree.
+  assert.ok(existsSync(join(wt, 'graphify-out', 'graph.json')), '(a) graph built inside the worktree');
+
+  // (b) reviewer surface: stage intent-to-add, then diff against the checkpoint.
+  await orch._stageWorkingTree();
+  const diff = spawnSync('git', ['-C', wt, 'diff', '--name-only', orch.checkpointRef]).stdout.toString();
+  assert.match(diff, /agent-output\.txt/, '(b) reviewer diff includes the agent edit');
+  assert.doesNotMatch(diff, /graphify-out/, '(b) reviewer diff EXCLUDES the gitignored graph');
+
+  // Keep + commit the branch the way teardown does on success.
+  orch.state.status = 'done';
+  await orch._teardownWorktree();
+  assert.ok(!existsSync(wt), 'worktree dir removed at teardown');
+  const feature = orch.getState().branch.feature;
+
+  // (c) kept-branch commit carries the agent file but NOT the graph.
+  const fileInCommit = spawnSync('git', ['-C', repo, 'show', `${feature}:agent-output.txt`]);
+  assert.equal(fileInCommit.status, 0, '(c) agent-output.txt committed on the kept branch');
+  const graphInCommit = spawnSync('git', ['-C', repo, 'show', `${feature}:graphify-out/graph.json`]);
+  assert.notEqual(graphInCommit.status, 0, '(c) graphify-out is NOT in the kept-branch commit');
+
+  // (d) main is untouched: never had the graph, in its tree or on disk.
+  const graphOnMain = spawnSync('git', ['-C', repo, 'show', 'main:graphify-out/graph.json']);
+  assert.notEqual(graphOnMain.status, 0, '(d) main tree has no graphify-out');
+  assert.ok(!existsSync(join(repo, 'graphify-out')), '(d) main working dir has no graphify-out');
+});
