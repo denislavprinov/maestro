@@ -146,13 +146,13 @@ export function buildInstruction(tool, kind) {
         '`Skill(skill: "graphify", args: "<your question about the code>")`. ' +
         'Use its output to ground your work in real codebase structure rather ' +
         'than assumptions. A cached graph may already exist at ' +
-        '<projectDir>/graphify-out/ — consult it if present.'
+        'graphify-out/ — consult it if present.'
       );
     }
     if (kind === 'output-cached') {
       return (
         'A graphify knowledge graph has ALREADY been built for this project at ' +
-        '<projectDir>/graphify-out/. No graphify binary or Skill was detected, so ' +
+        'graphify-out/. No graphify binary or Skill was detected, so ' +
         'do NOT try to invoke or rebuild it — just READ the cached output. BEFORE ' +
         'analyzing or planning, read graphify-out/GRAPH_REPORT.md for the overview, ' +
         'then open graphify-out/graph.json to trace specific symbols and their ' +
@@ -168,7 +168,7 @@ export function buildInstruction(tool, kind) {
     // points at the already-built graph instead of a nonexistent build command.
     return (
       'A code knowledge-graph CLI named "graphify" is available on PATH, and a ' +
-      'graph has ALREADY been built at <projectDir>/graphify-out/ (do NOT rebuild). ' +
+      'graph has ALREADY been built at graphify-out/ (do NOT rebuild). ' +
       'BEFORE analyzing or planning, ground yourself in the real codebase: first ' +
       'read graphify-out/GRAPH_REPORT.md for the overview, then query the graph ' +
       'via Bash. Query ONE concept at a time — a single symbol or term, NOT a ' +
