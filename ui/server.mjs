@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { listPipelines, readPipeline } from '../src/core/artifacts.mjs';
+import { listPipelines, readPipeline, listAllPipelines, readPipelineByKey } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -431,6 +431,30 @@ app.get('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
   try {
     const data = await Promise.resolve(readPipeline(projectDir, id));
+    if (!data) return res.status(404).json({ error: 'pipeline not found' });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/history  -> machine-wide history across every onboarded project
+// ---------------------------------------------------------------------------
+app.get('/api/history', async (_req, res) => {
+  try {
+    res.json({ pipelines: (await listAllPipelines()) || [] });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/history/:key/:id  -> saved pipeline markdown + state, by store key
+// ---------------------------------------------------------------------------
+app.get('/api/history/:key/:id', async (req, res) => {
+  try {
+    const data = await readPipelineByKey(req.params.key, req.params.id);
     if (!data) return res.status(404).json({ error: 'pipeline not found' });
     res.json(data);
   } catch (err) {
