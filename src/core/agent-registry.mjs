@@ -10,12 +10,51 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 
 /** Default location of the agent metadata sidecars, relative to this module. */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier']);
+const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
+
+/**
+ * Built-in channel/governance spec per agent key. Used when a sidecar omits the
+ * fields, so the six shipped agents behave byte-identically to today's _nodeIo
+ * switch and every saved pipeline stays connectsTo-legal.
+ */
+const DEFAULT_SPEC = {
+  planner:              { consumes: ['userPrompt'],        produces: ['plan'],            connectsTo: ['refiner', 'implementer'] },
+  refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner'] },
+  implementer:          { consumes: ['plan', 'review'],    optionalConsumes: ['review'],  produces: ['code'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
+  reviewer:             { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer', 'manualTestsChecklist'] },
+  manualTestsChecklist: { consumes: ['plan', 'code'],      produces: ['checklist'],       connectsTo: ['manualWebUiTesting'] },
+  manualWebUiTesting:   { consumes: ['checklist', 'code'], produces: ['review'],          connectsTo: ['implementer'] },
+};
+
+/** Array of known channel ids from raw input; warns on (and drops) unknown ids (m1). */
+function channelList(raw, key, field) {
+  if (!Array.isArray(raw)) return undefined;
+  const out = [];
+  for (const s of raw) {
+    const id = String(s || '').trim();
+    if (CHANNEL_IDS.has(id)) out.push(id);
+    else if (id) console.warn(`[agent-registry] ${key}.${field}: unknown channel id "${id}" ignored`);
+  }
+  return out;
+}
+
+/** Normalize connectsTo: '*' | string[] of agent keys. Anything else => fallback.
+ * A raw value of '*' is treated as "unset" so DEFAULT_SPEC can override it. */
+function normalizeConnectsTo(raw, fallback) {
+  if (Array.isArray(raw)) {
+    const out = raw.map((s) => String(s || '').trim()).filter(Boolean);
+    return out.length ? out : (fallback ?? '*');
+  }
+  // raw === '*' or anything else: use the fallback (spec array or '*')
+  return fallback ?? '*';
+}
 
 /**
  * Legacy short labels for the original four roles, so the derived AGENT_STEPS is
@@ -38,6 +77,12 @@ function normalizeMeta(raw) {
   if (!Number.isFinite(order)) return null;
   const color = COLORS.has(raw.color) ? raw.color : 'amber';
   const runnerType = RUNNER_TYPES.has(raw.runnerType) ? raw.runnerType : 'producer';
+  const spec = DEFAULT_SPEC[key] || {};
+  const rtFallbackConsumes = runnerType === 'verifier' ? ['code'] : ['userPrompt'];
+  const consumes = channelList(raw.consumes, key, 'consumes') || spec.consumes || rtFallbackConsumes;
+  const produces = channelList(raw.produces, key, 'produces') || spec.produces || (runnerType === 'verifier' ? ['review'] : []);
+  const optionalConsumes = channelList(raw.optionalConsumes, key, 'optionalConsumes') || spec.optionalConsumes || [];
+  const connectsTo = normalizeConnectsTo(raw.connectsTo, spec.connectsTo || '*');
   return {
     key,
     displayName: typeof raw.displayName === 'string' && raw.displayName.trim()
@@ -49,7 +94,10 @@ function normalizeMeta(raw) {
     agentFile: typeof raw.agentFile === 'string' && raw.agentFile.trim() ? raw.agentFile.trim() : null,
     runnerType,
     loopSource: !!raw.loopSource,
-    connectsTo: '*', // spec §4.1: only "*" is supported in this scope
+    consumes,
+    optionalConsumes,
+    produces,
+    connectsTo,
     order,
   };
 }
