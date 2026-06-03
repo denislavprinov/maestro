@@ -21,11 +21,12 @@ framework, no build step).
 ```
 package.json                         type:module; scripts: start(ui), cli, install:agents, smoke; deps express+ws
 README.md
-.gitignore                           node_modules, examples/sandbox, ai-artifacts/pipelines/*/, *.log
+.gitignore                           node_modules, examples/sandbox, *.log, graphify-out/, .maestro/, plus any abandoned legacy ai-artifacts/
 docs/ARCHITECTURE.md                 this file
 
 src/core/protocol.mjs                JSON contracts + validators shared by agents and orchestrator
-src/core/artifacts.mjs               paths, slugify, date(DD-MM-YY), pipeline create/persist/audit
+src/core/store.mjs                   project identity + external store paths (projectKey, storeRoot, projectStorePath)
+src/core/artifacts.mjs               paths, slugify, date(DD-MM-YY), pipeline create/persist/audit (rooted in the external store)
 src/core/preflight.mjs               detectTools(projectDir) for graphify / code-review-graph
 src/core/claude-runner.mjs           spawn claude headless, stream events, AbortSignal kill, MOCK mode
 src/core/phases.mjs                  per-phase agent runners (planner clarify+plan, refiner, implementer, reviewer)
@@ -45,17 +46,19 @@ ui/public/index.html
 ui/public/app.js
 ui/public/style.css
 
-ai-artifacts/plans/.gitkeep
-ai-artifacts/reviews/.gitkeep
-ai-artifacts/pipelines/.gitkeep
+# History (plans/reviews/pipelines) is NOT in this repo. It lives in a machine-wide
+# external store at <maestroHome>/store/<projectKey>/{plans,reviews,pipelines}/,
+# created on demand by ensureArtifactDirs() — outside every project's working tree.
 ```
 
 ### Ownership (who writes which files)
 
 - **Architect (this pass):** `package.json`, `.gitignore`, `README.md`,
-  `docs/ARCHITECTURE.md`, the `.gitkeep` scaffolding, and **signature stubs** for the
-  six `src/core/*.mjs` files. These stubs lock the interface; their bodies throw
-  `Error("not implemented")` until the owning builder fills them in.
+  `docs/ARCHITECTURE.md`, and **signature stubs** for the
+  `src/core/*.mjs` files. These stubs lock the interface; their bodies throw
+  `Error("not implemented")` until the owning builder fills them in. (No in-repo history
+  scaffolding is checked in — the external store under `<maestroHome>/store/` is created
+  on demand at runtime.)
 - **Core builders:** fill the bodies of `src/core/*.mjs` (must match signatures here).
 - **CLI builder:** `src/cli/maestro.mjs`.
 - **Install builder:** `scripts/install.mjs`.
@@ -134,9 +137,33 @@ JSON contracts + validators shared by agents and orchestrator.
     first balanced `{ ... }` object, and `JSON.parse`s it. Returns `null` on failure.
     Never throws.
 
-### 3.2 `src/core/artifacts.mjs`
+### 3.2 `src/core/store.mjs`
 
-Paths, slugify, date, pipeline create/persist/audit.
+Durable project identity + external history store paths. All resolution is **synchronous
+and fail-safe** (a non-repo / missing git degrades to the realpath of the dir, never
+throws).
+
+**Exports:**
+
+- `canonicalProjectRoot(projectDir) -> string`
+  - Absolute path to the canonical main-repo root: the parent of the shared `.git`
+    (via `git rev-parse --git-common-dir`), so **every worktree of a repo resolves to the
+    same root**. Falls back to the realpath of `projectDir` outside a git repo.
+
+- `projectKey(projectDir) -> string`
+  - Stable per-repo key: `<repo-basename-slug>-<sha1(canonicalRoot)[:8]>`. Memoized by
+    resolved input path. Identical for all worktrees of one repo.
+
+- `storeRoot() -> string`
+  - Root of the external history store: `<maestroHome>/store` (default `~/.maestro/store`).
+
+- `projectStorePath(key) -> string`
+  - Per-project store directory: `<maestroHome>/store/<key>`.
+
+### 3.3 `src/core/artifacts.mjs`
+
+Paths, slugify, date, pipeline create/persist/audit. **All paths it returns are rooted in
+the external store from `store.mjs`, not the project working tree.**
 
 **Exports:**
 
@@ -148,8 +175,12 @@ Paths, slugify, date, pipeline create/persist/audit.
   - Zero-padded day-month-year from the system clock at runtime (ordinary runtime code).
 
 - `artifactPaths(projectDir) -> { root, plans, reviews, pipelines }`
-  - All **absolute** paths under `<projectDir>/ai-artifacts`:
-    - `root = <projectDir>/ai-artifacts`
+  - All **absolute** paths under the machine-wide external store (see
+    `src/core/store.mjs`), **not** the project working tree. Routing every
+    plan/review/pipeline reader and writer through this one function is what keeps all
+    three out of the repo:
+    - `root = projectStorePath(projectKey(projectDir))` = `<maestroHome>/store/<projectKey>`
+      (default `~/.maestro/store/<projectKey>`)
     - `plans = <root>/plans`
     - `reviews = <root>/reviews`
     - `pipelines = <root>/pipelines`
@@ -191,7 +222,7 @@ Paths, slugify, date, pipeline create/persist/audit.
   - Loads the pipeline's `state.json` (parsed -> `state`) and `pipeline.md` raw text
     (-> `auditMarkdown`).
 
-### 3.3 `src/core/preflight.mjs`
+### 3.4 `src/core/preflight.mjs`
 
 Optional-tool detection. **All shell/env probes must fail safe (failure => `false`,
 never throw).**
@@ -213,7 +244,7 @@ never throw).**
   - `instruction` = human-readable text injected into agent system prompts telling them
     to use the chosen tool, or `""` if none.
 
-### 3.4 `src/core/claude-runner.mjs`
+### 3.5 `src/core/claude-runner.mjs`
 
 Spawn Claude headless, stream events, AbortSignal kill, MOCK mode.
 
@@ -260,7 +291,7 @@ Spawn Claude headless, stream events, AbortSignal kill, MOCK mode.
   - `MOCK_JSON: <absolute path>` — review JSON path (refiner/reviewer)
   - `MOCK_CYCLE: <n>` — current loop cycle (refiner/reviewer)
 
-### 3.5 `src/core/phases.mjs`
+### 3.6 `src/core/phases.mjs`
 
 Per-phase agent runners. Each:
 - uses `runClaude` + the matching `agents/*.md` body as the **appended system prompt**,
@@ -301,7 +332,7 @@ Per-phase agent runners. Each:
   - Reviews the git diff, writes review markdown to `reviewMdPath` and the reviewer
     review JSON (`impl-review-cycle<cycle>.json`) to `reviewJsonPath`. Returns `{ review }` (parsed).
 
-### 3.6 `src/core/orchestrator.mjs`
+### 3.7 `src/core/orchestrator.mjs`
 
 EventEmitter state machine sequencing all phases + loops + gates.
 
@@ -421,8 +452,10 @@ click-to-view saved markdown. Clean minimal dark CSS.
 
 ## 5. ON-DISK FILE CONTRACTS
 
-All pipeline files live under
-`<projectDir>/ai-artifacts/pipelines/<DD-MM-YY>-<slug>-<id>/`.
+All pipeline files live in the machine-wide external store (see §3.2), under
+`<maestroHome>/store/<projectKey>/pipelines/<DD-MM-YY>-<slug>-<id>/`
+(default `~/.maestro/store/<projectKey>/pipelines/...`) — outside the project working
+tree, so they are never committed to the repo.
 
 ### 5.1 `clarify.json` (written by planner-clarify; read by `readClarify`)
 ```json

@@ -31,7 +31,10 @@ clears quality gates:
    implementer to fix — looping Implement -> Review until only minor/suggestion issues
    remain (or you approve continuing past the cap).
 
-Everything is saved as markdown + JSON under `ai-artifacts/` for audit.
+Everything is saved as markdown + JSON in a **machine-wide external store** (default
+`~/.maestro/store/<projectKey>/`), keyed by repo identity and kept **outside your
+project's working tree**, so history is never committed to your repo. See
+[Artifact layout](#artifact-layout) for details.
 
 ### Preflight tooling
 
@@ -193,10 +196,13 @@ To add a new agent to the palette, see [`docs/ADDING-AGENTS.md`](docs/ADDING-AGE
 
 ## Artifact layout
 
-All outputs are written under `<projectDir>/ai-artifacts/`:
+Plans, reviews, and pipeline history do **not** live in your project — they are written
+to a single **machine-wide external store** outside every project's working tree, so
+nothing is ever committed to your repo:
 
 ```
-ai-artifacts/
+<maestroHome>/store/<projectKey>/
+  meta.json     project name + canonical path (for the "All projects" view)
   plans/        <DD-MM-YY>-<name>.md, -v2.md, -v3.md ...   (plans + refinements)
   reviews/      <DD-MM-YY>-<name>-impl-review.md           (implementation reviews)
   pipelines/    <DD-MM-YY>-<slug>-<id>/                    (one folder per run)
@@ -210,6 +216,18 @@ ai-artifacts/
     pipeline.md          human-readable audit log (history view reads this)
 ```
 
+- **`<maestroHome>`** = `<base>/.maestro`, where `<base>` is `MAESTRO_HOME` if set, else
+  the persisted "Maestro root folder" from Settings, else your OS home. By default this
+  is `~/.maestro`, so the store lives at `~/.maestro/store/`.
+- **`<projectKey>`** = `<repo-basename-slug>-<sha1(canonicalRoot)[:8]>`, derived from the
+  repository's identity (the parent of its shared `.git`). It is **stable across all git
+  worktrees of the same repo**, so every worktree shares one history.
+
+Because history is machine-wide and keyed by repo identity, the web UI adds an **"All
+projects"** view (and `GET /api/history`) that lists runs across every project on the
+machine. There is **no migration**: any old `<projectDir>/ai-artifacts/` directories
+from before this change are simply left in place and no longer used.
+
 The exact JSON shapes are specified in `docs/ARCHITECTURE.md` §5.
 
 ---
@@ -217,12 +235,15 @@ The exact JSON shapes are specified in `docs/ARCHITECTURE.md` §5.
 ## Project structure
 
 ```
-src/core/        protocol, artifacts, preflight, claude-runner, phases, orchestrator
+src/core/        protocol, store, artifacts, preflight, claude-runner, phases, orchestrator
 src/cli/         orchestrate.mjs (CLI entry)
 scripts/         install.mjs (copy agents + skill into a target project)
 agents/          agent prompts + .meta.json sidecars (data-driven set)
 skills/          orchestrate/SKILL.md (the /maestro skill)
 ui/              server.mjs + public/ (single-page web UI)
 docs/            ARCHITECTURE.md (single source of truth)
-ai-artifacts/    generated plans, reviews, and pipeline run folders
 ```
+
+Generated plans, reviews, and pipeline run folders are **not** part of this repo: they
+live in the machine-wide external store at `<maestroHome>/store/<projectKey>/` (default
+`~/.maestro/store/...`). See [Artifact layout](#artifact-layout).
