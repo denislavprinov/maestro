@@ -172,3 +172,48 @@ test('saved list renders rows with meta line + chips; expand builds a read-only 
   assert.deepEqual(deleted, ['wf_quickfix'], 'DELETE called for the workflow id');
   assert.equal(window.document.querySelectorAll('#composer-saved-list .pl-item').length, 1, 'row removed after reload');
 });
+
+// ---------------------------------------------------------------------------
+// Task 10: connectsTo governance — disallowed drops + feedback edges DECLINE.
+// Exercises the real DOM drop handlers + composerAddFeedback via the window.__composer*
+// test seam (mirrors the window.__np convention).
+// ---------------------------------------------------------------------------
+async function bootComposer() {
+  const window = await boot();                  // existing harness: jsdom + app.js (returns window)
+  window.location.hash = 'composer';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));   // let the router run initComposer
+  return window;
+}
+
+test('composer declines a disallowed sequential drop (no node inserted)', async () => {
+  const window = await bootComposer();
+  const composer = window.__composer;           // seam exposed by app.js (Step 3)
+  composer.agents = {
+    planner: { key: 'planner', displayName: 'Plan', connectsTo: ['refiner', 'implementer'] },
+    reviewer: { key: 'reviewer', displayName: 'Review', connectsTo: ['implementer'] },
+  };
+  composer.steps = [[{ id: 'n1', key: 'planner' }]];
+  composer.feedbacks = [];
+  window.__composerRefresh();                    // render strips/columns for the current steps
+  composer.dragKey = 'reviewer';
+  // A reviewer is illegal adjacent to the planner on BOTH sides, so EVERY .strip
+  // must decline -> steps stays length 1 regardless of which gap is hit.
+  const strips = window.document.querySelectorAll('.strip');
+  assert.ok(strips.length > 0, 'strips render');
+  strips.forEach((s) => s.dispatchEvent(new window.Event('drop', { bubbles: true, cancelable: true })));
+  assert.equal(composer.steps.length, 1, 'disallowed drop must not insert a step');
+});
+
+test('composer declines a disallowed feedback edge', async () => {
+  const window = await bootComposer();
+  const composer = window.__composer;
+  composer.agents = {
+    reviewer: { key: 'reviewer', displayName: 'Review', connectsTo: ['implementer'] },
+    planner: { key: 'planner', displayName: 'Plan', connectsTo: ['refiner'] },
+  };
+  composer.steps = [[{ id: 'a', key: 'reviewer' }], [{ id: 'b', key: 'planner' }]];
+  composer.feedbacks = [];
+  window.__composerAddFeedback('a', 'b');        // reviewer -> planner is illegal
+  assert.equal(composer.feedbacks.length, 0, 'disallowed feedback must not be added');
+});
