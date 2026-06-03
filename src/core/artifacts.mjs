@@ -414,3 +414,29 @@ export async function readPipeline(projectDir, id) {
   }
   return { state, auditMarkdown };
 }
+
+/**
+ * Read a pipeline directly from a store key (project-agnostic). Matches by
+ * pipeline short-id (state.id) or by directory basename. Returns null when the
+ * key or id is unknown (so the API maps it to a 404).
+ */
+export async function readPipelineByKey(key, id) {
+  const pipelinesDir = join(projectStorePath(key), 'pipelines');
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
+  let matchDir = null;
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    if (ent.name === id) { matchDir = join(pipelinesDir, ent.name); break; }
+    try {
+      const st = JSON.parse(await readFile(join(pipelinesDir, ent.name, 'state.json'), 'utf8'));
+      if (st && st.id === id) { matchDir = join(pipelinesDir, ent.name); break; }
+    } catch { /* skip unreadable */ }
+  }
+  if (!matchDir) return null;
+  let state = null;
+  try { state = JSON.parse(await readFile(join(matchDir, 'state.json'), 'utf8')); } catch { state = null; }
+  let auditMarkdown = '';
+  try { auditMarkdown = await readFile(join(matchDir, 'pipeline.md'), 'utf8'); } catch { auditMarkdown = ''; }
+  return { state, auditMarkdown };
+}
