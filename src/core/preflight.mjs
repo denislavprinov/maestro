@@ -193,6 +193,29 @@ export function buildInstruction(tool, kind) {
 }
 
 /**
+ * Instruction for agents when a fresh AST graph has been built INSIDE the
+ * current worktree at ./graphify-out/. Paths are cwd-relative (agents run with
+ * cwd=worktree); the AST-only nature is called out so agents calibrate.
+ */
+export function worktreeGraphInstruction() {
+  return (
+    'A code knowledge-graph CLI named "graphify" is available, and a fresh graph ' +
+    'for THIS worktree has been built at graphify-out/ (relative to your working ' +
+    'directory). It is an AST-only structural graph (symbols, files, and their ' +
+    'structural relationships) with NO semantic/inferred edges. BEFORE analyzing ' +
+    'or planning, ground yourself in the real code: first read ' +
+    'graphify-out/GRAPH_REPORT.md for the overview, then query the graph via Bash. ' +
+    'Query ONE concept at a time — a single symbol or term, NOT a natural-language ' +
+    'phrase (phrases match almost nothing and return noise). Useful commands:\n' +
+    '  graphify query "<concept>"    # BFS neighborhood of one term\n' +
+    '  graphify explain "<symbol>"   # one node plus its direct connections\n' +
+    '  graphify path "<A>" "<B>"     # how two symbols are connected\n' +
+    'Run several single-concept queries. Use Glob/Grep/Read for anything the ' +
+    'graph cannot answer.'
+  );
+}
+
+/**
  * Detect optional tooling for a project directory.
  * @param {string} projectDir
  * @returns {Promise<{
