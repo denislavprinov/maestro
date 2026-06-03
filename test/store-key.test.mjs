@@ -1,0 +1,47 @@
+// test/store-key.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { projectKey, canonicalProjectRoot, storeRoot, projectStorePath } from '../src/core/store.mjs';
+
+function git(cwd, args) { execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }); }
+
+test('main repo and its worktree resolve to the same key', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'maestro-key-'));
+  git(repo, ['init', '-q']);
+  git(repo, ['config', 'user.email', 't@t']);
+  git(repo, ['config', 'user.name', 't']);
+  await writeFile(join(repo, 'f.txt'), 'hi', 'utf8');
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-qm', 'init']);
+  const wt = join(repo, '.maestro', 'worktrees', 'wt1');
+  await mkdir(join(repo, '.maestro', 'worktrees'), { recursive: true });
+  git(repo, ['worktree', 'add', '-q', '-b', 'feat-x', wt, 'HEAD']);
+
+  const kMain = projectKey(repo);
+  const kWt = projectKey(wt);
+  assert.equal(kWt, kMain, 'worktree must map to the main repo key');
+  assert.match(kMain, /^[a-z0-9-]+-[0-9a-f]{8}$/, 'key is <slug>-<sha1[:8]>');
+});
+
+test('non-git dir falls back to a realpath-based key (no throw)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'maestro-nogit-'));
+  const k = projectKey(dir);
+  assert.match(k, /-[0-9a-f]{8}$/);
+});
+
+test('store paths are rooted under MAESTRO_HOME/.maestro/store', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-home-'));
+  const prev = process.env.MAESTRO_HOME;
+  process.env.MAESTRO_HOME = home;
+  try {
+    assert.equal(storeRoot(), join(home, '.maestro', 'store'));
+    assert.equal(projectStorePath('abc-12345678'), join(home, '.maestro', 'store', 'abc-12345678'));
+    assert.ok(canonicalProjectRoot(home).length > 0);
+  } finally {
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
+});
