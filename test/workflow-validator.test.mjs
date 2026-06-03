@@ -130,3 +130,40 @@ test('rejects a null/non-object template', () => {
   assert.equal(validateWorkflow(null, REGISTRY).ok, false);
   assert.equal(validateWorkflow({}, REGISTRY).ok, false);
 });
+
+test('validator warns: unreachable required channel + illegal connectsTo edge', () => {
+  const registry = {
+    planner: { key: 'planner', produces: ['plan'], consumes: ['userPrompt'], connectsTo: ['refiner'] },
+    // synthetic consumer that REQUIRES `review` (not pre-seeded, not optional):
+    auditor: { key: 'auditor', produces: [], consumes: ['review'], connectsTo: '*' },
+  };
+  const tpl = { steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'auditor' }]], feedbacks: [] };
+  const res = validateWorkflow(tpl, registry);
+  assert.equal(res.ok, true);                                   // warnings don't fail validity
+  assert.ok(Array.isArray(res.warnings));
+  assert.ok(res.warnings.some((w) => /review/.test(w)), 'reachability warning for review');
+  assert.ok(res.warnings.some((w) => /connect/i.test(w)), 'governance warning planner->auditor');
+});
+
+test('validator warns: two producers of code in one parallel step (multi-producer)', () => {
+  const registry = {
+    implementer: { key: 'implementer', produces: ['code'], consumes: ['plan', 'review'], optionalConsumes: ['review'], connectsTo: '*' },
+  };
+  const tpl = { steps: [[{ id: 's0_0', key: 'implementer' }, { id: 's0_1', key: 'implementer' }]], feedbacks: [] };
+  const res = validateWorkflow(tpl, registry);
+  assert.ok(res.warnings.some((w) => /code/.test(w) && /producer/i.test(w)));
+});
+
+test('default workflow has no warnings (pre-seeded channels never warn)', () => {
+  const registry = {
+    planner: { key: 'planner', produces: ['plan'], consumes: ['userPrompt'], connectsTo: ['refiner', 'implementer'] },
+    refiner: { key: 'refiner', produces: ['plan', 'review'], consumes: ['plan'], connectsTo: ['implementer', 'refiner'] },
+    implementer: { key: 'implementer', produces: ['code'], consumes: ['plan', 'review'], optionalConsumes: ['review'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
+    reviewer: { key: 'reviewer', produces: ['review'], consumes: ['plan', 'code'], connectsTo: ['implementer', 'manualTestsChecklist'] },
+  };
+  const tpl = { steps: [[{id:'s0_0',key:'planner'}],[{id:'s1_0',key:'refiner'}],[{id:'s2_0',key:'implementer'}],[{id:'s3_0',key:'reviewer'}]],
+    feedbacks: [{id:'fb_refine',from:'s1_0',to:'s1_0'},{id:'fb_review',from:'s3_0',to:'s2_0'}] };
+  const res = validateWorkflow(tpl, registry);
+  assert.deepEqual(res.errors, []);
+  assert.deepEqual(res.warnings, []);
+});

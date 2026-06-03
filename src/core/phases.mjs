@@ -15,6 +15,7 @@
 
 import { runClaude } from './claude-runner.mjs';
 import { readClarify, readReview } from './protocol.mjs';
+import { renderAttachmentsBlock } from './channels.mjs';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
@@ -141,8 +142,19 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   };
 }
 
-/** A compact task header reused across roles. */
-function taskHeader(ctx, title) {
+/** A compact task header reused across roles. Exported for testing. */
+export function taskHeader(ctx, title) {
+  // Who gets the raw request? The ENTRY node (step 0) always — it stands in for any
+  // missing upstream artifact and owns the user's attachments. Otherwise: userPrompt
+  // consumers, plus the refiner & reviewer by policy; the clarify pre-step (no inputs).
+  const key = ctx.node?.key;
+  const isEntry = !!ctx.isEntry;
+  const consumesPrompt = !ctx.inputs || ('userPrompt' in ctx.inputs);
+  const wantsPrompt = isEntry || consumesPrompt || key === 'refiner' || key === 'reviewer';
+  const requestBlock = wantsPrompt
+    ? `## Original request\n\n${(ctx.taskPrompt || '').trim() || '(no prompt text)'}\n`
+    : `## Upstream input\n\nYour input is the output of the preceding step(s); the file paths to read are named below.\n`;
+  const attachBlock = isEntry ? renderAttachmentsBlock(ctx.extras) : '';
   return (
     `# Task: ${title}\n\n` +
     `Project directory (your cwd): ${ctx.projectDir}\n` +
@@ -150,7 +162,8 @@ function taskHeader(ctx, title) {
     `Project and personal skills (.claude/skills in this project and ~/.claude/skills) are ` +
     `available via the Skill tool — invoke any that fit (e.g. design, framework-pattern, or ` +
     `knowledge-graph skills) rather than guessing conventions.\n\n` +
-    `## Original request\n\n${(ctx.taskPrompt || '').trim() || '(no prompt text)'}\n`
+    requestBlock +
+    attachBlock
   );
 }
 

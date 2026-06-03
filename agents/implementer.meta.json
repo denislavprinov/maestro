@@ -7,6 +7,9 @@
   "agentFile": "maestro-implementer.md",
   "runnerType": "producer",
   "loopSource": false,
-  "connectsTo": "*",
+  "produces": ["code"],
+  "consumes": ["plan","review"],
+  "optionalConsumes": ["review"],
+  "connectsTo": ["reviewer","manualTestsChecklist"],
   "order": 3
 }

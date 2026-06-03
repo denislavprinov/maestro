@@ -57,32 +57,32 @@ export function distinctAgents(steps) {
 export const EMBEDDED_AGENTS = {
   planner: {
     key: 'planner', displayName: 'Plan', description: 'architecture & breakdown',
-    color: 'violet', order: 1,
+    color: 'violet', order: 1, connectsTo: ['refiner', 'implementer'],
     icon: '<path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/>',
   },
   refiner: {
     key: 'refiner', displayName: 'Refine Plan', description: 'tighten the plan',
-    color: 'green', order: 2,
+    color: 'green', order: 2, connectsTo: ['implementer', 'refiner'],
     icon: '<path d="M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1" stroke-linecap="round"/><path d="M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z" stroke-linejoin="round"/>',
   },
   implementer: {
     key: 'implementer', displayName: 'Implementation', description: 'write the code',
-    color: 'peach', order: 3,
+    color: 'peach', order: 3, connectsTo: ['reviewer', 'manualTestsChecklist'],
     icon: '<path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   reviewer: {
     key: 'reviewer', displayName: 'Review Implementation', description: 'verify & report',
-    color: 'blue', order: 4,
+    color: 'blue', order: 4, connectsTo: ['implementer', 'manualTestsChecklist'],
     icon: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   manualTestsChecklist: {
     key: 'manualTestsChecklist', displayName: 'Manual Tests Checklist', description: 'draft manual cases',
-    color: 'blue', order: 5,
+    color: 'blue', order: 5, connectsTo: ['manualWebUiTesting'],
     icon: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9.5 4V2.8h5V4" stroke-linejoin="round"/><path d="M8.8 12l1.6 1.6L13.4 10" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   manualWebUiTesting: {
     key: 'manualWebUiTesting', displayName: 'Manual web UI testing', description: 'run cases via Playwright',
-    color: 'violet', order: 6,
+    color: 'violet', order: 6, connectsTo: ['implementer'],
     icon: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5V8.5Z" fill="currentColor" stroke="none"/>',
   },
 };
@@ -103,6 +103,9 @@ export function mergePalette(agentsResponse) {
       color: a.color || 'blue',
       icon: a.icon || '',
       order: typeof a.order === 'number' ? a.order : 99,
+      connectsTo: a.connectsTo === undefined ? '*' : a.connectsTo,
+      produces: Array.isArray(a.produces) ? a.produces : [],
+      consumes: Array.isArray(a.consumes) ? a.consumes : [],
     }))
     .sort((x, y) => x.order - y.order);
 }
@@ -128,4 +131,16 @@ export function defaultTopologyFromTemplate(tpl, mk) {
     .filter((fb) => remap[fb.from] && remap[fb.to])
     .map((fb) => ({ from: remap[fb.from], to: remap[fb.to] }));
   return { steps, feedbacks };
+}
+
+// canConnect(fromKey, toKey, agents) -> { ok, reason }. Governance only: an agent
+// may connect to another iff its connectsTo is '*' or lists the target key. An
+// unknown source agent is permissive ('*'). agents = { [key]: {connectsTo} }.
+export function canConnect(fromKey, toKey, agents) {
+  const ct = agents && agents[fromKey] ? agents[fromKey].connectsTo : '*';
+  if (ct === '*' || ct === undefined || !Array.isArray(ct)) return { ok: true, reason: '' };
+  if (ct.includes(toKey)) return { ok: true, reason: '' };
+  const from = (agents[fromKey] && agents[fromKey].displayName) || fromKey;
+  const to = (agents[toKey] && agents[toKey].displayName) || toKey;
+  return { ok: false, reason: `${from} can’t connect to ${to}` };
 }

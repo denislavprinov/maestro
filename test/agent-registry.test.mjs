@@ -27,7 +27,7 @@ test('each entry is a well-formed AgentMeta', () => {
     assert.ok(m.icon.length > 0);
     assert.ok(['producer', 'verifier'].includes(m.runnerType));
     assert.equal(typeof m.loopSource, 'boolean');
-    assert.equal(m.connectsTo, '*');
+    assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `connectsTo for ${key}: ${JSON.stringify(m.connectsTo)}`);
     assert.equal(typeof m.order, 'number');
   }
 });
@@ -106,4 +106,20 @@ test('exactly the two verifiers are loopSources; producers are not', () => {
   for (const m of Object.values(reg)) {
     if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
   }
+});
+
+test('registry stamps default channel spec for the six built-ins', () => {
+  const reg = loadAgentRegistry(); // real agents/ dir
+  assert.deepEqual(reg.planner.consumes, ['userPrompt']);
+  assert.deepEqual(reg.planner.produces, ['plan']);
+  assert.deepEqual(reg.refiner.produces, ['plan', 'review']);
+  assert.deepEqual(reg.implementer.consumes, ['plan', 'review']);
+  assert.deepEqual(reg.implementer.optionalConsumes, ['review']);
+  assert.deepEqual(reg.implementer.produces, ['code']);
+  assert.deepEqual(reg.reviewer.consumes, ['plan', 'code']);
+  assert.deepEqual(reg.reviewer.produces, ['review']);
+  // connectsTo superset keeps shipped pipelines legal
+  assert.ok(reg.reviewer.connectsTo.includes('implementer'));
+  assert.ok(reg.reviewer.connectsTo.includes('manualTestsChecklist'));
+  assert.ok(reg.refiner.connectsTo.includes('refiner')); // self-loop legal
 });

@@ -30,6 +30,7 @@ import {
   distinctAgents,
   defaultTopologyFromTemplate,
   mergePalette,
+  canConnect,
 } from './composer-core.mjs';
 
 // ---------------------------------------------------------------------------
@@ -720,6 +721,15 @@ const composer = {
 const composerMk = (key) => ({ id: 'n' + composer.uid++, key });
 const composerAgent = (key) => composer.agents[key] || { displayName: key, description: '', color: 'blue', icon: '' };
 
+// Test hook: expose the composer state + the mutators the jsdom tests drive
+// directly (mirrors the window.__np convention). composerRefresh/composerAddFeedback
+// are hoisted function declarations, so they are bound by reference here.
+if (typeof window !== 'undefined') {
+  window.__composer = composer;
+  window.__composerRefresh = composerRefresh;
+  window.__composerAddFeedback = composerAddFeedback;
+}
+
 async function initComposer() {
   if (_composerReady) { composerDrawWires(); return; }
   _composerReady = true;
@@ -806,6 +816,13 @@ function composerNodeEl(a) {
 
 /* ---- drop helpers ---- */
 function composerAllow(e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }
+// Transient governance message: reuse the link-banner els (link mode is mutually
+// exclusive with dragging). Falls back to console when no banner is mounted (jsdom).
+function composerToast(msg) {
+  const banner = composer.els.banner, text = composer.els.linkText;
+  if (banner && text) { text.textContent = msg; banner.hidden = false; setTimeout(() => { banner.hidden = true; }, 2200); }
+  else if (typeof console !== 'undefined') console.warn('[composer]', msg); // jsdom/no-banner fallback
+}
 function composerMakeStrip(index, full) {
   const s = document.createElement('div');
   s.className = 'strip' + (full ? ' full' : '');
@@ -814,7 +831,14 @@ function composerMakeStrip(index, full) {
   s.addEventListener('drop', (e) => {
     e.preventDefault(); s.classList.remove('over');
     if (!composer.dragKey) return;
-    composer.steps.splice(index, 0, [composerMk(composer.dragKey)]); composer.dragKey = null; composerRefresh();
+    const key = composer.dragKey;
+    const prev = composer.steps[index - 1] || [];
+    const next = composer.steps[index] || [];
+    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
+    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
+    if (badPrev) { composerToast(canConnect(badPrev.key, key, composer.agents).reason); composer.dragKey = null; return; }
+    if (badNext) { composerToast(canConnect(key, badNext.key, composer.agents).reason); composer.dragKey = null; return; }
+    composer.steps.splice(index, 0, [composerMk(key)]); composer.dragKey = null; composerRefresh();
   });
   return s;
 }
@@ -832,7 +856,16 @@ function composerMakeCol(stepIdx) {
   col.addEventListener('drop', (e) => {
     e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
     if (!composer.dragKey) return;
-    composer.steps[stepIdx].push(composerMk(composer.dragKey)); composer.dragKey = null; composerRefresh();
+    const key = composer.dragKey;
+    const prev = composer.steps[stepIdx - 1] || [];
+    const next = composer.steps[stepIdx + 1] || [];
+    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
+    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
+    if (badPrev || badNext) {
+      const v = badPrev ? canConnect(badPrev.key, key, composer.agents) : canConnect(key, badNext.key, composer.agents);
+      composerToast(v.reason); composer.dragKey = null; return;
+    }
+    composer.steps[stepIdx].push(composerMk(key)); composer.dragKey = null; composerRefresh();
   });
   return col;
 }
@@ -866,6 +899,11 @@ function composerRemoveNode(id) {
 }
 function composerAddFeedback(from, to) {
   if (from === to) return;
+  const flat = composer.steps.flat();
+  const fromKey = flat.find((n) => n.id === from)?.key;
+  const toKey = flat.find((n) => n.id === to)?.key;
+  const verdict = canConnect(fromKey, toKey, composer.agents);
+  if (!verdict.ok) { composerToast(verdict.reason); return; }
   if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
   composerRefresh();
 }
