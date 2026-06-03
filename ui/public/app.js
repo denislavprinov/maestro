@@ -2527,11 +2527,37 @@ if (runListEl) {
 // ---------------------------------------------------------------------------
 // History
 // ---------------------------------------------------------------------------
+const allProjectsToggle = document.querySelector('#allProjectsToggle');
+function historyIsAllMode() { return !!(allProjectsToggle && allProjectsToggle.checked); }
+
+// Refresh honors the active mode: machine-wide when "All projects" is ticked,
+// otherwise the selected project's history.
 el.refreshHistory.addEventListener('click', () => {
+  if (historyIsAllMode()) { loadAllHistory(); return; }
   const dir = selectedProjectPath();
   if (dir) loadHistory(dir);
   else setFormMsg('Select a project to load history.', 'err');
 });
+
+if (allProjectsToggle) {
+  allProjectsToggle.addEventListener('change', () => {
+    if (historyIsAllMode()) loadAllHistory();
+    else {
+      const dir = selectedProjectPath();
+      if (dir) loadHistory(dir);
+      else { el.history.innerHTML = ''; el.history.appendChild(histEmpty('Select a project to load history.')); }
+    }
+  });
+}
+
+async function loadAllHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const data = await safeJson(res);
+    if (!res.ok) { renderHistoryError(data.error || `HTTP ${res.status}`); return; }
+    renderHistory(null, data.pipelines || [], []);
+  } catch (e) { renderHistoryError(e.message); }
+}
 
 async function loadHistory(projectDir) {
   try {
@@ -2614,12 +2640,8 @@ function buildHistCard(projectDir, p) {
   const titleEl = node.querySelector('.h-meta b');
   const title = p.title || id || '(untitled)';
   if (titleEl) {
-    titleEl.textContent = title;
-    // Title click opens the saved-markdown viewer (distinct from expand).
-    titleEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-      viewPipeline(projectDir, id, p.title);
-    });
+    titleEl.textContent = p.projectName ? `${p.projectName} — ${title}` : title;
+    titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewPipeline(projectDir, id, p.title, p); });
   }
   const whenEl = node.querySelector('.h-meta small');
   if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
@@ -2634,13 +2656,10 @@ function buildHistCard(projectDir, p) {
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');
   if (head && detail) {
-    const toggle = () => toggleHistCard(projectDir, id, head, detail);
+    const toggle = () => toggleHistCard(projectDir, id, head, detail, p);
     head.addEventListener('click', toggle);
     head.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-        e.preventDefault();
-        toggle();
-      }
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggle(); }
     });
   }
 
@@ -2649,7 +2668,7 @@ function buildHistCard(projectDir, p) {
 
 // Expand/collapse a history card. On the FIRST expand, lazily fetch the saved
 // state and render the tinted stepper, caching it so re-expand doesn't refetch.
-function toggleHistCard(projectDir, id, head, detail) {
+function toggleHistCard(projectDir, id, head, detail, record) {
   const expanded = head.getAttribute('aria-expanded') === 'true';
   if (expanded) {
     head.setAttribute('aria-expanded', 'false');
@@ -2660,14 +2679,17 @@ function toggleHistCard(projectDir, id, head, detail) {
   detail.hidden = false;
   if (detail.dataset.loaded === '1') return; // cached — don't refetch
   detail.dataset.loaded = '1';
-  loadHistDetail(projectDir, id, detail);
+  loadHistDetail(projectDir, id, detail, record);
 }
 
 // Fetch GET /api/runs/:id and tint this card's stepper from data.state. On
 // failure, show a small inline notice and allow a retry on the next expand.
-async function loadHistDetail(projectDir, id, detail) {
+async function loadHistDetail(projectDir, id, detail, record) {
   try {
-    const res = await fetch(`/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`);
+    const url = record && record.projectKey
+      ? `/api/history/${encodeURIComponent(record.projectKey)}/${encodeURIComponent(id)}`
+      : `/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`;
+    const res = await fetch(url);
     const data = await safeJson(res);
     if (!res.ok) {
       throw new Error((data && data.error) || `HTTP ${res.status}`);
@@ -2779,10 +2801,13 @@ function renderHistoryError(message) {
   el.history.appendChild(histEmpty(`Could not load history: ${message}`));
 }
 
-async function viewPipeline(projectDir, id, title) {
+async function viewPipeline(projectDir, id, title, record) {
   if (!id) return;
   try {
-    const res = await fetch(`/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`);
+    const url = record && record.projectKey
+      ? `/api/history/${encodeURIComponent(record.projectKey)}/${encodeURIComponent(id)}`
+      : `/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`;
+    const res = await fetch(url);
     const data = await safeJson(res);
     if (!res.ok) {
       showViewer(title || id, `Could not load pipeline: ${data.error || res.status}`);
@@ -3097,8 +3122,8 @@ function showView(name) {
   navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
   if (name === 'running') renderRunningView();
   if (name === 'history') {
-    const d = selectedProjectPath();
-    if (d) loadHistory(d);
+    if (historyIsAllMode()) loadAllHistory();
+    else { const d = selectedProjectPath(); if (d) loadHistory(d); }
   }
   if (name === 'composer') initComposer();
 }
