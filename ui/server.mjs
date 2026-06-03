@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { listPipelines, readPipeline, listAllPipelines, readPipelineByKey } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
+import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
@@ -526,6 +527,27 @@ app.delete('/api/projects', async (req, res) => {
     res.json({ projects: await removeProject(name) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/settings  -> the configured Maestro root base + the built-in default
+// POST /api/settings -> set the root (empty body.root resets to default)
+// Validation (writable dir) lives in src/core/settings.mjs; this is thin
+// delegation mirroring /api/projects.
+// ---------------------------------------------------------------------------
+app.get('/api/settings', (_req, res) => {
+  res.json({ root: getMaestroRoot(), default: defaultRoot() });
+});
+
+app.post('/api/settings', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const data = await setMaestroRoot(typeof body.root === 'string' ? body.root : '');
+    res.json(data);
+  } catch (err) {
+    // setMaestroRoot throws only on an unusable path -> client error (400).
+    return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 
