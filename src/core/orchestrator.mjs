@@ -29,7 +29,7 @@ import {
   slugify,
   today,
 } from './artifacts.mjs';
-import { detectTools } from './preflight.mjs';
+import { detectTools, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runPlannerClarify } from './phases.mjs';
@@ -104,6 +104,10 @@ class Orchestrator extends EventEmitter {
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this.agentPrompts = null;
     this.toolInstruction = '';
+    // Cap for the in-worktree graphify build (macOS has no timeout(1)).
+    // Resolution order: constructor option → MAESTRO_GRAPH_TIMEOUT_MS env → 120s.
+    const _gt = Number(this.opts.graphBuildTimeoutMs ?? process.env.MAESTRO_GRAPH_TIMEOUT_MS);
+    this.graphBuildTimeoutMs = Number.isFinite(_gt) && _gt > 0 ? _gt : 120000;
     this.checkpointRef = null;
     this.pipeline = null; // { id, dir, promptText }
     this.baseName = null;
@@ -248,6 +252,10 @@ class Orchestrator extends EventEmitter {
       await this._setupWorktree();
       this._checkAbort();
 
+      // 3c) Build the knowledge graph INSIDE the worktree so agents can query it.
+      await this._buildWorktreeGraph();
+      this._checkAbort();
+
       // 4) Planner clarify (single round).
       const answers = await this._clarify(plannerNodeIdOf(plan));
       this._checkAbort();
@@ -337,6 +345,46 @@ class Orchestrator extends EventEmitter {
       `Worktree: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
     );
     this._emit('state', this.getState());
+  }
+
+  /**
+   * Build a graphify AST graph INSIDE the worktree so agents (which run with
+   * cwd=workDir) can query it. graphify-out/ is gitignored, so it never reaches
+   * the reviewer diff, the kept-branch commit, or survives teardown.
+   *
+   * Fail-safe — never throws. Skipped when: mock mode (keeps `npm run smoke`
+   * offline); no worktree was created; or the graphify binary is not on PATH.
+   * On build failure/timeout the run proceeds with no graph instruction.
+   */
+  async _buildWorktreeGraph() {
+    if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
+    if (this.workDir === this.projectDir) {
+      this._log('graph', 'debug', 'No worktree (workDir===projectDir); skipping in-worktree graph build.');
+      return; // building "in the worktree" would write into main
+    }
+    if (this.state.tools?.kind !== 'cli') {
+      this.toolInstruction = '';
+      this._log('graph', 'info', 'graphify CLI not on PATH; skipping in-worktree graph build');
+      return;
+    }
+    this._log('graph', 'info', 'Building graphify graph in worktree (AST-only, no LLM)…');
+    const res = await runGraphifyUpdate({
+      dir: this.workDir,
+      cwd: this.workDir,
+      timeoutMs: this.graphBuildTimeoutMs,
+    });
+    if (res.ok) {
+      this.toolInstruction = worktreeGraphInstruction();
+      this._log('graph', 'info', 'graphify graph built in worktree.');
+      await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in worktree (AST-only).');
+    } else {
+      this.toolInstruction = '';
+      this._log(
+        'graph',
+        'warn',
+        `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`,
+      );
+    }
   }
 
   /**
