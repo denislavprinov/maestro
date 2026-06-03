@@ -53,6 +53,14 @@ test('buildInstruction: no tool → empty string', () => {
   assert.equal(buildInstruction(undefined, undefined), '');
 });
 
+test('buildInstruction: never leaks the literal <projectDir> token', () => {
+  for (const kind of ['skill', 'cli', 'output-cached']) {
+    const text = buildInstruction('graphify', kind);
+    assert.doesNotMatch(text, /<projectDir>/, `${kind} instruction must not contain <projectDir>`);
+    assert.match(text, /graphify-out/, `${kind} instruction must still point at graphify-out/`);
+  }
+});
+
 test('detectTools: project with no tooling returns null tool + empty instruction', async () => {
   const dir = await makeTmpDir();
   // Use a HOME override so detection cannot accidentally find a real skill at

@@ -146,13 +146,13 @@ export function buildInstruction(tool, kind) {
         '`Skill(skill: "graphify", args: "<your question about the code>")`. ' +
         'Use its output to ground your work in real codebase structure rather ' +
         'than assumptions. A cached graph may already exist at ' +
-        '<projectDir>/graphify-out/ — consult it if present.'
+        'graphify-out/ — consult it if present.'
       );
     }
     if (kind === 'output-cached') {
       return (
         'A graphify knowledge graph has ALREADY been built for this project at ' +
-        '<projectDir>/graphify-out/. No graphify binary or Skill was detected, so ' +
+        'graphify-out/. No graphify binary or Skill was detected, so ' +
         'do NOT try to invoke or rebuild it — just READ the cached output. BEFORE ' +
         'analyzing or planning, read graphify-out/GRAPH_REPORT.md for the overview, ' +
         'then open graphify-out/graph.json to trace specific symbols and their ' +
@@ -168,7 +168,7 @@ export function buildInstruction(tool, kind) {
     // points at the already-built graph instead of a nonexistent build command.
     return (
       'A code knowledge-graph CLI named "graphify" is available on PATH, and a ' +
-      'graph has ALREADY been built at <projectDir>/graphify-out/ (do NOT rebuild). ' +
+      'graph has ALREADY been built at graphify-out/ (do NOT rebuild). ' +
       'BEFORE analyzing or planning, ground yourself in the real codebase: first ' +
       'read graphify-out/GRAPH_REPORT.md for the overview, then query the graph ' +
       'via Bash. Query ONE concept at a time — a single symbol or term, NOT a ' +
@@ -190,6 +190,72 @@ export function buildInstruction(tool, kind) {
     );
   }
   return '';
+}
+
+/**
+ * Instruction for agents when a fresh AST graph has been built INSIDE the
+ * current worktree at ./graphify-out/. Paths are cwd-relative (agents run with
+ * cwd=worktree); the AST-only nature is called out so agents calibrate.
+ */
+export function worktreeGraphInstruction() {
+  return (
+    'A code knowledge-graph CLI named "graphify" is available, and a fresh graph ' +
+    'for THIS worktree has been built at graphify-out/ (relative to your working ' +
+    'directory). It is an AST-only structural graph (symbols, files, and their ' +
+    'structural relationships) with NO semantic/inferred edges. BEFORE analyzing ' +
+    'or planning, ground yourself in the real code: first read ' +
+    'graphify-out/GRAPH_REPORT.md for the overview, then query the graph via Bash. ' +
+    'Query ONE concept at a time — a single symbol or term, NOT a natural-language ' +
+    'phrase (phrases match almost nothing and return noise). Useful commands:\n' +
+    '  graphify query "<concept>"    # BFS neighborhood of one term\n' +
+    '  graphify explain "<symbol>"   # one node plus its direct connections\n' +
+    '  graphify path "<A>" "<B>"     # how two symbols are connected\n' +
+    'Run several single-concept queries. Use Glob/Grep/Read for anything the ' +
+    'graph cannot answer.'
+  );
+}
+
+/**
+ * Run `graphify update <dir>` headlessly to build/refresh an AST graph at
+ * <dir>/graphify-out/. Spawned with cwd=cwd so graphify's stray cwd-relative
+ * manifest write lands inside the same worktree, never the main repo. Bounded
+ * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed.
+ * Never throws. Resolves { ok, code, timedOut, stderr }.
+ */
+export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
+  return new Promise((resolveP) => {
+    let child;
+    try {
+      child = spawn('graphify', ['update', dir], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      resolveP({ ok: false, code: -1, timedOut: false, stderr: err.message });
+      return;
+    }
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveP(val);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      done({ ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' });
+    }, timeoutMs);
+    child.stdout?.on('data', () => {});
+    child.stderr?.on('data', (d) => {
+      stderr += d.toString();
+    });
+    child.on('error', (err) => done({ ok: false, code: -1, timedOut, stderr: stderr || err.message }));
+    child.on('close', (code) => done({ ok: code === 0, code: code ?? -1, timedOut, stderr }));
+  });
 }
 
 /**
