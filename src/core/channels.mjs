@@ -119,3 +119,69 @@ export function legacyFields(node, inputs, outputs, cycle, baseName) {
       return { cycle };
   }
 }
+
+/** Channels materializable from plain prompt text (markdown artifacts). userPrompt
+ *  is already the prompt; code is the standing worktree; review is not pre-seeded and
+ *  is optional for its only consumer — so none of those ever seed. */
+const SEEDABLE = new Set(['plan', 'checklist']);
+
+/**
+ * Decide which materializable channels must be seeded from the user prompt because
+ * the topology REQUIRES them before any step produces them (a pipeline that starts
+ * mid-stream — implementer/refiner/... first). Mirrors the validator's step-ordered
+ * reachability walk (workflow-validator.mjs:112-144) but returns the channels to fill
+ * rather than warnings. Reads the channel spec carried on each resolved node, so no
+ * registry argument is needed (resolveWorkflow already stamped consumes/produces).
+ * @param {Array<Array<{key,consumes,optionalConsumes,produces}>>} steps
+ * @returns {string[]} channel ids to seed (subset of SEEDABLE), in first-needed order
+ */
+export function entrySeedChannels(steps) {
+  const seeded = new Set();
+  const produced = new Set();
+  for (const group of steps || []) {
+    for (const node of group || []) {
+      const optional = new Set(node?.optionalConsumes || []);
+      for (const c of node?.consumes || []) {
+        if (!SEEDABLE.has(c) || optional.has(c) || produced.has(c) || seeded.has(c)) continue;
+        seeded.add(c);
+      }
+    }
+    // Producers fold in AFTER the step (matches the validator's frozen-snapshot model),
+    // so a node that both consumes AND produces the same channel (the refiner) still
+    // triggers a seed at its own step.
+    for (const node of group || []) for (const c of node?.produces || []) produced.add(c);
+  }
+  return [...seeded];
+}
+
+/**
+ * Render the `## Attached files` block listing each attachment by path + name.
+ * Single source of truth shared by renderPromptArtifact (the seeded file body) and
+ * phases.mjs taskHeader (the entry agent's inline header) so the two cannot drift.
+ * Returns '' when there are no attachments.
+ * @param {Array<{name:string,path:string}>} [extras]
+ */
+export function renderAttachmentsBlock(extras = []) {
+  if (!Array.isArray(extras) || extras.length === 0) return '';
+  return (
+    `\n## Attached files\n\nThe user attached these files; read any that are relevant:\n\n` +
+    extras.map((e) => `- \`${e.path}\` (${e.name})`).join('\n') +
+    '\n'
+  );
+}
+
+/**
+ * Render the markdown a seeded artifact channel holds: the user's request stands in
+ * for the missing upstream artifact, with any attached files listed by path.
+ * @param {string} promptText
+ * @param {Array<{name:string,path:string}>} [extras]
+ */
+export function renderPromptArtifact(promptText, extras = []) {
+  const body = (promptText || '').trim() || '(no prompt text)';
+  return (
+    `# Task (from the user prompt)\n\n` +
+    `No upstream agent produced this artifact, so the user's request below stands in for it.\n\n` +
+    `## Original request\n\n${body}\n` +
+    renderAttachmentsBlock(extras)
+  );
+}
