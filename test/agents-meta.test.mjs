@@ -77,3 +77,13 @@ test('loadAgentRegistry returns the 6 shipped agents keyed by key, sorted by ord
   const sorted = [...orders].sort((a, b) => a - b);
   assert.deepEqual(orders, sorted, 'loadAgentRegistry must return entries sorted by .order');
 });
+
+test('every sidecar declares produces/consumes/connectsTo explicitly', async () => {
+  const files = (await readdir(AGENTS_DIR)).filter((x) => x.endsWith('.meta.json'));
+  for (const f of files) {
+    const m = JSON.parse(await readFile(join(AGENTS_DIR, f), 'utf8'));
+    assert.ok(Array.isArray(m.produces), `${f} produces`);
+    assert.ok(Array.isArray(m.consumes), `${f} consumes`);
+    assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `${f} connectsTo`);
+  }
+});
