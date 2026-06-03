@@ -253,6 +253,10 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
         effort: sel.effort,          // undefined unless configured
         tools,
         loopSource: !!meta.loopSource,
+        consumes: meta.consumes || [],
+        optionalConsumes: meta.optionalConsumes || [],
+        produces: meta.produces || [],
+        connectsTo: meta.connectsTo || '*',
       });
     }
     steps.push(resolvedGroup);

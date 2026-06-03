@@ -16,6 +16,7 @@ import {
   buildStepperManifest,
 } from '../src/core/workflows.mjs';
 import { setNodeModel, setFeedbackCycles } from '../src/core/config.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs'; // ▲ v3: add (not yet imported)
 
 // Each test gets its own ~/.maestro via MAESTRO_HOME so the global store is
 // isolated and nothing touches the developer's real home dir.
@@ -333,4 +334,17 @@ test('buildStepperManifest: falls back to key when registry lacks the agent', ()
   assert.equal(m.steps[1].nodes[0].label, 'ghost'); // key as last-resort label
   assert.equal(m.steps[1].nodes[0].color, '');
   assert.equal(m.steps[1].nodes[0].sub, '');
+});
+
+test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const plan = await resolveWorkflow(p, 'wf_default', loadAgentRegistry());
+  const flat = plan.steps.flat();
+  const planner = flat.find((n) => n.key === 'planner');
+  const implementer = flat.find((n) => n.key === 'implementer');
+  assert.deepEqual(planner.produces, ['plan']);
+  assert.deepEqual(planner.consumes, ['userPrompt']);
+  assert.deepEqual(implementer.produces, ['code']);
+  assert.deepEqual(implementer.optionalConsumes, ['review']);
 });

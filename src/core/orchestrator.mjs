@@ -25,7 +25,6 @@ import {
   writeState,
   artifactPaths,
   planPath,
-  reviewPath,
   slugify,
   today,
 } from './artifacts.mjs';
@@ -35,6 +34,7 @@ import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runPlannerClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
+import { allocate, bindInputs, publish, legacyFields } from './channels.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
@@ -556,18 +556,25 @@ class Orchestrator extends EventEmitter {
     // The active run cycle per step index while a loop is replaying through it.
     const stepCycle = new Array(steps.length).fill(1);
 
-    // Shared run state threaded between nodes (the plan/checklist/review paths).
-    const io = {
-      planPath: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix),
-      checklistPath: join(this.pipeline.dir, 'manual-tests-checklist.md'),
-      answers: runArgs.answers || [],
+    // Typed channel bus (replaces the old `io` bag). plan/checklist are pre-seeded
+    // with their default destinations (as today); code is the standing worktree
+    // channel; review starts empty; userPrompt carries the prompt + clarify answers.
+    // NOTE (V3-F): userPrompt.text and code.dir/baseRef are informational — no
+    // legacyFields arm reads them (the planner reads only .answers; the reviewer
+    // diffs ctx.checkpointRef, not code.baseRef). Tolerate undefined gracefully.
+    const bus = {
+      userPrompt: { kind: 'value', text: this.pipeline.promptText, answers: runArgs.answers || [] },
+      plan: { kind: 'artifact', path: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix) },
+      review: null,
+      checklist: { kind: 'artifact', path: join(this.pipeline.dir, 'manual-tests-checklist.md') },
+      code: { kind: 'worktree', dir: this.workDir, baseRef: this.checkpointRef },
     };
 
     let i = 0;
     while (i < steps.length) {
       this._checkAbort();
       const cycle = stepCycle[i];
-      const results = await this._runStep(steps[i], i, cycle, io);
+      const results = await this._runStep(steps[i], i, cycle, bus);
 
       // Did any feedback originating in THIS step fire?
       const loops = fbByFrom.get(i) || [];
@@ -608,18 +615,18 @@ class Orchestrator extends EventEmitter {
    * Run one step. Single node -> direct; >1 node -> Promise.all (PARALLEL).
    * Returns an array of { node, result } in node order.
    */
-  async _runStep(group, stepIndex, cycle, io) {
-    // CONV-6: each node reads a FROZEN snapshot of the inbound IO; nodes never
+  async _runStep(group, stepIndex, cycle, bus) {
+    // CONV-6: each node reads a FROZEN snapshot of the inbound bus; nodes never
     // mutate shared state concurrently. Results merge back in node order after all
     // nodes settle, so the outcome is independent of completion timing.
-    const snapshot = Object.freeze({ ...io });
+    const snapshot = Object.freeze({ ...bus });
     const results = group.length === 1
       ? [await this._runNode(group[0], stepIndex, cycle, snapshot)]
       : await Promise.all(group.map((node) => this._runNode(node, stepIndex, cycle, snapshot)));
     let stageNeeded = false;
-    for (const { node, result } of results) {
-      this._afterNode(node, result, io);                 // deterministic, node order
-      if (node.runnerType === 'producer' && node.key === 'implementer') stageNeeded = true;
+    for (const { node, result, ctx } of results) {
+      this._publishNodeIo(node, result, ctx.outputs, bus); // deterministic, node order
+      if ((node.produces || []).includes('code')) stageNeeded = true;
     }
     // CONV-6: stage ONCE, AWAITED, after the step's producers — so a following
     // reviewer's `git diff` sees newly-written files (legacy _reviewLoop staged
@@ -629,14 +636,15 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
-   * Execute a single plan node through its runnerType, threading the shared IO
-   * paths in/out. Records the node step (parallel-safe) and tags all emits.
+   * Execute a single plan node through its runnerType, binding the frozen bus
+   * snapshot into ctx and returning the node result + ctx (publish happens in
+   * _runStep). Records the node step (parallel-safe) and tags all emits.
    */
-  async _runNode(node, stepIndex, cycle, io) {
+  async _runNode(node, stepIndex, cycle, snapshot) {
     this._nodeStep(node, stepIndex, cycle, 'start');
     // Per-cycle artifact paths so loop re-runs never clobber prior outputs.
     const ctx = this._nodeCtx(node, { stepIndex, cycle });
-    Object.assign(ctx, this._nodeIo(node, cycle, io));
+    Object.assign(ctx, this._bindNodeIo(node, cycle, snapshot));
     let result;
     try {
       const runner = this._runners[node.runnerType];
@@ -645,65 +653,37 @@ class Orchestrator extends EventEmitter {
     } finally {
       this._nodeStep(node, stepIndex, cycle, 'done');
     }
-    // CONV-6: no shared-IO mutation here — _runStep merges results in node order.
-    return { node, result };
+    // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
+    return { node, result, ctx };
   }
 
-  /** Compute the per-node IO fields the runners read, from the shared run state. */
-  _nodeIo(node, cycle, io) {
-    switch (node.key) {
-      case 'planner':
-        return { planFilePath: io.planPath, baseName: this.baseName, answers: io.answers };
-      case 'refiner': {
-        const outPlanPath = planPath(this.projectDir, this.baseName, cycle + 1, this.planDatePrefix);
-        return {
-          inPlanPath: io.planPath,
-          outPlanPath,
-          reviewJsonPath: join(this.pipeline.dir, `refine-review-cycle${cycle}.json`),
-          cycle,
-        };
-      }
-      case 'implementer':
-        return {
-          planPath: io.planPath,
-          reviewPath: io.reviewMdPath,
-          mode: io.reviewMdPath ? 'fix' : 'implement',
-          cycle,
-        };
-      case 'manualTestsChecklist':
-        return { planPath: io.planPath, checklistPath: io.checklistPath };
-      case 'reviewer':
-        return {
-          planPath: io.planPath,
-          reviewMdPath: reviewPath(this.projectDir, this.baseName, this.planDatePrefix),
-          reviewJsonPath: join(this.pipeline.dir, `impl-review-cycle${cycle}.json`),
-          cycle,
-        };
-      case 'manualWebUiTesting':
-        return {
-          checklistPath: io.checklistPath,
-          reviewMdPath: join(this.pipeline.dir, `webui-review-cycle${cycle}.md`),
-          reviewJsonPath: join(this.pipeline.dir, `webui-review-cycle${cycle}.json`),
-          cycle,
-        };
-      default:
-        return { cycle };
-    }
+  /** Bind a node's typed inputs from the (frozen) bus snapshot + allocate its
+   *  outputs, then flatten to the runner ABI the phases.mjs runners read. Replaces
+   *  the role switch. `node` carries consumes/produces/optionalConsumes from
+   *  resolveWorkflow (Step 4). */
+  _bindNodeIo(node, cycle, snapshot) {
+    const consumes = node.consumes || [];
+    const produces = node.produces || [];
+    const optional = node.optionalConsumes || [];
+    const ctx = {
+      projectDir: this.projectDir, pipelineDir: this.pipeline.dir,
+      baseName: this.baseName, datePrefix: this.planDatePrefix, cycle, key: node.key,
+    };
+    const inputs = bindInputs(consumes, optional, snapshot);
+    const outputs = {};
+    for (const c of produces) outputs[c] = allocate(c, ctx);
+    return { inputs, outputs, ...legacyFields(node, inputs, outputs, cycle, this.baseName) };
   }
 
-  /** Fold a node's result back into shared run state + emit artifacts. */
-  _afterNode(node, result, io) {
+  /** Publish a node's produced channels back onto the bus (node order). Emits the
+   *  same 'artifact' events as before for plan/checklist. Clearing `review` on code
+   *  publish fixes the sticky fix-mode latent bug. */
+  _publishNodeIo(node, result, outputs, bus) {
     if (!result) return;
-    if (result.planPath) { io.planPath = result.planPath; this._artifact('plan', result.planPath); }
-    if (result.outPlanPath) { io.planPath = result.outPlanPath; this._artifact('plan', result.outPlanPath); }
-    if (result.checklistPath) { io.checklistPath = result.checklistPath; this._artifact('checklist', result.checklistPath); }
-    if (result.review) {
-      // CONV-5: remember the review md so a loop rewind runs the implementer in
-      // `fix` mode against it (see _nodeIo 'implementer').
-      io.reviewMdPath = result.reviewMdPath ?? io.reviewMdPath;
-    }
-    // CONV-6: working-tree staging is awaited ONCE per step in _runStep (not here),
-    // so parallel producers can't race git and the reviewer always sees new files.
+    const beforePlan = bus.plan, beforeChecklist = bus.checklist;
+    publish(node.produces || [], result, outputs || {}, bus);
+    if (bus.plan && bus.plan !== beforePlan) this._artifact('plan', bus.plan.path);
+    if (bus.checklist && bus.checklist !== beforeChecklist) this._artifact('checklist', bus.checklist.path);
   }
 
   /** True if the loop's `from` node returned a blocking verdict (CONV-3). */
