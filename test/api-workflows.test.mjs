@@ -6,12 +6,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-let homeDir, srv, base;
+let homeDir, srv, base, prevHome;
 const JSONH = { 'Content-Type': 'application/json' };
 
 before(async () => {
   // Redirect the global ~/.maestro (workflow store) into a sandbox.
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-wfapi-'));
+  prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
   process.env.MAESTRO_MOCK = '1'; // keep /api/run offline
   const { app } = await import('../ui/server.mjs'); // imported => no port bind
@@ -22,7 +23,7 @@ before(async () => {
 
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
-  delete process.env.MAESTRO_HOME;
+  if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   delete process.env.MAESTRO_MOCK;
   await rm(homeDir, { recursive: true, force: true });
 });
