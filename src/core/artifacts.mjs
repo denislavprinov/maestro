@@ -11,7 +11,7 @@ import { mkdir, writeFile, readFile, copyFile, readdir, stat, appendFile } from 
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { projectKey, projectStorePath, canonicalProjectRoot } from './store.mjs';
+import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot } from './store.mjs';
 import { listProjects } from './projects.mjs';
 
 /**
@@ -319,9 +319,29 @@ function pipelineTotalActiveMs(state) {
   return any ? sum : null;
 }
 
+/** Build one history row from a pipeline directory. Never throws. */
+async function pipelineEntry(dir) {
+  let mtime = 0;
+  try { mtime = (await stat(dir)).mtimeMs; } catch { /* ignore */ }
+  let state = null;
+  try { state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')); } catch { state = null; }
+  const branch = state?.branch?.feature ?? (typeof state?.branch === 'string' ? state.branch : null);
+  return {
+    id: state?.id ?? basename(dir),
+    dir,
+    title: state?.title ?? basename(dir),
+    status: state?.status ?? 'unknown',
+    startedAt: state?.startedAt ?? null,
+    branch,
+    totalCostUsd: pipelineTotalCost(state),
+    totalActiveMs: pipelineTotalActiveMs(state),
+    mtime,
+  };
+}
+
 /**
  * List all pipelines for a project, newest first.
- * Each entry: { id, dir, title, status, startedAt, mtime }.
+ * Each entry: { id, dir, title, status, startedAt, branch, totalCostUsd, totalActiveMs, mtime }.
  * Directories without a readable state.json fall back to filesystem metadata.
  * @param {string} projectDir
  * @returns {Promise<Array>}
@@ -329,37 +349,38 @@ function pipelineTotalActiveMs(state) {
 export async function listPipelines(projectDir) {
   const { pipelines } = artifactPaths(projectDir);
   let entries;
-  try {
-    entries = await readdir(pipelines, { withFileTypes: true });
-  } catch {
-    return [];
-  }
+  try { entries = await readdir(pipelines, { withFileTypes: true }); } catch { return []; }
   const out = [];
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
-    const dir = join(pipelines, ent.name);
-    let mtime = 0;
-    try {
-      mtime = (await stat(dir)).mtimeMs;
-    } catch {
-      /* ignore */
+    out.push(await pipelineEntry(join(pipelines, ent.name)));
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+/** Every pipeline across every store key, newest-first, tagged with project. */
+export async function listAllPipelines() {
+  const root = storeRoot();
+  let keys;
+  try { keys = await readdir(root, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const k of keys) {
+    if (!k.isDirectory()) continue;
+    const keyDir = join(root, k.name);
+    let meta = null;
+    try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; }
+    const pipelinesDir = join(keyDir, 'pipelines');
+    let entries;
+    try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { continue; }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const e = await pipelineEntry(join(pipelinesDir, ent.name));
+      e.projectKey = k.name;
+      e.projectName = meta?.name ?? k.name;
+      e.projectDir = meta?.path ?? null;
+      out.push(e);
     }
-    let state = null;
-    try {
-      state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
-    } catch {
-      state = null;
-    }
-    out.push({
-      id: state?.id ?? ent.name,
-      dir,
-      title: state?.title ?? ent.name,
-      status: state?.status ?? 'unknown',
-      startedAt: state?.startedAt ?? null,
-      totalCostUsd: pipelineTotalCost(state),
-      totalActiveMs: pipelineTotalActiveMs(state),
-      mtime,
-    });
   }
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
