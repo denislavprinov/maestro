@@ -2727,7 +2727,7 @@ async function loadAllHistory() {
     const res = await fetch('/api/history');
     const data = await safeJson(res);
     if (!res.ok) { renderHistoryError(data.error || `HTTP ${res.status}`); return; }
-    renderHistory(null, data.pipelines || [], []);
+    renderHistory(null, data.pipelines || [], [], !!data.ghAvailable);
   } catch (e) { renderHistoryError(e.message); }
 }
 
@@ -2739,7 +2739,7 @@ async function loadHistory(projectDir) {
       renderHistoryError(data.error || `HTTP ${res.status}`);
       return;
     }
-    renderHistory(projectDir, data.pipelines || [], data.live || []);
+    renderHistory(projectDir, data.pipelines || [], data.live || [], !!data.ghAvailable);
   } catch (e) {
     renderHistoryError(e.message);
   }
@@ -2748,7 +2748,7 @@ async function loadHistory(projectDir) {
 // Render the #history container as expandable .hist-card DIVs (never <li>).
 // Merges the disk `pipelines` with the in-memory `live` runs (deduped by id) so
 // an active/just-finished run surfaces even before it's written to disk.
-function renderHistory(projectDir, pipelines, live = []) {
+function renderHistory(projectDir, pipelines, live = [], ghAvailable = false) {
   el.history.innerHTML = '';
 
   // Merge: start from disk records, append any live entry whose id isn't present.
@@ -2771,7 +2771,7 @@ function renderHistory(projectDir, pipelines, live = []) {
   }
 
   records.forEach((p) => {
-    el.history.appendChild(buildHistCard(projectDir, p));
+    el.history.appendChild(buildHistCard(projectDir, p, ghAvailable));
   });
 }
 
@@ -2793,10 +2793,79 @@ function historyBadge(p) {
   return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
 }
 
+// Render the +added / −removed line-count chip for a survived branch. Colors are
+// class-driven (green add / red del). Nothing for branches that did not survive.
+// NOTE: the minus glyph is U+2212 (−), not an ASCII hyphen; the jsdom test
+// asserts it byte-for-byte, so keep this exact character.
+function renderHistDiff(host, p) {
+  if (!host) return;
+  host.textContent = '';
+  if (!p || !p.survived) return;
+  const added = Number.isFinite(+p.added) ? +p.added : 0;
+  const removed = Number.isFinite(+p.removed) ? +p.removed : 0;
+  const add = document.createElement('span');
+  add.className = 'diff-add';
+  add.textContent = `+${added}`;
+  const del = document.createElement('span');
+  del.className = 'diff-del';
+  del.textContent = `−${removed}`; // U+2212 minus
+  host.append(add, del);
+  host.title = `${added} added, ${removed} removed vs ${p.sourceBranch || 'source'}`;
+}
+
+// Wire the Create-PR button. Shown only when gh is available AND the feature
+// branch survived AND we know its source. Click pushes + opens the PR, then
+// swaps itself for a link and reveals the mergeability pill.
+function setupPrButton(node, projectDir, p, ghAvailable) {
+  const btn = node.querySelector('.hist-pr');
+  const mergeEl = node.querySelector('.hist-merge');
+  if (!btn) return;
+  const eligible = ghAvailable && p.survived && p.branch && p.sourceBranch;
+  if (!eligible) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation(); // never toggle the card when clicking the button
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Creating…';
+    try {
+      const res = await fetch('/api/pr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+      const link = document.createElement('a');
+      link.className = 'hist-pr-link';
+      link.href = data.url || '#';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = data.existed ? 'View PR' : 'PR opened';
+      btn.replaceWith(link);
+      if (mergeEl) setMergePill(mergeEl, data.mergeable);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = label;
+      btn.title = `Could not open PR: ${err.message}`;
+    }
+  });
+}
+
+// Paint the post-PR mergeability pill. MERGEABLE -> green, CONFLICTING -> red,
+// UNKNOWN -> amber "checking…" (GitHub computes mergeability asynchronously).
+function setMergePill(el, mergeable) {
+  const m = String(mergeable || 'UNKNOWN').toUpperCase();
+  el.hidden = false;
+  if (m === 'MERGEABLE') { el.className = 'hist-merge ok'; el.textContent = 'can merge'; }
+  else if (m === 'CONFLICTING') { el.className = 'hist-merge bad'; el.textContent = 'conflicts'; }
+  else { el.className = 'hist-merge unknown'; el.textContent = 'merge: checking…'; }
+}
+
 // Build one expandable history card from a (disk or live) record. The collapsed
 // card shows only list-feed data (badge/title/timestamp); the tinted stepper is
 // lazily fetched + rendered on first expand.
-function buildHistCard(projectDir, p) {
+function buildHistCard(projectDir, p, ghAvailable = false) {
   const tpl = $('#hist-card-tpl');
   const node = tpl.content.firstElementChild.cloneNode(true);
   const id = p.id || '';
@@ -2824,6 +2893,14 @@ function buildHistCard(projectDir, p) {
     totalEl.textContent = typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '';
     totalEl.title = typeof p.totalCostUsd === 'number' ? estTitle(p.totalCostUsd) : '';
   }
+
+  // Branch name under the date/cost (left column; hidden when empty via :empty).
+  const branchEl = node.querySelector('.hist-branch');
+  if (branchEl) branchEl.textContent = p.branch || '';
+
+  // Right-side cluster (before the chevron): lines changed + Create-PR button.
+  renderHistDiff(node.querySelector('.hist-diff'), p);
+  setupPrButton(node, projectDir, p, ghAvailable);
 
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');
