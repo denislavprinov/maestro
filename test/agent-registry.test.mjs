@@ -58,10 +58,10 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
   const reg = loadAgentRegistry();
   const steps = registryToSteps(reg);
   assert.deepEqual(steps.slice(0, 4), [
-    { key: 'planner', label: 'Plan' },
-    { key: 'refiner', label: 'Refine' },
-    { key: 'implementer', label: 'Implement' },
-    { key: 'reviewer', label: 'Review' },
+    { key: 'planner', label: 'Plan', fanOut: true },
+    { key: 'refiner', label: 'Refine', fanOut: false },
+    { key: 'implementer', label: 'Implement', fanOut: false },
+    { key: 'reviewer', label: 'Review', fanOut: false },
   ]);
   // And config.AGENT_STEPS (derived from the registry in Task 6) stays equal to it.
   assert.deepEqual(steps, AGENT_STEPS);
@@ -70,9 +70,9 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
   assert.equal(steps.length, 7);
-  assert.deepEqual(steps[4], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist' });
-  assert.deepEqual(steps[5], { key: 'manualWebUiTesting', label: 'Manual web UI testing' });
-  assert.deepEqual(steps[6], { key: 'planReviewer', label: 'Plan Review' });
+  assert.deepEqual(steps[4], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
+  assert.deepEqual(steps[5], { key: 'manualWebUiTesting', label: 'Manual web UI testing', fanOut: false });
+  assert.deepEqual(steps[6], { key: 'planReviewer', label: 'Plan Review', fanOut: false });
 });
 
 test('every agentFile points at an existing prompt under agents/', () => {

@@ -9,6 +9,8 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel,
   listModels, resolveStepModels, configFile,
 } from '../src/core/config.mjs';
+import { AGENT_STEPS } from '../src/core/config.mjs';
+import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 
 const dirs = [];
 async function freshProject() {
@@ -74,4 +76,22 @@ test('resolveStepModels with no global model leaves model undefined (today\'s be
   const p = await freshProject();
   const r = await resolveStepModels(p, undefined);
   assert.deepEqual(r.implementer, { model: undefined, effort: undefined });
+});
+
+test('registry surfaces fanOut: planner true (default ON), others false', () => {
+  const reg = loadAgentRegistry();
+  assert.equal(reg.planner.fanOut, true, 'planner defaults to fan-out ON');
+  assert.equal(reg.refiner.fanOut, false);
+  assert.equal(reg.implementer.fanOut, false);
+  assert.equal(reg.reviewer.fanOut, false);
+});
+
+test('registryToSteps / AGENT_STEPS carry the per-agent fanOut default', () => {
+  const steps = registryToSteps(loadAgentRegistry());
+  const planner = steps.find((s) => s.key === 'planner');
+  const refiner = steps.find((s) => s.key === 'refiner');
+  assert.equal(planner.fanOut, true);
+  assert.equal(refiner.fanOut, false);
+  // AGENT_STEPS (config.mjs) is derived from registryToSteps, so it carries it too.
+  assert.equal(AGENT_STEPS.find((s) => s.key === 'planner').fanOut, true);
 });
