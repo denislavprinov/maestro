@@ -95,3 +95,22 @@ test('registryToSteps / AGENT_STEPS carry the per-agent fanOut default', () => {
   // AGENT_STEPS (config.mjs) is derived from registryToSteps, so it carries it too.
   assert.equal(AGENT_STEPS.find((s) => s.key === 'planner').fanOut, true);
 });
+
+test('setStep stores fanOut and preserves it when a later model change omits it', async () => {
+  const p = await freshProject();
+  await setStep(p, 'planner', { fanOut: true });
+  assert.equal((await readConfig(p)).steps.planner.fanOut, true);
+  // A model change that omits fanOut must NOT wipe it (preserve-on-undefined).
+  await setStep(p, 'planner', { model: 'claude-opus-4-8', effort: 'high' });
+  const s = (await readConfig(p)).steps.planner;
+  assert.deepEqual(s, { model: 'claude-opus-4-8', effort: 'high', fanOut: true });
+  // Explicit false overrides the stored true.
+  await setStep(p, 'planner', { fanOut: false });
+  assert.equal((await readConfig(p)).steps.planner.fanOut, false);
+});
+
+test('setStep with only fanOut=false on an otherwise-empty step still persists', async () => {
+  const p = await freshProject();
+  await setStep(p, 'reviewer', { fanOut: false });
+  assert.deepEqual((await readConfig(p)).steps.reviewer, { fanOut: false });
+});

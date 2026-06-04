@@ -97,6 +97,28 @@ test('setFeedbackCycles coerces to an integer >= 1 (spec §6.6 maxCycles rule)',
   assert.equal(await cyc(5), 5, 'a valid count is kept');
 });
 
+test('setNodeModel stores fanOut and preserves it across a model-only change', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 's0_0', { fanOut: true });
+  let rc = await resolveRunConfig(p, 'wf_x');
+  assert.equal(rc.nodes.s0_0.fanOut, true);
+  // model change omits fanOut -> preserved; effort reset to '' as today.
+  await setNodeModel(p, 'wf_x', 's0_0', { model: 'claude-opus-4-8', effort: '' });
+  rc = await resolveRunConfig(p, 'wf_x');
+  assert.deepEqual(rc.nodes.s0_0, { model: 'claude-opus-4-8', fanOut: true });
+  // explicit false overrides.
+  await setNodeModel(p, 'wf_x', 's0_0', { fanOut: false });
+  rc = await resolveRunConfig(p, 'wf_x');
+  assert.equal(rc.nodes.s0_0.fanOut, false);
+});
+
+test('setNodeModel with only fanOut=false keeps the node entry', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 's2_0', { fanOut: false });
+  const rc = await resolveRunConfig(p, 'wf_x');
+  assert.deepEqual(rc.nodes.s2_0, { fanOut: false });
+});
+
 test('a legacy setStep does NOT wipe the run-config layer or webUiTesting (integrity)', async () => {
   const p = await mkdtemp(join(tmpdir(), 'maestro-rcint-'));
   await setNodeModel(p, 'wf_x', 's1_0', { model: 'claude-opus-4-8', effort: 'high' });
