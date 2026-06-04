@@ -8,7 +8,8 @@
   "runnerType": "producer",
   "loopSource": false,
   "produces": ["plan"],
-  "consumes": ["userPrompt"],
-  "connectsTo": ["refiner","implementer"],
+  "consumes": ["userPrompt", "review"],
+  "optionalConsumes": ["review"],
+  "connectsTo": ["refiner", "implementer", "planReviewer"],
   "order": 1
 }

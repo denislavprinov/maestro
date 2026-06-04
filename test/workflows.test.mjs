@@ -344,7 +344,7 @@ test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', asy
   const planner = flat.find((n) => n.key === 'planner');
   const implementer = flat.find((n) => n.key === 'implementer');
   assert.deepEqual(planner.produces, ['plan']);
-  assert.deepEqual(planner.consumes, ['userPrompt']);
+  assert.deepEqual(planner.consumes, ['userPrompt', 'review']);
   assert.deepEqual(implementer.produces, ['code']);
   assert.deepEqual(implementer.optionalConsumes, ['review']);
 });

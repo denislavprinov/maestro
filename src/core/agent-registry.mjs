@@ -25,12 +25,13 @@ const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
  * switch and every saved pipeline stays connectsTo-legal.
  */
 const DEFAULT_SPEC = {
-  planner:              { consumes: ['userPrompt'],        produces: ['plan'],            connectsTo: ['refiner', 'implementer'] },
+  planner:              { consumes: ['userPrompt', 'review'], optionalConsumes: ['review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer'] },
   refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner'] },
   implementer:          { consumes: ['plan', 'review'],    optionalConsumes: ['review'],  produces: ['code'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
   reviewer:             { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer', 'manualTestsChecklist'] },
   manualTestsChecklist: { consumes: ['plan', 'code'],      produces: ['checklist'],       connectsTo: ['manualWebUiTesting'] },
   manualWebUiTesting:   { consumes: ['checklist', 'code'], produces: ['review'],          connectsTo: ['implementer'] },
+  planReviewer:         { consumes: ['plan'],              produces: ['review'],          connectsTo: ['planner', 'implementer'] },
 };
 
 /** Array of known channel ids from raw input; warns on (and drops) unknown ids (m1). */

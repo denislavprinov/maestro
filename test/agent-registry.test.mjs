@@ -7,13 +7,13 @@ import { join } from 'node:path';
 import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns the 6 shipped agents', () => {
+test('loadAgentRegistry returns the 7 shipped agents', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planner', 'refiner', 'reviewer'],
+    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer'],
   );
-  assert.equal(Object.keys(reg).length, 6);
+  assert.equal(Object.keys(reg).length, 7);
 });
 
 test('each entry is a well-formed AgentMeta', () => {
@@ -42,6 +42,7 @@ test('shipped colors match the mockup palette EXACTLY (pins C5 — coercion woul
   assert.equal(reg.reviewer.color, 'blue');
   assert.equal(reg.manualTestsChecklist.color, 'blue');   // C5: blue everywhere
   assert.equal(reg.manualWebUiTesting.color, 'violet');
+  assert.equal(reg.planReviewer.color, 'amber');
 });
 
 test('registry insertion order follows .order ascending', () => {
@@ -49,7 +50,7 @@ test('registry insertion order follows .order ascending', () => {
   const orders = Object.values(reg).map((m) => m.order);
   assert.deepEqual(orders, [...orders].sort((a, b) => a - b));
   assert.deepEqual(Object.keys(reg), [
-    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting',
+    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
 });
 
@@ -66,11 +67,12 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
   assert.deepEqual(steps, AGENT_STEPS);
 });
 
-test('registryToSteps appends the two new agents with their display names', () => {
+test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 6);
+  assert.equal(steps.length, 7);
   assert.deepEqual(steps[4], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist' });
   assert.deepEqual(steps[5], { key: 'manualWebUiTesting', label: 'Manual web UI testing' });
+  assert.deepEqual(steps[6], { key: 'planReviewer', label: 'Plan Review' });
 });
 
 test('every agentFile points at an existing prompt under agents/', () => {
@@ -102,7 +104,7 @@ test('original four agentFiles match the orchestrator AGENT_FILES map', () => {
 test('exactly the two verifiers are loopSources; producers are not', () => {
   const reg = loadAgentRegistry();
   const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
-  assert.deepEqual(loopSources, ['manualWebUiTesting', 'reviewer']);
+  assert.deepEqual(loopSources, ['manualWebUiTesting', 'planReviewer', 'reviewer']);
   for (const m of Object.values(reg)) {
     if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
   }
@@ -110,7 +112,8 @@ test('exactly the two verifiers are loopSources; producers are not', () => {
 
 test('registry stamps default channel spec for the six built-ins', () => {
   const reg = loadAgentRegistry(); // real agents/ dir
-  assert.deepEqual(reg.planner.consumes, ['userPrompt']);
+  assert.deepEqual(reg.planner.consumes, ['userPrompt', 'review']);
+  assert.deepEqual(reg.planner.optionalConsumes, ['review']);
   assert.deepEqual(reg.planner.produces, ['plan']);
   assert.deepEqual(reg.refiner.produces, ['plan', 'review']);
   assert.deepEqual(reg.implementer.consumes, ['plan', 'review']);
@@ -122,4 +125,8 @@ test('registry stamps default channel spec for the six built-ins', () => {
   assert.ok(reg.reviewer.connectsTo.includes('implementer'));
   assert.ok(reg.reviewer.connectsTo.includes('manualTestsChecklist'));
   assert.ok(reg.refiner.connectsTo.includes('refiner')); // self-loop legal
+  assert.deepEqual(reg.planReviewer.consumes, ['plan']);
+  assert.deepEqual(reg.planReviewer.produces, ['review']);
+  assert.ok(reg.planReviewer.connectsTo.includes('planner'));
+  assert.ok(reg.planner.connectsTo.includes('planReviewer'));
 });
