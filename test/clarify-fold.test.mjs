@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOrchestrator, plannerNodeIdOf } from '../src/core/orchestrator.mjs';
+import { createOrchestrator, plannerNodeIdOf, plannerNodeOf } from '../src/core/orchestrator.mjs';
 
 const tmpDirs = [];
 async function makeTmpDir() {
@@ -68,4 +68,15 @@ test('plannerNodeIdOf resolves the plan-phase node id from any plan (no hardcode
   // no plan-phase node -> null (clarify stays unattributed)
   assert.equal(plannerNodeIdOf({ steps: [[{ nodeId: 'i0', key: 'implementer', uiPhase: 'implement' }]] }), null);
   assert.equal(plannerNodeIdOf(null), null);
+});
+
+test('plannerNodeOf returns the whole plan-phase node (with fanOut), not just the id', () => {
+  const node = { nodeId: 's0_0', key: 'planner', uiPhase: 'plan', fanOut: true };
+  assert.deepEqual(plannerNodeOf({ steps: [[node]] }), node);
+  assert.equal(plannerNodeOf({ steps: [[node]] }).fanOut, true);
+});
+
+test('plannerNodeOf returns null when there is no plan-phase node', () => {
+  assert.equal(plannerNodeOf({ steps: [[{ nodeId: 'i0', key: 'implementer', uiPhase: 'implement' }]] }), null);
+  assert.equal(plannerNodeOf(null), null);
 });

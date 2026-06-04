@@ -58,6 +58,37 @@ export function effectiveAllowedTools(base, declared, fanOut = false) {
   return out;
 }
 
+/**
+ * Whether this run may fan out (spawn Task/Agent sub-agents). For a DISPATCHED
+ * node the decision is the node's own `fanOut` (resolved by resolveWorkflow from
+ * config > role > sidecar). The clarify pre-step has NO node (it runs off
+ * _phaseCtx), so it carries a context-level `fanOut` instead. A present node wins
+ * so a node that opted out is never overridden. Pure + exported for testing.
+ */
+export function ctxFanOut(ctx) {
+  if (!ctx || typeof ctx !== 'object') return false;
+  return !!(ctx.node ? ctx.node.fanOut : ctx.fanOut);
+}
+
+/**
+ * Fan-out-gated prompt block: when a run may fan out, tell the agent to actually
+ * parallelize multi-area codebase research instead of exploring serially. Empty
+ * string when off, so non-fan-out task prompts are unchanged. Pure + exported.
+ */
+export function fanOutDirective(fanOut) {
+  if (!fanOut) return '';
+  return (
+    '## Fan-out ENABLED — parallelize your research\n\n' +
+    'The Task/Agent tool is in your tool list this run. For any non-trivial task that spans more ' +
+    'than one file or area, DISPATCH parallel read-only research sub-agents NOW — use the Task tool ' +
+    'with `subagent_type: "general-purpose"` (or `"Explore"` for pure code search), one per distinct ' +
+    'area (e.g. UI vs. server vs. store vs. tests) — explore them concurrently, then synthesize their ' +
+    'reports yourself. Do NOT investigate every area serially with Read/Grep when the work splits ' +
+    'into independent areas. Sub-agents are strictly READ-ONLY investigators: YOU write every ' +
+    'artifact. Skip fan-out only for a trivial, single-file change.\n\n'
+  );
+}
+
 // ── inline fallbacks (used only when agents/*.md is missing/empty) ──────────────
 const FALLBACK_PROMPTS = {
   'planner-clarify':
@@ -138,7 +169,7 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // for every dispatched node (orchestrator._nodeCtx); the clarify pre-step has
     // no node, so this falls back to the base list. Fixes "Browser permission not
     // granted" for the Manual Web UI Testing agent and makes future MCP agents work.
-    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools, !!(ctx.node && ctx.node.fanOut)),
+    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools, ctxFanOut(ctx)),
     permissionMode: c.permissionMode || 'acceptEdits',
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
@@ -206,6 +237,7 @@ export function buildClarifyPrompt(ctx, opts = {}) {
     'and a free-text fallback. Prefer the smallest set of questions that unblocks a correct plan; ' +
     'for low-impact details, pick a sensible default rather than asking. If you have no material ' +
     'open questions, write { "questions": [] } to that same path.\n\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
     `Write the clarify JSON to: ${outPath}\n\n` +
     answered +
     mockMarkers({
@@ -259,6 +291,7 @@ export async function runPlannerPlan(ctx, opts) {
     'Write a complete, build-ready implementation plan. It MUST contain concrete code snippets ' +
     'for the features and MUST end with a "## Clarifications (Q&A)" section reproducing the ' +
     'questions and the user answers below so the reviewer can see them.\n\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
     `Write the plan markdown to: ${planFilePath}\n` +
     replanBlock +
     '\n## Clarifications already answered\n\n' +
@@ -286,6 +319,7 @@ export async function runRefiner(ctx, opts) {
     '\n## What to do\n\n' +
     `Read the current plan, critically review it INCLUDING its code snippets, then write an ` +
     `improved version and a machine-readable review.\n\n` +
+    fanOutDirective(ctxFanOut(ctx)) +
     `Current plan to refine: ${inPlanPath}\n` +
     `Write the refined plan to: ${outPlanPath}\n` +
     `Write the review JSON to: ${reviewJsonPath}\n\n` +

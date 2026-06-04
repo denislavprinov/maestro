@@ -275,7 +275,7 @@ class Orchestrator extends EventEmitter {
       this._checkAbort();
 
       // 4) Planner clarify (single round).
-      const answers = await this._clarify(plannerNodeIdOf(plan));
+      const answers = await this._clarify(plannerNodeOf(plan));
       this._checkAbort();
 
       // 5) Dispatch the resolved workflow (already snapshotted into state.stepper
@@ -511,14 +511,16 @@ class Orchestrator extends EventEmitter {
    * re-ask loop — when the planner has no questions we skip straight to plan.
    * Returns the answers array ([{ id, question, choice }]).
    */
-  async _clarify(plannerNodeId = null) {
+  async _clarify(plannerNode = null) {
+    const plannerNodeId = plannerNode?.nodeId ?? null;
+    const fanOut = !!plannerNode?.fanOut;
     // Tag the clarify round with the planner node id so its activeMs + costUsd
     // bucket onto the Plan cell from the first tick. Pipeline totals are derived
     // as Σ steps, so this only changes attribution — never the totals.
     // plannerNodeId is null on a workflow with no plan-phase node; clarify then
     // stays unattributed (legacy behavior).
     this._phase('clarify', 1, 'start', plannerNodeId);
-    const { questions } = await runPlannerClarify(this._phaseCtx('planner'), {
+    const { questions } = await runPlannerClarify(this._phaseCtx('planner', { fanOut }), {
       round: 1,
       priorAnswers: [], // single round: there is never a prior round to feed back
     });
@@ -818,7 +820,7 @@ class Orchestrator extends EventEmitter {
 
   // ── context passed to phase runners ────────────────────────────────────────
 
-  _phaseCtx(role) {
+  _phaseCtx(role, { fanOut = false } = {}) {
     // resolveStepModels already folded in the global fallback, so step.model is
     // the effective model; the `|| this.claude.model` is a defensive belt-and-
     // braces for the (guarded) case where stepModels is null.
@@ -829,6 +831,7 @@ class Orchestrator extends EventEmitter {
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       agentPrompts: this.agentPrompts,
+      fanOut,
       checkpointRef: this.checkpointRef,
       onEvent: (e) => this._onAgentEvent(role, e),
       signal: this.abort.signal,
@@ -1300,25 +1303,34 @@ class Orchestrator extends EventEmitter {
 // ── module-level pure helpers ──────────────────────────────────────────────────
 
 /**
- * Resolve the planner node's id from a resolved ExecutablePlan: the first node
- * whose UI bucket is the plan phase (uiPhase === 'plan'), else the first node
- * keyed 'planner'. Returns null when there is no plan-phase node (a non-standard
- * workflow) — callers then leave clarify unattributed (legacy behavior).
+ * The resolved plan-phase node (uiPhase 'plan', else the first 'planner' node), or
+ * null for a workflow with no plan phase. Carries the node's resolved `fanOut`, so
+ * the clarify pre-step can be granted the same fan-out the plan node gets.
  * Never hardcodes 's0_0'; works for any workflow whose first step is the planner.
  * plan.steps is the resolveWorkflow() shape: Array<Array<node>> (groups of nodes).
+ * @param {{steps?:Array<Array<{nodeId:string,key:string,uiPhase?:string,fanOut?:boolean}>>}} plan
+ * @returns {{nodeId:string,key:string,uiPhase?:string,fanOut?:boolean}|null}
+ */
+export function plannerNodeOf(plan) {
+  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+  for (const group of steps) {
+    for (const node of Array.isArray(group) ? group : []) {
+      if (node && (node.uiPhase === 'plan' || node.key === 'planner')) return node;
+    }
+  }
+  return null;
+}
+
+/**
+ * The plan-phase node's id (or null when there is no plan phase). Thin wrapper over
+ * {@link plannerNodeOf} kept for callers that only need the id (e.g. cost/timing
+ * attribution); selection logic lives in plannerNodeOf.
  * @param {{steps?:Array<Array<{nodeId:string,key:string,uiPhase?:string}>>}} plan
  * @returns {string|null}
  */
 export function plannerNodeIdOf(plan) {
-  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
-  for (const group of steps) {
-    for (const node of Array.isArray(group) ? group : []) {
-      if (node && (node.uiPhase === 'plan' || node.key === 'planner')) {
-        return node.nodeId || null;
-      }
-    }
-  }
-  return null;
+  const node = plannerNodeOf(plan);
+  return node ? node.nodeId || null : null;
 }
 
 function numOr(v, d) {
