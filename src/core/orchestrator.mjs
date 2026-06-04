@@ -246,6 +246,10 @@ class Orchestrator extends EventEmitter {
       // Capture the date prefix ONCE so every plan -vN and the review file share
       // the v1 date even if the run crosses midnight.
       this.planDatePrefix = today();
+      // Persist the plan/review name linkage so a later delete can find the shared
+      // markdown exactly (state.artifacts is not persisted; names are the only link).
+      this.state.baseName = this.baseName;
+      this.state.datePrefix = this.planDatePrefix;
       await this._persist();
       this._artifact('pipeline', this.pipeline.dir);
       await appendAudit(this.pipeline.dir, `Pipeline created (id ${this.pipeline.id}).`);
