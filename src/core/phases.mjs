@@ -92,6 +92,12 @@ const FALLBACK_PROMPTS = {
     'web UI using the Playwright tools, then write a result markdown AND a review JSON ' +
     '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }). Use severities ' +
     'critical|major|minor|suggestion; a failing case is at least major.',
+  'plan-review':
+    'You are the Plan Reviewer. Review the implementation PLAN (its structure, correctness, ' +
+    'completeness, feasibility, and code snippets) against the original request and the real ' +
+    'codebase. Do NOT rewrite the plan. Write a human-readable review markdown AND a review JSON ' +
+    '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }) using severities ' +
+    'critical|major|minor|suggestion; only critical/major block (the planner then revises).',
 };
 
 /**
@@ -150,7 +156,7 @@ export function taskHeader(ctx, title) {
   const key = ctx.node?.key;
   const isEntry = !!ctx.isEntry;
   const consumesPrompt = !ctx.inputs || ('userPrompt' in ctx.inputs);
-  const wantsPrompt = isEntry || consumesPrompt || key === 'refiner' || key === 'reviewer';
+  const wantsPrompt = isEntry || consumesPrompt || key === 'refiner' || key === 'reviewer' || key === 'planReviewer';
   const requestBlock = wantsPrompt
     ? `## Original request\n\n${(ctx.taskPrompt || '').trim() || '(no prompt text)'}\n`
     : `## Upstream input\n\nYour input is the output of the preceding step(s); the file paths to read are named below.\n`;
@@ -234,20 +240,28 @@ export async function runPlannerClarify(ctx, opts = {}) {
  * @param {{ answers: Array<{id,question,choice}>, planFilePath: string, baseName: string }} opts
  */
 export async function runPlannerPlan(ctx, opts) {
-  const { answers = [], planFilePath, baseName } = opts || {};
+  const { answers = [], planFilePath, baseName, reviewPath } = opts || {};
   const role = 'planner-plan';
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role);
+  const replanBlock = reviewPath
+    ? '\n## Revise to address the review\n\n' +
+      'A reviewer found issues with the previous plan. Re-plan from scratch (cold start) and ' +
+      'address EVERY critical and major finding in the review below. Preserve the ' +
+      '"## Clarifications (Q&A)" section.\n\n' +
+      `Review to address: ${reviewPath}\n`
+    : '';
   const prompt =
-    taskHeader(ctx, 'Write the implementation plan') +
+    taskHeader(ctx, reviewPath ? 'Revise the implementation plan' : 'Write the implementation plan') +
     '\n## What to do\n\n' +
     'Write a complete, build-ready implementation plan. It MUST contain concrete code snippets ' +
     'for the features and MUST end with a "## Clarifications (Q&A)" section reproducing the ' +
     'questions and the user answers below so the reviewer can see them.\n\n' +
-    `Write the plan markdown to: ${planFilePath}\n\n` +
-    '## Clarifications already answered\n\n' +
+    `Write the plan markdown to: ${planFilePath}\n` +
+    replanBlock +
+    '\n## Clarifications already answered\n\n' +
     renderAnswers(answers) +
     '\n' +
-    mockMarkers({ MOCK_ROLE: role, MOCK_OUT: planFilePath, MOCK_BASE: baseName });
+    mockMarkers({ MOCK_ROLE: role, MOCK_OUT: planFilePath, MOCK_BASE: baseName, MOCK_IN: reviewPath });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
 
@@ -362,6 +376,41 @@ export async function runReviewer(ctx, opts) {
       MOCK_OUT: reviewMdPath,
       MOCK_JSON: reviewJsonPath,
       MOCK_CYCLE: cycle,
+    });
+
+  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+
+  const review = await readReview(reviewJsonPath);
+  return { review };
+}
+
+/**
+ * Plan Reviewer — one cycle. Reviews the PLAN markdown (no git diff). Writes a review
+ * markdown + review JSON. Returns { review }.
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ planPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
+ */
+export async function runPlanReviewer(ctx, opts) {
+  const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
+  const role = 'plan-review';
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planReviewer, role);
+  const prompt =
+    taskHeader(ctx, `Review the plan (cycle ${cycle})`) +
+    '\n## What to do\n\n' +
+    'Review the implementation PLAN against the original request and the real codebase. Do NOT ' +
+    'rewrite the plan. Write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
+    `Plan to review: ${planPath}\n` +
+    `Write the review markdown to: ${reviewMdPath}\n` +
+    `Write the review JSON to: ${reviewJsonPath}\n\n` +
+    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
+    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block (the ' +
+    'planner then revises).\n\n' +
+    mockMarkers({
+      MOCK_ROLE: role,
+      MOCK_OUT: reviewMdPath,
+      MOCK_JSON: reviewJsonPath,
+      MOCK_CYCLE: cycle,
+      MOCK_IN: planPath,
     });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
