@@ -36,7 +36,7 @@
 
 /* ---------- base reset ---------- */
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;min-height:100%;}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;}
 body{
   background:var(--bg);
   color:var(--ink);
@@ -48,7 +48,7 @@ body{
 .hidden{display:none !important;}
 
 /* ---------- App shell ---------- */
-.app{display:flex;min-height:100vh;}
+.app{display:flex;height:100vh;}
 
 /* ---------- Sidebar ---------- */
 .sidebar{
@@ -57,6 +57,7 @@ body{
   padding:26px 18px 22px;
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
+  overflow-y:auto;
 }
 .brand{display:flex;align-items:center;gap:11px;padding:0 8px;margin-bottom:30px;}
 .brand .mark{
@@ -111,7 +112,7 @@ body{
 .dot-off{background:var(--ink-3);}
 
 /* ---------- Main ---------- */
-.main{flex:1;min-width:0;padding:26px 32px 40px;}
+.main{flex:1;min-width:0;padding:26px 32px 40px;overflow-y:auto;}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
 .topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
