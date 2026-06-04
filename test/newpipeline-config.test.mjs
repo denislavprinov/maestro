@@ -449,3 +449,61 @@ test('the feedback cycle input is labelled with human agent names, not raw step 
   assert.ok(!/s\d+_\d+/.test(labelText), 'label still leaks a raw step id');
   assert.ok(!/^Loop /.test(labelText), 'label still uses the old "Loop …" prefix');
 });
+
+test('buildNodeConfigRows resolves fanOut: saved override > sidecar default > false', async () => {
+  const { window } = await boot();
+  const reg = {
+    planner: { key: 'planner', displayName: 'Plan', color: 'violet', order: 1, fanOut: true },
+    implementer: { key: 'implementer', displayName: 'Implement', color: 'peach', order: 3 },
+    manualTestsChecklist: { key: 'manualTestsChecklist', displayName: 'MTC', color: 'blue', order: 5 },
+    reviewer: { key: 'reviewer', displayName: 'Review', color: 'blue', order: 4 },
+  };
+  // No run-config => sidecar defaults (planner true, others false/absent).
+  let rows = window.__np.buildNodeConfigRows(WF, reg, { nodes: {}, feedbacks: {} });
+  assert.equal(rows.find((r) => r.nodeId === 's0_0').fanOut, true);
+  assert.equal(rows.find((r) => r.nodeId === 's1_0').fanOut, false);
+  // Saved override beats sidecar default both directions.
+  rows = window.__np.buildNodeConfigRows(WF, reg, { nodes: { s0_0: { fanOut: false }, s1_0: { fanOut: true } }, feedbacks: {} });
+  assert.equal(rows.find((r) => r.nodeId === 's0_0').fanOut, false);
+  assert.equal(rows.find((r) => r.nodeId === 's1_0').fanOut, true);
+});
+
+test('default-row fan-out checkbox reflects the sidecar default from /api/config steps', async () => {
+  const steps = [
+    { key: 'planner', label: 'Plan', fanOut: true },
+    { key: 'refiner', label: 'Refine', fanOut: false },
+    { key: 'implementer', label: 'Implement', fanOut: false },
+    { key: 'reviewer', label: 'Review', fanOut: false },
+  ];
+  const { window } = await boot({ fetchHandler: (url) => {
+    if (url.includes('/api/config')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], steps }) });
+    }
+    return null;
+  } });
+  assert.equal(window.document.querySelector('.step-fanout[data-role="planner"]').checked, true);
+  assert.equal(window.document.querySelector('.step-fanout[data-role="refiner"]').checked, false);
+});
+
+test('toggling a default-row fan-out checkbox POSTs the step fanOut', async () => {
+  const posts = [];
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && opts && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] } }) });
+    }
+    if (url.includes('/api/config')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], steps: [{ key: 'planner', label: 'Plan', fanOut: false }] }) });
+    }
+    return null;
+  } });
+  selectProjectAnd(window); // saveStep needs a selected project (selectedProjectPath)
+  await new Promise((r) => setTimeout(r, 0));
+  const cb = window.document.querySelector('.step-fanout[data-role="planner"]');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].step, 'planner');
+  assert.equal(posts[0].fanOut, true);
+});
