@@ -83,19 +83,34 @@ test('C1: on done the worktree dir is removed but the feature branch is kept', a
   assert.ok(branchList(repo).includes(feature), `feature branch ${feature} should be KEPT on success`);
 });
 
-test('C1: on stop the worktree dir AND the freshly-created branch are removed', async () => {
+test('C1: on stop the worktree dir is removed but the branch is KEPT with partial work', async () => {
   const repo = await freshRepo();
+  const mainSha = spawnSync('git', ['-C', repo, 'rev-parse', 'main']).stdout.toString().trim();
   const orch = createOrchestrator({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
-  // Stop as soon as the worktree exists; the next _checkAbort aborts the run.
-  orch.on('state', (s) => { if (s.branch && s.branch.feature) orch.stop(); });
+  // Simulate an agent writing partial work into the worktree, THEN stop the run.
+  let injected = false;
+  orch.on('state', (s) => {
+    if (s.branch && s.branch.worktreeDir && existsSync(s.branch.worktreeDir) && !injected) {
+      injected = true;
+      writeFileSync(join(s.branch.worktreeDir, 'partial.txt'), 'work in progress\n');
+    }
+    if (s.branch && s.branch.feature) orch.stop();
+  });
   const result = await orch.run();
   assert.equal(result.status, 'stopped', JSON.stringify(result));
+  assert.ok(injected, 'precondition: partial work was injected into the worktree');
   const feature = orch.getState().branch.feature;
   const wtDir = orch.getState().branch.worktreeDir;
   assert.ok(!existsSync(wtDir), 'worktree dir should be removed on stop');
-  assert.ok(!branchList(repo).includes(feature), `freshly-created branch ${feature} should be removed on stop`);
+  assert.ok(branchList(repo).includes(feature), `branch ${feature} should be KEPT on stop`);
+  // The kept branch must carry the partial work committed up to the stop point.
+  const featSha = spawnSync('git', ['-C', repo, 'rev-parse', feature]).stdout.toString().trim();
+  assert.notEqual(featSha, mainSha, 'kept branch should carry the partial-work commit');
+  const fileInCommit = spawnSync('git', ['-C', repo, 'show', `${feature}:partial.txt`]);
+  assert.equal(fileInCommit.status, 0, 'partial.txt must be committed on the kept branch');
+  assert.match(fileInCommit.stdout.toString(), /work in progress/);
 });
 
 test('on done the agent work is COMMITTED to the kept feature branch', async () => {

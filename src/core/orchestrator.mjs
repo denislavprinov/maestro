@@ -391,10 +391,10 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Tear down the per-pipeline worktree (C1). Retention policy:
-   *   - done  → remove the checkout dir, KEEP the feature branch so the user
-   *             can merge the agent's work.
-   *   - error/stopped → remove the dir; also delete the branch, but only when we
-   *             created it this run (never delete a resumed/pre-existing branch).
+   *   - ALWAYS remove the checkout dir and KEEP the feature branch — done, error,
+   *     or stopped alike. The branch carries every change made up to the stop/error
+   *     point so the user can recover or merge the agent's work; the worktree is
+   *     just the disposable checkout.
    * Always force:true — agents have edited files, so the non-force path would
    * refuse and leak. Idempotent; safe to call when setup never ran.
    */
@@ -402,35 +402,33 @@ class Orchestrator extends EventEmitter {
     const info = this.branchInfo;
     if (!info || !info.worktreeDir) return;
     this.branchInfo = null; // guard against a double teardown
-    const keepBranch = this.state.status === 'done' || info.reusedExisting;
     // Commit the agent's work onto the feature branch BEFORE removal. Without
     // this, removeWorktree(force:true) discards the working tree and the kept
     // branch carries no changes (the staging in _stageWorkingTree is intent-to-add
-    // for the reviewer's diff only — it never creates a commit). Only when we are
-    // keeping the branch; on a discarded branch there is nothing to preserve.
-    if (keepBranch) await this._commitWork(info).catch(() => {});
+    // for the reviewer's diff only — it never creates a commit). On error/stop this
+    // is what captures the partial work made up to that point.
+    await this._commitWork(info).catch(() => {});
+    // branch:null — the branch is always kept (done/error/stopped alike); only the
+    // disposable checkout is removed.
     const res = await removeWorktree({
       projectDir: this.projectDir,
       worktreeDir: info.worktreeDir,
-      branch: keepBranch ? null : info.branch,
+      branch: null,
       force: true,
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
       this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`);
     }
     if (this.pipeline) {
-      const branchNote = keepBranch
-        ? `kept branch \`${info.branch}\``
-        : `removed branch \`${info.branch}\``;
       await appendAudit(
         this.pipeline.dir,
-        `Worktree removed at \`${info.worktreeDir}\` (${branchNote}).`,
+        `Worktree removed at \`${info.worktreeDir}\` (kept branch \`${info.branch}\`).`,
       ).catch(() => {});
     }
     // Reflect the post-teardown reality in state for any late observer.
     if (this.state.branch) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = keepBranch;
+      this.state.branch.branchKept = true;
     }
     this.workDir = this.projectDir;
   }
@@ -447,7 +445,10 @@ class Orchestrator extends EventEmitter {
   async _commitWork(info) {
     const cwd = info?.worktreeDir;
     if (!cwd) return null;
-    const status = await this._git(['status', '--porcelain'], { cwd });
+    // ignoreAbort on every call: teardown runs after stop/error has aborted the
+    // signal, so binding it would no-op these commands and lose the partial work.
+    const gitOpts = { cwd, ignoreAbort: true };
+    const status = await this._git(['status', '--porcelain'], gitOpts);
     if (!status.ok) {
       this._log('git', 'warn', `commit skipped: git status failed: ${status.stderr.trim()}`);
       return null;
@@ -456,7 +457,7 @@ class Orchestrator extends EventEmitter {
       this._log('git', 'info', 'No changes to commit (working tree clean).');
       return null;
     }
-    const add = await this._git(['add', '-A'], { cwd });
+    const add = await this._git(['add', '-A'], gitOpts);
     if (!add.ok) {
       this._log('git', 'warn', `commit skipped: git add failed: ${add.stderr.trim()}`);
       return null;
@@ -466,18 +467,18 @@ class Orchestrator extends EventEmitter {
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
-    let commit = await this._git(['commit', '-m', msg], { cwd });
+    let commit = await this._git(['commit', '-m', msg], gitOpts);
     if (!commit.ok) {
       commit = await this._git(
         ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator', 'commit', '-m', msg],
-        { cwd },
+        gitOpts,
       );
     }
     if (!commit.ok) {
       this._log('git', 'warn', `commit failed: ${commit.stderr.trim() || `exit ${commit.code}`}`);
       return null;
     }
-    const ref = await this._git(['rev-parse', 'HEAD'], { cwd });
+    const ref = await this._git(['rev-parse', 'HEAD'], gitOpts);
     const sha = ref.ok ? ref.stdout.trim() : null;
     if (this.state.branch) this.state.branch.commit = sha;
     if (sha && this.pipeline) {
@@ -1036,14 +1037,17 @@ class Orchestrator extends EventEmitter {
    * Run a git command in the project dir. Never throws; returns
    * { ok, code, stdout, stderr }. Honors the abort signal.
    */
-  _git(args, { cwd } = {}) {
+  _git(args, { cwd, ignoreAbort = false } = {}) {
     return new Promise((resolveP) => {
       let child;
       try {
         child = spawn('git', args, {
           cwd: cwd || this.projectDir,
           stdio: ['ignore', 'pipe', 'pipe'],
-          signal: this.abort.signal,
+          // ignoreAbort: teardown commits run AFTER the run is aborted (stop/error);
+          // binding the aborted signal here would kill them instantly and leave the
+          // kept branch empty. Cleanup git must outlive the abort.
+          signal: ignoreAbort ? undefined : this.abort.signal,
         });
       } catch (err) {
         resolveP({ ok: false, code: -1, stdout: '', stderr: err.message });
