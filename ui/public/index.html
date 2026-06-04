@@ -299,7 +299,15 @@
             <section class="card hist-card">
               <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
                 <span class="badge"></span>
-                <div class="h-meta"><b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span></div>
+                <div class="h-meta">
+                  <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span>
+                  <span class="hist-branch mono"></span>
+                </div>
+                <div class="hist-aside">
+                  <span class="hist-diff" aria-label="lines changed"></span>
+                  <span class="hist-merge" hidden></span>
+                  <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
+                </div>
                 <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
               <div class="hist-detail" hidden>

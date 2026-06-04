@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot } from './store.mjs';
 import { listProjects } from './projects.mjs';
+import { branchExists, diffShortstat } from './git-info.mjs';
 
 /**
  * Convert an arbitrary string to a safe kebab-case slug.
@@ -319,13 +320,32 @@ function pipelineTotalActiveMs(state) {
   return any ? sum : null;
 }
 
-/** Build one history row from a pipeline directory. Never throws. */
-async function pipelineEntry(dir) {
+/** Build one history row from a pipeline directory. Never throws.
+ *  `projectDir` is the git repo root used to compute live branch facts
+ *  (survival + diff line-counts); falls back to state.projectDir. */
+async function pipelineEntry(dir, projectDir = null) {
   let mtime = 0;
   try { mtime = (await stat(dir)).mtimeMs; } catch { /* ignore */ }
   let state = null;
   try { state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')); } catch { state = null; }
   const branch = state?.branch?.feature ?? (typeof state?.branch === 'string' ? state.branch : null);
+  const sourceBranch = state?.branch?.source ?? null;
+
+  // Live git facts: a branch "survived" iff its ref still exists in the repo; line
+  // counts come from `git diff --shortstat <source>...<feature>` recomputed now.
+  const repoDir = projectDir || state?.projectDir || null;
+  let survived = false;
+  let added = 0;
+  let removed = 0;
+  if (repoDir && branch) {
+    survived = await branchExists(repoDir, branch);
+    if (survived && sourceBranch) {
+      const d = await diffShortstat(repoDir, sourceBranch, branch);
+      added = d.added;
+      removed = d.removed;
+    }
+  }
+
   return {
     id: state?.id ?? basename(dir),
     dir,
@@ -333,6 +353,10 @@ async function pipelineEntry(dir) {
     status: state?.status ?? 'unknown',
     startedAt: state?.startedAt ?? null,
     branch,
+    sourceBranch,
+    survived,
+    added,
+    removed,
     totalCostUsd: pipelineTotalCost(state),
     totalActiveMs: pipelineTotalActiveMs(state),
     mtime,
@@ -353,7 +377,7 @@ export async function listPipelines(projectDir) {
   const out = [];
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
-    out.push(await pipelineEntry(join(pipelines, ent.name)));
+    out.push(await pipelineEntry(join(pipelines, ent.name), projectDir));
   }
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
@@ -375,7 +399,7 @@ export async function listAllPipelines() {
     try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { continue; }
     for (const ent of entries) {
       if (!ent.isDirectory()) continue;
-      const e = await pipelineEntry(join(pipelinesDir, ent.name));
+      const e = await pipelineEntry(join(pipelinesDir, ent.name), meta?.path ?? null);
       e.projectKey = k.name;
       e.projectName = meta?.name ?? k.name;
       e.projectDir = meta?.path ?? null;

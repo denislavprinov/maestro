@@ -529,6 +529,28 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .h-meta .hist-time{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
 .h-meta .hist-time:empty{display:none;}
 
+/* Branch name under the date/cost (left column). */
+.h-meta .hist-branch{display:block;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-top:4px;}
+.h-meta .hist-branch:empty{display:none;}
+
+/* Right-side cluster, before the chevron: lines changed, merge pill, Create PR. */
+.hist-aside{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
+.hist-diff{display:inline-flex;gap:6px;font-family:var(--mono);font-size:12px;font-weight:700;}
+.hist-diff:empty{display:none;}
+.hist-diff .diff-add{color:var(--green-ink);}
+.hist-diff .diff-del{color:var(--red-ink);}
+
+.hist-merge{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:999px;white-space:nowrap;}
+.hist-merge[hidden]{display:none;}
+.hist-merge.ok{background:var(--green-bg);color:var(--green-ink);}
+.hist-merge.bad{background:var(--red-bg);color:var(--red-ink);}
+.hist-merge.unknown{background:var(--amber-bg);color:var(--amber-ink);}
+
+.hist-pr{padding:6px 12px;font-size:12px;flex:0 0 auto;}
+.hist-pr[hidden]{display:none;}
+.hist-pr-link{font-size:12px;font-weight:600;color:var(--green-ink);text-decoration:none;white-space:nowrap;}
+.hist-pr-link:hover{text-decoration:underline;}
+
 /* ========================================================================== */
 /* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */
 /* (ported from docs/pipeline-composer/mockups; reuses :root tokens)          */

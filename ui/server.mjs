@@ -30,6 +30,7 @@ import {
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { listLocalBranches, currentBranch, isValidSourceRef } from '../src/core/worktree.mjs';
+import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -417,7 +418,7 @@ app.get('/api/runs', async (req, res) => {
         status: r.status,
         live: true,
       }));
-    res.json({ pipelines, live });
+    res.json({ pipelines, live, ghAvailable: await hasGh() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -444,7 +445,7 @@ app.get('/api/runs/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/history', async (_req, res) => {
   try {
-    res.json({ pipelines: (await listAllPipelines()) || [] });
+    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -464,6 +465,58 @@ app.get('/api/history/:key/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
+// against its source branch via the GitHub CLI. Mergeability is read back only
+// here (never during list rendering). body: { id, projectDir? , projectKey? }
+// ---------------------------------------------------------------------------
+app.post('/api/pr', async (req, res) => {
+  const body = req.body || {};
+  const id = typeof body.id === 'string' ? body.id.trim() : '';
+  if (!id) return badRequest(res, 'id is required');
+  if (!(await hasGh())) {
+    return res.status(409).json({ error: 'GitHub CLI (gh) is not available' });
+  }
+
+  // Resolve the pipeline state (by store key, else by project dir).
+  let state = null;
+  try {
+    if (typeof body.projectKey === 'string' && body.projectKey.trim()) {
+      if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(body.projectKey)) {
+        return res.status(404).json({ error: 'pipeline not found' });
+      }
+      const data = await readPipelineByKey(body.projectKey, id);
+      state = data && data.state;
+    } else {
+      const projectDir = resolveProjectDir(body.projectDir);
+      if (!projectDir) return badRequest(res, 'projectDir or projectKey is required');
+      const data = await readPipeline(projectDir, id);
+      state = data && data.state;
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+  if (!state) return res.status(404).json({ error: 'pipeline not found' });
+
+  const repoDir = state.projectDir;
+  const feature = state.branch && state.branch.feature;
+  const source = state.branch && state.branch.source;
+  if (!repoDir || !feature || !source) {
+    return badRequest(res, 'pipeline has no branch info to open a PR');
+  }
+
+  // Push (idempotent) -> create PR -> read mergeability. All args are passed as
+  // an argv array (no shell), so branch/source names cannot inject.
+  const pushed = await pushBranch(repoDir, feature);
+  if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
+
+  const pr = await createPr({ projectDir: repoDir, base: source, head: feature, title: state.title || feature });
+  if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
+
+  const mergeable = await prMergeable({ projectDir: repoDir, head: feature });
+  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
 });
 
 // ---------------------------------------------------------------------------
