@@ -292,6 +292,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stage-cfg .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
 .acc.violet{background:var(--violet);} .acc.green{background:var(--green);}
 .acc.peach{background:var(--peach);} .acc.blue{background:var(--blue);}
+.acc.amber{background:var(--amber);} .acc.red{background:var(--red);}
 
 /* per-step model/effort controls (app.js: .step-config / .step-model / .step-effort / .step-current) */
 .step-config{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}

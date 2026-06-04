@@ -40,3 +40,13 @@ test('old dark/blue theme fully removed', () => {
 test('log surface styled', () => {
   assert.match(css, /\.log\s*\{[^}]*background:/);
 });
+
+test('pipeline config: .acc swatch covers all six registry colors', () => {
+  for (const fam of ['green', 'peach', 'red', 'blue', 'violet', 'amber']) {
+    assert.match(
+      css,
+      new RegExp(`\\.acc\\.${fam}\\s*\\{[^}]*background:\\s*var\\(--${fam}\\)`),
+      `.acc.${fam} swatch rule missing — agents colored "${fam}" render a blank pill`,
+    );
+  }
+});

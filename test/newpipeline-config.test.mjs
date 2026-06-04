@@ -485,6 +485,17 @@ test('default-row fan-out checkbox reflects the sidecar default from /api/config
   assert.equal(window.document.querySelector('.step-fanout[data-role="refiner"]').checked, false);
 });
 
+test('renderNodeRows paints an .acc swatch carrying each node color (amber Plan Review included)', async () => {
+  const { window } = await boot();
+  const rows = [
+    { nodeId: 's0_0', key: 'planner',      label: 'Plan',        color: 'violet', stepIndex: 0, parallel: false, model: '', effort: '', fanOut: false },
+    { nodeId: 's1_0', key: 'planReviewer', label: 'Plan Review', color: 'amber',  stepIndex: 1, parallel: false, model: '', effort: '', fanOut: false },
+  ];
+  window.__np.renderNodeRows(rows);
+  const accs = [...window.document.querySelectorAll('#wf-node-config .acc')];
+  assert.deepEqual(accs.map((a) => a.className), ['acc violet', 'acc amber']);
+});
+
 test('toggling a default-row fan-out checkbox POSTs the step fanOut', async () => {
   const posts = [];
   const { window } = await boot({ fetchHandler: (url, opts) => {
