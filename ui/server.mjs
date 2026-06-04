@@ -403,7 +403,7 @@ app.get('/api/runs', async (req, res) => {
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
-    const pipelines = (await Promise.resolve(listPipelines(projectDir))) || [];
+    const pipelines = (await Promise.resolve(listPipelines(projectDir, { withPr: true }))) || [];
     // Also expose any live (in-memory) runs for this project that may not yet
     // be on disk, so the UI history reflects an active run too.
     const live = [...runs.values()]
@@ -445,7 +445,7 @@ app.get('/api/runs/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/history', async (_req, res) => {
   try {
-    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh() });
+    res.json({ pipelines: (await listAllPipelines({ withPr: true })) || [], ghAvailable: await hasGh() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
