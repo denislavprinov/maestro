@@ -123,10 +123,10 @@ export function planPath(projectDir, baseName, version = 1, datePrefix) {
  * @param {string} [datePrefix] fixed DD-MM-YY prefix (defaults to today())
  * @returns {string}
  */
-export function reviewPath(projectDir, baseName, datePrefix) {
+export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review') {
   const { reviews } = artifactPaths(projectDir);
   const date = datePrefix || today();
-  return join(reviews, `${date}-${baseName}-impl-review.md`);
+  return join(reviews, `${date}-${baseName}-${kind}.md`);
 }
 
 /** Short random id (8 hex chars) used to make pipeline dirs unique. */
