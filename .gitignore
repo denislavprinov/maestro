@@ -7,3 +7,5 @@ graphify-out/
 .maestro/
 .maestro-smoke/
 .maestro-test/
+.playwright-mcp/
+/*.png

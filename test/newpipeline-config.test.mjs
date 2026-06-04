@@ -359,3 +359,93 @@ test('submitting after selecting a saved workflow posts that workflowId', async 
   assert.equal(runs.length, 1);
   assert.equal(runs[0].workflowId, 'wf_x');
 });
+
+test('buildFeedbackRows labels a loop "<toName> ← <fromName>" resolved via the registry', async () => {
+  const { window } = await boot();
+  const rows = window.__np.buildFeedbackRows(WF, REGISTRY, { feedbacks: {} });
+  assert.equal(rows.length, 1);
+  const r = rows[0];
+  assert.equal(r.fbId, 'fb_0');
+  assert.equal(r.fromLabel, 'Review');     // s2_0 -> reviewer  -> "Review"
+  assert.equal(r.toLabel, 'Implement');    // s1_0 -> implementer -> "Implement"
+  assert.equal(r.selfLoop, false);
+  assert.equal(r.label, 'Implement ← Review');
+  assert.equal(r.maxCycles, 3);            // unset -> default 3 (unchanged)
+});
+
+test('buildFeedbackRows renders a self-loop (from === to) as "<name> ↺ (self loop)"', async () => {
+  const { window } = await boot();
+  const wf = {
+    id: 'w',
+    steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'refiner' }]],
+    feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }],
+  };
+  const reg = { ...REGISTRY, refiner: { key: 'refiner', displayName: 'Refine Plan', color: 'green' } };
+  const rows = window.__np.buildFeedbackRows(wf, reg, { feedbacks: {} });
+  assert.equal(rows[0].selfLoop, true);
+  assert.equal(rows[0].label, 'Refine Plan ↺ (self loop)');
+});
+
+test('buildFeedbackRows appends "(step N)" when an endpoint agent appears more than once', async () => {
+  const { window } = await boot();
+  // Two implementer nodes (steps 3 & 4); loop from the later one back to the earlier one.
+  const wf = {
+    id: 'w',
+    steps: [
+      [{ id: 's0_0', key: 'planner' }],
+      [{ id: 's1_0', key: 'reviewer' }],
+      [{ id: 's2_0', key: 'implementer' }],
+      [{ id: 's3_0', key: 'implementer' }],
+    ],
+    feedbacks: [{ id: 'fb_0', from: 's3_0', to: 's2_0' }],
+  };
+  const rows = window.__np.buildFeedbackRows(wf, REGISTRY, { feedbacks: {} });
+  assert.equal(rows[0].fromLabel, 'Implement (step 4)');
+  assert.equal(rows[0].toLabel, 'Implement (step 3)');
+  assert.equal(rows[0].label, 'Implement (step 3) ← Implement (step 4)');
+});
+
+test('buildFeedbackRows composes the "(step N)" suffix with the self-loop wrapper', async () => {
+  const { window } = await boot();
+  // A duplicated agent that also feeds back to itself: suffix is computed on the
+  // endpoint, THEN the self-loop wrapper is applied — both rules compose.
+  const wf = {
+    id: 'w',
+    steps: [
+      [{ id: 's0_0', key: 'reviewer' }],
+      [{ id: 's1_0', key: 'reviewer' }],   // "Review" now appears twice -> ambiguous
+    ],
+    feedbacks: [{ id: 'fb_self', from: 's1_0', to: 's1_0' }],
+  };
+  const rows = window.__np.buildFeedbackRows(wf, REGISTRY, { feedbacks: {} });
+  assert.equal(rows[0].selfLoop, true);
+  assert.equal(rows[0].toLabel, 'Review (step 2)');
+  assert.equal(rows[0].label, 'Review (step 2) ↺ (self loop)');
+});
+
+test('buildFeedbackRows falls back to the raw node id when an endpoint is unknown', async () => {
+  const { window } = await boot();
+  const wf = {
+    id: 'w',
+    steps: [[{ id: 's0_0', key: 'planner' }]],
+    feedbacks: [{ id: 'fb_0', from: 's9_9', to: 's0_0' }],   // s9_9 absent from steps
+  };
+  const rows = window.__np.buildFeedbackRows(wf, REGISTRY, { feedbacks: {} });
+  assert.equal(rows[0].fromLabel, 's9_9');   // unknown id -> raw id, never blank
+  assert.equal(rows[0].toLabel, 'Plan');     // s0_0 -> planner -> "Plan"
+  assert.equal(rows[0].label, 'Plan ← s9_9');
+});
+
+test('the feedback cycle input is labelled with human agent names, not raw step ids', async () => {
+  const { window } = await boot({ fetchHandler: workflowFetch() });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  const input = doc.querySelector('#wf-feedback-config input[data-fb-id="fb_0"]');
+  const labelText = input.closest('.field').querySelector('label').textContent;
+  assert.equal(labelText, 'Implement ← Review — max cycles');
+  assert.ok(!/s\d+_\d+/.test(labelText), 'label still leaks a raw step id');
+  assert.ok(!/^Loop /.test(labelText), 'label still uses the old "Loop …" prefix');
+});
