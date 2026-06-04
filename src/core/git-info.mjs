@@ -99,6 +99,39 @@ export async function prMergeable({ projectDir, head }) {
   return normalizeMergeable(r.stdout.trim());
 }
 
+/**
+ * Look up an existing PR for `head` via `gh pr list`, so the History UI can hide
+ * the Create-PR button when a PR is already open or merged. Scans the matches and
+ * selects by priority OPEN > MERGED, so a newer closed PR never masks an older
+ * merged one; a closed-but-not-merged PR is ignored (treated as "no active PR").
+ * Returns { state, url, number } with state ∈ { OPEN, MERGED }, or null when there
+ * is no open/merged PR / on any gh failure. Never throws.
+ */
+export async function findPrForBranch({ projectDir, head } = {}) {
+  if (!projectDir || !head) return null;
+  const r = await _run(
+    'gh',
+    ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,url', '--limit', '30'],
+    { cwd: projectDir },
+  );
+  if (!r.ok) return null;
+  let arr;
+  try { arr = JSON.parse(r.stdout || '[]'); } catch { return null; }
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  // Keep only the states the UI acts on; closed/declined PRs are deliberately dropped.
+  const norm = arr
+    .map((pr) => ({
+      state: String(pr?.state || '').toUpperCase(),
+      url: String(pr?.url || ''),
+      number: Number(pr?.number) || null,
+    }))
+    .filter((pr) => pr.state === 'OPEN' || pr.state === 'MERGED');
+  if (norm.length === 0) return null;
+  // Requirement is binary: hide the button if any OPEN or MERGED PR exists. After
+  // the filter, norm[0] is necessarily a MERGED entry when there is no OPEN one.
+  return norm.find((p) => p.state === 'OPEN') || norm[0];
+}
+
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
 export const _testing = {
   setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },

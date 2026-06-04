@@ -13,7 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot } from './store.mjs';
 import { listProjects } from './projects.mjs';
-import { branchExists, diffShortstat } from './git-info.mjs';
+import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 
 /**
  * Convert an arbitrary string to a safe kebab-case slug.
@@ -323,7 +323,7 @@ function pipelineTotalActiveMs(state) {
 /** Build one history row from a pipeline directory. Never throws.
  *  `projectDir` is the git repo root used to compute live branch facts
  *  (survival + diff line-counts); falls back to state.projectDir. */
-async function pipelineEntry(dir, projectDir = null) {
+async function pipelineEntry(dir, projectDir = null, opts = {}) {
   let mtime = 0;
   try { mtime = (await stat(dir)).mtimeMs; } catch { /* ignore */ }
   let state = null;
@@ -346,7 +346,7 @@ async function pipelineEntry(dir, projectDir = null) {
     }
   }
 
-  return {
+  const entry = {
     id: state?.id ?? basename(dir),
     dir,
     title: state?.title ?? basename(dir),
@@ -361,6 +361,17 @@ async function pipelineEntry(dir, projectDir = null) {
     totalActiveMs: pipelineTotalActiveMs(state),
     mtime,
   };
+
+  // Live PR state (opt-in; only the UI history endpoints request it). One gh call
+  // per entry that has a feature branch — including merged branches that no longer
+  // exist locally, which is exactly the "already merged" case we must detect. When
+  // gh is unavailable we still set pr:null (the field is present whenever requested),
+  // so callers can distinguish "looked, none" from "did not look".
+  if (opts.withPr && repoDir && branch) {
+    entry.pr = (await hasGh()) ? await findPrForBranch({ projectDir: repoDir, head: branch }) : null;
+  }
+
+  return entry;
 }
 
 /**
@@ -370,21 +381,21 @@ async function pipelineEntry(dir, projectDir = null) {
  * @param {string} projectDir
  * @returns {Promise<Array>}
  */
-export async function listPipelines(projectDir) {
+export async function listPipelines(projectDir, opts = {}) {
   const { pipelines } = artifactPaths(projectDir);
   let entries;
   try { entries = await readdir(pipelines, { withFileTypes: true }); } catch { return []; }
   const out = [];
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
-    out.push(await pipelineEntry(join(pipelines, ent.name), projectDir));
+    out.push(await pipelineEntry(join(pipelines, ent.name), projectDir, opts));
   }
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
 }
 
 /** Every pipeline across every store key, newest-first, tagged with project. */
-export async function listAllPipelines() {
+export async function listAllPipelines(opts = {}) {
   const root = storeRoot();
   let keys;
   try { keys = await readdir(root, { withFileTypes: true }); } catch { return []; }
@@ -399,7 +410,7 @@ export async function listAllPipelines() {
     try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { continue; }
     for (const ent of entries) {
       if (!ent.isDirectory()) continue;
-      const e = await pipelineEntry(join(pipelinesDir, ent.name), meta?.path ?? null);
+      const e = await pipelineEntry(join(pipelinesDir, ent.name), meta?.path ?? null, opts);
       e.projectKey = k.name;
       e.projectName = meta?.name ?? k.name;
       e.projectDir = meta?.path ?? null;

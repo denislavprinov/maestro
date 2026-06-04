@@ -2821,6 +2821,26 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
   const btn = node.querySelector('.hist-pr');
   const mergeEl = node.querySelector('.hist-merge');
   if (!btn) return;
+
+  // A PR already open or merged for this branch -> never offer "Create PR";
+  // replace the button with a link to that existing PR (reusing gh's URL). This
+  // runs BEFORE the `survived` eligibility check, so a merged PR whose branch was
+  // deleted (survived === false) still shows a "Merged" link.
+  const pr = p.pr && typeof p.pr === 'object' ? p.pr : null;
+  const prState = pr ? String(pr.state || '').toUpperCase() : '';
+  if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
+    const link = document.createElement('a');
+    link.className = prState === 'MERGED' ? 'hist-pr-link merged' : 'hist-pr-link';
+    link.href = pr.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
+    // Clicking the link must not toggle the surrounding history card.
+    link.addEventListener('click', (e) => e.stopPropagation());
+    btn.replaceWith(link);
+    return;
+  }
+
   const eligible = ghAvailable && p.survived && p.branch && p.sourceBranch;
   if (!eligible) { btn.hidden = true; return; }
   btn.hidden = false;

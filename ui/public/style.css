@@ -551,6 +551,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-pr[hidden]{display:none;}
 .hist-pr-link{font-size:12px;font-weight:600;color:var(--green-ink);text-decoration:none;white-space:nowrap;}
 .hist-pr-link:hover{text-decoration:underline;}
+.hist-pr-link.merged{color:var(--muted, #888);}
 
 /* ========================================================================== */
 /* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */

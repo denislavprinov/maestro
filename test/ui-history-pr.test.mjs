@@ -94,3 +94,61 @@ test('button hidden when gh unavailable, and for non-survived branches', async (
   assert.equal(cards[0].querySelector('.hist-pr').hidden, true, 'gh unavailable hides button');
   assert.equal(cards[1].querySelector('.hist-diff').textContent, '', 'non-survived shows no diff');
 });
+
+test('open PR: no Create-PR button, shows a "View PR" link to the existing PR', async () => {
+  const OPEN = { ...SURVIVED, id: 'po', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } };
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([OPEN], true) : null),
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-pr'), null, 'Create-PR button is gone');
+  const link = card.querySelector('.hist-pr-link');
+  assert.equal(link.getAttribute('href'), 'https://gh/x/pull/8');
+  assert.equal(link.textContent, 'View PR');
+});
+
+test('merged PR: shows a "Merged" link, no button', async () => {
+  const MERGED = { ...SURVIVED, id: 'pm', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } };
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([MERGED], true) : null),
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-pr'), null);
+  const link = card.querySelector('.hist-pr-link');
+  assert.equal(link.textContent, 'Merged');
+  assert.equal(link.getAttribute('href'), 'https://gh/x/pull/9');
+});
+
+test('closed (unmerged) PR is treated as none: Create-PR button still shows', async () => {
+  // Defense in depth: even if a stray CLOSED pr object reaches the client, the UI
+  // must not hide the button. (In practice the server now sends pr:null here.)
+  const CLOSED = { ...SURVIVED, id: 'pc', pr: { state: 'CLOSED', url: 'https://gh/x/pull/1', number: 1 } };
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([CLOSED], true) : null),
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-pr').hidden, false, 'button visible for a closed/unmerged PR');
+  assert.equal(card.querySelector('.hist-pr-link'), null);
+});
+
+test('merged PR with branch gone (survived=false) still shows the Merged link', async () => {
+  // The cited case: PR merged, the lookup is by remote head name, not local branch.
+  const MERGED_GONE = {
+    ...SURVIVED, id: 'pmg', survived: false,
+    pr: { state: 'MERGED', url: 'https://gh/x/pull/2', number: 2 },
+  };
+  const { window, selectProject, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([MERGED_GONE], true) : null),
+  });
+  selectProject(); showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-pr'), null);
+  assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged');
+});
