@@ -370,6 +370,9 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
     case 'reviewer':
       text = await mockReviewer(m, cycle, onEvent);
       break;
+    case 'plan-review':
+      text = await mockPlanReview(m, cycle, onEvent);
+      break;
     case 'manual-tests-checklist':
       text = await mockManualTestsChecklist(m, onEvent);
       break;
@@ -624,6 +627,53 @@ async function mockReviewer(m, cycle, onEvent) {
       review.issues
         .map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`)
         .join('\n') +
+      '\n';
+    await ensureDir(mdPath);
+    await writeFile(mdPath, md, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${mdPath}`, raw: { mock: true, file: mdPath } });
+  }
+  if (jsonPath) {
+    await ensureDir(jsonPath);
+    await writeFile(jsonPath, JSON.stringify(review, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${jsonPath}`, raw: { mock: true, file: jsonPath } });
+  }
+  return JSON.stringify(review);
+}
+
+async function mockPlanReview(m, cycle, onEvent) {
+  const mdPath = m.MOCK_OUT;
+  const jsonPath = m.MOCK_JSON;
+  await emitLog(onEvent, `[mock] plan reviewer reviewing the plan (cycle ${cycle})`);
+
+  const review =
+    cycle <= 1
+      ? {
+          summary: 'Plan is close but one major gap blocks implementation.',
+          issues: [
+            {
+              severity: 'major',
+              title: 'Missing error-path coverage in the plan',
+              detail: 'The plan does not specify a test for the invalid-input branch.',
+              location: 'Steps / Code Snippets',
+            },
+          ],
+        }
+      : {
+          summary: 'Plan is correct, complete, and testable.',
+          issues: [
+            {
+              severity: 'suggestion',
+              title: 'Add a short rationale',
+              detail: 'A one-line rationale per step would aid the reviewer.',
+              location: 'Overview',
+            },
+          ],
+        };
+
+  if (mdPath) {
+    const md =
+      `# Plan Review (cycle ${cycle})\n\n## Summary\n\n${review.summary}\n\n## Issues\n\n` +
+      review.issues.map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`).join('\n') +
       '\n';
     await ensureDir(mdPath);
     await writeFile(mdPath, md, 'utf8');
