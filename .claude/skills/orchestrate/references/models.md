@@ -12,6 +12,7 @@ Defaults (all Opus):
 |---|---|
 | maestro-planner | opus |
 | maestro-plan-refiner | opus |
+| maestro-plan-reviewer | opus |
 | maestro-implementer | opus |
 | maestro-code-reviewer | opus |
 

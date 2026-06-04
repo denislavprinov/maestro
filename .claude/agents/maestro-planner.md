@@ -82,6 +82,10 @@ If the answers list is empty (no questions were needed), still include the secti
 
 After writing the file, emit a short assistant note confirming the absolute plan path and that the Q&A section was appended. Do not start refining or implementing — that is the next phase's job.
 
+## Mode C — REVISE FROM REVIEW
+
+This is a variant of PLAN mode. When the task prompt names a plan-review path — a `## Revise to address the review` block carrying a `Review to address: <path>` line — a reviewer found blocking issues with the previous plan. Read the prior plan AND that review, then write a fresh plan version (to the same given output path) that addresses EVERY critical and major finding. Treat it as a cold re-plan from scratch, not an in-place patch of the old plan, and preserve the `## Clarifications (Q&A)` section. All Mode B requirements still apply.
+
 ## Output contract reminders
 - `clarify.json` shape is fixed and consumed by `protocol.readClarify`; keep it byte-clean (valid JSON, `allowFreeText` always `true`, `options` always length 3).
 - Write files with absolute paths taken from the prompt. Never write outside the pipeline dir / the given plan path.

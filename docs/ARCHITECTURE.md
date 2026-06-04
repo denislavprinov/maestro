@@ -29,7 +29,7 @@ src/core/store.mjs                   project identity + external store paths (pr
 src/core/artifacts.mjs               paths, slugify, date(DD-MM-YY), pipeline create/persist/audit (rooted in the external store)
 src/core/preflight.mjs               detectTools(projectDir) for graphify / code-review-graph
 src/core/claude-runner.mjs           spawn claude headless, stream events, AbortSignal kill, MOCK mode
-src/core/phases.mjs                  per-phase agent runners (planner clarify+plan, refiner, implementer, reviewer)
+src/core/phases.mjs                  per-phase agent runners (planner clarify+plan, refiner, plan-review, implementer, reviewer)
 src/core/orchestrator.mjs            EventEmitter state machine sequencing all phases + loops + gates
 
 src/cli/maestro.mjs              CLI entry: args, terminal rendering, interactive Q&A + gates
@@ -37,6 +37,7 @@ scripts/install.mjs                  copy agents/*.md + skills/maestro into a ta
 
 agents/maestro-planner.md
 agents/maestro-plan-refiner.md
+agents/maestro-plan-reviewer.md
 agents/maestro-implementer.md
 agents/maestro-code-reviewer.md
 skills/maestro/SKILL.md
@@ -284,9 +285,12 @@ Spawn Claude headless, stream events, AbortSignal kill, MOCK mode.
     pass, so the reviewer's `git diff` against the checkpoint is non-empty.
   - `reviewer` => write the review markdown + `impl-review-cycleN.json` (cycle 1: 1 major;
     cycle >= 2: only suggestion).
+  - `plan-review` => write the plan-review markdown + `plan-review-cycleN.json` whose
+    blocking-issue count **decreases** with cycle (cycle 1: 1 major; cycle >= 2: only
+    suggestion) so the Plan -> Plan Review loop terminates and bounces back to the planner.
 
   Marker convention (the phases layer emits these; the mock parses them):
-  - `MOCK_ROLE: <planner-clarify|planner-plan|refiner|implementer|reviewer>`
+  - `MOCK_ROLE: <planner-clarify|planner-plan|refiner|implementer|reviewer|plan-review>`
   - `MOCK_OUT: <absolute path>` — primary output file (plan md / review md / clarify.json)
   - `MOCK_JSON: <absolute path>` — review JSON path (refiner/reviewer)
   - `MOCK_CYCLE: <n>` — current loop cycle (refiner/reviewer)
@@ -305,7 +309,7 @@ Per-phase agent runners. Each:
 - `claudeOpts` — `{ permissionMode, model, mock? }` passed through to `runClaude`.
 
 **allowedTools per role:**
-- planner / refiner / reviewer: `Read, Write, Edit, Bash, Grep, Glob`
+- planner / refiner / plan-review / reviewer: `Read, Write, Edit, Bash, Grep, Glob`
 - implementer: same + full edit capability.
 
 **Exports** (each is `async (ctx, opts) -> result`):
@@ -331,6 +335,12 @@ Per-phase agent runners. Each:
 - `runReviewer(ctx, { planPath, reviewMdPath, reviewJsonPath, cycle }) -> { review }`
   - Reviews the git diff, writes review markdown to `reviewMdPath` and the reviewer
     review JSON (`impl-review-cycle<cycle>.json`) to `reviewJsonPath`. Returns `{ review }` (parsed).
+
+- `runPlanReviewer(ctx, { planPath, reviewMdPath, reviewJsonPath, cycle }) -> { review }`
+  - Reviews the PLAN markdown (no git diff; role `plan-review`) without rewriting it, writes
+    review markdown to `reviewMdPath` and the plan-review JSON (`plan-review-cycle<cycle>.json`)
+    to `reviewJsonPath`. A **review-JSON producer**: on blocking issues the loop bounces back to
+    the planner for a cold re-plan. Returns `{ review }` (parsed).
 
 ### 3.7 `src/core/orchestrator.mjs`
 
@@ -483,11 +493,12 @@ tree, so they are never committed to the repo.
 ```
 - `choice` is the chosen option text OR the user's free-text answer.
 
-### 5.3 review JSON (written by refiner and reviewer; read by `readReview`)
-Two distinct per-cycle files are written: the refiner writes `refine-review-cycle1.json`,
-`refine-review-cycle2.json`, ... (one per refine cycle); the code-reviewer writes
-`impl-review-cycle1.json`, `impl-review-cycle2.json`, ... (one per review cycle). Both share
-the schema below (N = the loop cycle).
+### 5.3 review JSON (written by refiner, planReviewer, and reviewer; read by `readReview`)
+Three distinct per-cycle files are written: the refiner writes `refine-review-cycle1.json`,
+`refine-review-cycle2.json`, ... (one per refine cycle); the plan reviewer (`planReviewer`)
+writes `plan-review-cycle1.json`, `plan-review-cycle2.json`, ... (one per plan-review cycle);
+the code-reviewer writes `impl-review-cycle1.json`, `impl-review-cycle2.json`, ... (one per
+review cycle). All share the schema below (N = the loop cycle).
 ```json
 {
   "issues": [
@@ -526,7 +537,8 @@ Full state snapshot. Minimum fields (extra fields allowed; keep these stable):
 }
 ```
 - `status` ∈ `{ "running", "done", "stopped", "error" }`.
-- `phase` ∈ `{ "preflight", "plan", "refine", "implement", "review", "done" }`.
+- `phase` ∈ `{ "preflight", "plan", "refine", "plan-review", "implement", "review", "done" }`
+  (the live-UI bucket `node.uiPhase`; data-driven workflows may also emit `manual-checklist`/`manual-web`).
 
 ### 5.5 `pipeline.md` (audit log; header written by `createPipeline`, lines by `appendAudit`)
 Human-readable markdown audit trail saved for history/audit. Header carries the run
