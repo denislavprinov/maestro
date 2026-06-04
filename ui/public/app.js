@@ -1182,17 +1182,56 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
 }
 
 // Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
-// overlaying the run-config's saved maxCycles (default 3 when unset).
-function buildFeedbackRows(workflow, runConfig) {
+// overlaying the run-config's saved maxCycles (default 3 when unset). Resolves each
+// loop's endpoints (node ids like "s2_0") to human agent names via the registry +
+// workflow.steps, and precomputes the directional `label`:
+//   - normal loop:  "<toName> ← <fromName>"   (feedback points to <- from)
+//   - self loop:    "<name> ↺ (self loop)"    (from === to)
+// A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
+// by more than one node in the workflow. Unknown ids fall back to the raw id.
+function buildFeedbackRows(workflow, registry, runConfig) {
+  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
+  const reg = registry || {};
   const saved = (runConfig && runConfig.feedbacks) || {};
+
+  // node id -> { name, step } (1-based) + a display-name frequency map so the
+  // "(step N)" suffix is added only when a name is non-unique.
+  const byId = new Map();
+  const nameCount = new Map();
+  steps.forEach((group, stepIndex) => {
+    (Array.isArray(group) ? group : []).forEach((node) => {
+      if (!node || !node.id) return;
+      const meta = reg[node.key] || null;
+      const name = (meta && meta.displayName) || node.key || node.id; // mirror buildNodeConfigRows
+      byId.set(node.id, { name, step: stepIndex + 1 });
+      nameCount.set(name, (nameCount.get(name) || 0) + 1);
+    });
+  });
+
+  // Endpoint label: display name, disambiguated with "(step N)" when that name is
+  // shared by >1 node. Ids absent from steps fall back to the raw id (never blank).
+  const labelFor = (nodeId) => {
+    const info = byId.get(nodeId);
+    if (!info) return nodeId;
+    return (nameCount.get(info.name) || 0) > 1 ? `${info.name} (step ${info.step})` : info.name;
+  };
+
   return fbs.map((fb) => {
     const rc = saved[fb.id] || {};
     const n = Number(rc.maxCycles);
+    const fromLabel = labelFor(fb.from);
+    const toLabel = labelFor(fb.to);
+    const selfLoop = fb.from === fb.to;
+    const label = selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`;
     return {
       fbId: fb.id,
       from: fb.from,
       to: fb.to,
+      fromLabel,
+      toLabel,
+      selfLoop,
+      label,
       maxCycles: Number.isFinite(n) && n >= 1 ? n : 3,
     };
   });
@@ -1339,7 +1378,7 @@ async function renderWorkflowConfig(workflowId) {
   }
   const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
   renderNodeRows(buildNodeConfigRows(wf, registry, runConfig));
-  renderFeedbackRows(buildFeedbackRows(wf, runConfig));
+  renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
 }
 
 // Build one .stage-cfg row per node into #wf-node-config, keyed by data-node-id.
@@ -1415,7 +1454,7 @@ function renderFeedbackRows(rows) {
     field.style.marginBottom = '10px';
 
     const label = document.createElement('label');
-    label.textContent = `Loop ${row.to} ← ${row.from} — max cycles`;
+    label.textContent = `${row.label} — max cycles`;
     label.setAttribute('for', `fb-${row.fbId}`);
     field.appendChild(label);
 
