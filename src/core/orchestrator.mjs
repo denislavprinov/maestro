@@ -51,6 +51,7 @@ const AGENT_FILES = {
   refiner: 'maestro-plan-refiner.md',
   implementer: 'maestro-implementer.md',
   reviewer: 'maestro-code-reviewer.md',
+  planReviewer: 'maestro-plan-reviewer.md',
 };
 
 /**

@@ -80,8 +80,8 @@ test('distinctAgents() returns first-seen-ordered unique keys', () => {
   assert.deepEqual(distinctAgents(steps), ['planner', 'implementer', 'reviewer']);
 });
 
-test('EMBEDDED_AGENTS covers the six canonical keys with color + icon', () => {
-  const keys = ['planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting'];
+test('EMBEDDED_AGENTS covers the seven canonical keys with color + icon', () => {
+  const keys = ['planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer'];
   for (const k of keys) {
     assert.ok(EMBEDDED_AGENTS[k], `missing embedded agent ${k}`);
     assert.equal(typeof EMBEDDED_AGENTS[k].displayName, 'string');
@@ -92,9 +92,9 @@ test('EMBEDDED_AGENTS covers the six canonical keys with color + icon', () => {
 
 test('mergePalette() falls back to the embedded registry, ordered by .order', () => {
   const pal = mergePalette(null);
-  assert.equal(pal.length, 6);
+  assert.equal(pal.length, 7);
   assert.deepEqual(pal.map((a) => a.key), [
-    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting',
+    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
   assert.equal(pal[0].displayName, 'Plan');
 });

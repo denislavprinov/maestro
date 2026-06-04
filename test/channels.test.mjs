@@ -14,6 +14,8 @@ test('▲ C1: allocate mints the planner plan at v1 and the refiner plan at cycl
   assert.match(planner.path, /\/plans\/03-06-26-feat\.md$/);      // canonical v1, NO -v suffix
   assert.match(refiner.path, /\/plans\/03-06-26-feat-v2\.md$/);   // refiner versions up
   assert.notEqual(planner.path, refiner.path, 'planner v1 must differ from refiner v2');
+  const replan = allocate('plan', { ...ALLOC, key: 'planner', cycle: 2 });
+  assert.match(replan.path, /\/plans\/03-06-26-feat-v2\.md$/); // replanned planner versions up (no clobber)
 });
 
 test('allocate review: reviewer/web-ui carry an md; ▲ C2: refiner md is null', () => {
@@ -26,6 +28,12 @@ test('allocate review: reviewer/web-ui carry an md; ▲ C2: refiner md is null',
   const web = allocate('review', { ...ALLOC, key: 'manualWebUiTesting' });
   assert.match(web.mdPath, /\/webui-review-cycle1\.md$/);
   assert.equal(allocate('code', ALLOC).kind, 'worktree');
+  const planRev = allocate('review', { ...ALLOC, key: 'planReviewer' });
+  assert.match(planRev.jsonPath, /\/plan-review-cycle1\.json$/);
+  assert.match(planRev.mdPath, /-feat-plan-review\.md$/, 'plan-review md is non-null so it publishes to the bus');
+  // reviewKind tags each review with its provenance (the implementer gate reads this)
+  assert.equal(allocate('review', { ...ALLOC, key: 'planReviewer' }).reviewKind, 'plan-review');
+  assert.equal(allocate('review', { ...ALLOC, key: 'reviewer' }).reviewKind, 'impl-review');
 });
 
 test('bindInputs reads latest values; optional null omitted, required null passes through', () => {
@@ -58,10 +66,15 @@ test('publish folds plan/review/checklist and clears review on code', () => {
 
 test('▲ C3: legacyFields reproduces the runner ABI for ALL six roles', () => {
   const baseName = 'feat';
-  // planner
+  // planner (no review -> normal plan; reviewPath threaded as undefined)
   assert.deepEqual(
     legacyFields({ key: 'planner' }, { userPrompt: { answers: ['a'] } }, { plan: { path: '/v1.md' } }, 1, baseName),
-    { planFilePath: '/v1.md', baseName: 'feat', answers: ['a'] },
+    { planFilePath: '/v1.md', baseName: 'feat', answers: ['a'], reviewPath: undefined },
+  );
+  // planner (review bound -> replan: reviewPath flows through)
+  assert.equal(
+    legacyFields({ key: 'planner' }, { userPrompt: { answers: [] }, review: { mdPath: '/pr.md' } }, { plan: { path: '/v2.md' } }, 2, baseName).reviewPath,
+    '/pr.md',
   );
   // refiner
   assert.deepEqual(
@@ -75,6 +88,10 @@ test('▲ C3: legacyFields reproduces the runner ABI for ALL six roles', () => {
   assert.equal(legacyFields({ key: 'implementer' }, { plan: { path: '/p.md' } }, {}, 1, baseName).mode, 'implement');
   // implementer: present-but-md-less review => still implement (defensive ?.mdPath)
   assert.equal(legacyFields({ key: 'implementer' }, { plan: { path: '/p.md' }, review: { mdPath: null } }, {}, 1, baseName).mode, 'implement');
+  // implementer: a plan-review on the bus must NOT flip a first-pass implementer into fix
+  assert.equal(legacyFields({ key: 'implementer' }, { plan: { path: '/p.md' }, review: { mdPath: '/pr.md', reviewKind: 'plan-review' } }, {}, 1, baseName).mode, 'implement');
+  // implementer: a code (impl) review on a linear forward edge DOES fix, even at cycle 1
+  assert.equal(legacyFields({ key: 'implementer' }, { plan: { path: '/p.md' }, review: { mdPath: '/r.md', reviewKind: 'impl-review' } }, {}, 1, baseName).mode, 'fix');
   // reviewer
   assert.deepEqual(
     legacyFields({ key: 'reviewer' }, { plan: { path: '/p.md' } }, { review: { mdPath: '/r.md', jsonPath: '/r.json' } }, 1, baseName),
@@ -89,5 +106,10 @@ test('▲ C3: legacyFields reproduces the runner ABI for ALL six roles', () => {
   assert.deepEqual(
     legacyFields({ key: 'manualWebUiTesting' }, { checklist: { path: '/c.md' } }, { review: { mdPath: '/w.md', jsonPath: '/w.json' } }, 3, baseName),
     { checklistPath: '/c.md', reviewMdPath: '/w.md', reviewJsonPath: '/w.json', cycle: 3 },
+  );
+  // planReviewer (verifier): consumes plan, mints review md+json
+  assert.deepEqual(
+    legacyFields({ key: 'planReviewer' }, { plan: { path: '/p.md' } }, { review: { mdPath: '/pr.md', jsonPath: '/pr.json' } }, 1, baseName),
+    { planPath: '/p.md', reviewMdPath: '/pr.md', reviewJsonPath: '/pr.json', cycle: 1 },
   );
 });

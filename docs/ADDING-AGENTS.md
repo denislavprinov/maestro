@@ -5,6 +5,12 @@ Maestro's agent system is **data-driven**: an agent is two sibling files in
 in the **Pipeline Composer** palette automatically — no edits to the engine,
 the orchestrator, or the UI. This page is the complete recipe.
 
+A new agent that **reuses** an existing runner branch needs no engine edits. A
+genuinely new behavior (e.g. a verifier that reviews a new artifact and loops to
+a different target) additionally needs a `case` in `runners.mjs` (and a `run*` in
+`phases.mjs`, a `legacyFields`/`allocate` case in `channels.mjs`, an `AGENT_FILES`
+entry, and a mock case) — see `planReviewer` as the worked example.
+
 > Authoritative module/event/file contract: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
 > Composer design: [`docs/superpowers/specs/2026-06-01-pipeline-composer-design.md`](superpowers/specs/2026-06-01-pipeline-composer-design.md).
 
@@ -12,13 +18,13 @@ the orchestrator, or the UI. This page is the complete recipe.
 
 1. Write the prompt: `agents/maestro-<your-role>.md` (YAML frontmatter incl. `tools`, then the system prompt).
 2. Write the sidecar: `agents/<key>.meta.json` (`key`, `displayName`, `color`, `icon`, `agentFile`, `runnerType`, `loopSource`, `order`, …).
-3. Pick a `runnerType`: `producer` (makes artifacts/code) or `verifier` (emits a review verdict, can drive a feedback loop). Only add a runner if you need genuinely new behavior.
+3. Pick a `runnerType`: `producer` (makes artifacts/code) or `verifier` (emits a review verdict, can drive a feedback loop). Only add a runner if you need genuinely new behavior. **Reusing** an existing runner branch needs no engine edits; a genuinely new behavior (e.g. a verifier that reviews a new artifact and loops to a different target) additionally needs a `case` in `runners.mjs` (plus a `run*` in `phases.mjs`, a `legacyFields`/`allocate` case in `channels.mjs`, an `AGENT_FILES` entry, and a mock case) — see `planReviewer` as the worked example.
 4. **Done.** `loadAgentRegistry()` scans `agents/*.meta.json`, so the agent is in the palette and drag-droppable. Topology you draw in the Composer + your project's model/effort/cycle settings resolve into an executable plan at run time.
 5. Verify the pairing: run the guard at the bottom of this page (and `node --test test/agents-meta.test.mjs`).
 
 `key` is the canonical camelCase identifier used **everywhere** (registry,
-workflow node `key`, run-config). The six shipped keys are: `planner`,
-`refiner`, `implementer`, `reviewer`, `manualTestsChecklist`,
+workflow node `key`, run-config). The seven shipped keys are: `planner`,
+`refiner`, `planReviewer`, `implementer`, `reviewer`, `manualTestsChecklist`,
 `manualWebUiTesting`.
 
 ---

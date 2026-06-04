@@ -23,7 +23,7 @@ function ctxFor(dir, node, extra = {}) {
     pipelineDir: dir,
     taskPrompt: 'demo task',
     toolInstruction: '',
-    agentPrompts: { planner: '', refiner: '', implementer: '', reviewer: '' },
+    agentPrompts: { planner: '', refiner: '', implementer: '', reviewer: '', planReviewer: '' },
     checkpointRef: null,
     signal: undefined,
     onEvent: () => {},
@@ -85,6 +85,39 @@ test('verifier(reviewer) cycle 1 is blocked, cycle 2 is ok (mock decreases sever
     cycle: 2,
   }));
   assert.equal(ok.status, 'ok', 'cycle 2 reviewer has only a suggestion');
+});
+
+test('verifier(planReviewer) cycle 1 blocked, cycle 2 ok (mock decreases severity)', async () => {
+  const dir = await makeTmpDir();
+  const node = { nodeId: 's1_0', key: 'planReviewer', runnerType: 'verifier', loopSource: true };
+  const c1 = await runners.verifier(ctxFor(dir, node, {
+    planPath: join(dir, 'plan.md'),
+    reviewMdPath: join(dir, 'plan-review.md'),
+    reviewJsonPath: join(dir, 'plan-review-c1.json'),
+    cycle: 1,
+  }));
+  assert.equal(c1.status, 'blocked');
+  assert.equal(c1.reviewMdPath, join(dir, 'plan-review.md'), 'threads the md path so publish folds it onto the bus');
+  const c2 = await runners.verifier(ctxFor(dir, node, {
+    planPath: join(dir, 'plan.md'),
+    reviewMdPath: join(dir, 'plan-review.md'),
+    reviewJsonPath: join(dir, 'plan-review-c2.json'),
+    cycle: 2,
+  }));
+  assert.equal(c2.status, 'ok');
+});
+
+test('producer(planner) replans when a reviewPath is present', async () => {
+  const dir = await makeTmpDir();
+  const node = { nodeId: 's0_0', key: 'planner', runnerType: 'producer', loopSource: false };
+  const res = await runners.producer(ctxFor(dir, node, {
+    planFilePath: join(dir, 'plan-v2.md'),
+    baseName: 'feature',
+    answers: [],
+    reviewPath: join(dir, 'plan-review.md'),
+  }));
+  assert.equal(res.status, 'ok');
+  assert.equal(res.planPath, join(dir, 'plan-v2.md'));
 });
 
 test('verifier(reviewer) reading a pre-written blocking review reports blocked', async () => {

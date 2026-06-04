@@ -207,11 +207,11 @@ test('resolveWorkflow(default) yields a 4-step ExecutablePlan with prompts and d
   // loopSource flows through from the registry.
   assert.equal(flat.find((n) => n.key === 'reviewer').loopSource, true);
   assert.equal(flat.find((n) => n.key === 'planner').loopSource, false);
-  // Feedbacks carry the gate + a default maxCycles of 5 (orchestrator parity).
+  // Feedbacks carry the gate + a default maxCycles of 3 (matches the UI default).
   assert.equal(plan.feedbacks.length, 2);
   for (const f of plan.feedbacks) {
     assert.equal(f.gate, 'hasBlocking');
-    assert.equal(f.maxCycles, 5);
+    assert.equal(f.maxCycles, 3);
   }
 });
 
@@ -344,7 +344,7 @@ test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', asy
   const planner = flat.find((n) => n.key === 'planner');
   const implementer = flat.find((n) => n.key === 'implementer');
   assert.deepEqual(planner.produces, ['plan']);
-  assert.deepEqual(planner.consumes, ['userPrompt']);
+  assert.deepEqual(planner.consumes, ['userPrompt', 'review']);
   assert.deepEqual(implementer.produces, ['code']);
   assert.deepEqual(implementer.optionalConsumes, ['review']);
 });

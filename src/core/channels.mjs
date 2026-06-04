@@ -20,24 +20,33 @@ export function allocate(channel, ctx) {
   const { projectDir, pipelineDir, baseName, datePrefix, cycle, key } = ctx;
   switch (channel) {
     case 'plan': {
-      // ▲ C1: the planner writes the canonical v1 file (it has no inbound loop, so
-      // cycle is always 1) — exactly today's seeded `io.planPath`. Only the refiner
-      // versions up to cycle+1 (matching _nodeIo's refiner arm). Producer-aware.
-      const version = key === 'planner' ? 1 : cycle + 1;
+      // The planner is cycle-aware so a plan-review -> planner loop writes a fresh
+      // -vN on each replan instead of clobbering v1 (cycle is 1 on the first pass,
+      // so v1 has NO -v suffix, matching today's seeded io.planPath). The refiner
+      // versions up to cycle+1 (a self-loop never produces v1).
+      const version = key === 'planner' ? cycle : cycle + 1;
       return { kind: 'artifact', path: planPath(projectDir, baseName, version, datePrefix) };
     }
     case 'review': {
       // Review json basename differs by producing role (keeps existing filenames).
-      const base = key === 'refiner' ? 'refine-review' : key === 'manualWebUiTesting' ? 'webui-review' : 'impl-review';
-      // ▲ C2: the refiner emits ONLY a json verdict (loop-gating); it has no review
-      // md. A null md marks the review "private" so publish() never folds it onto the
-      // shared `review` channel an implementer consumes.
+      const base = key === 'refiner'
+        ? 'refine-review'
+        : key === 'manualWebUiTesting'
+          ? 'webui-review'
+          : key === 'planReviewer'
+            ? 'plan-review'
+            : 'impl-review';
+      // ▲ C2: the refiner emits ONLY a json verdict (its md is null => private to its
+      // self-loop). Every other verifier carries a review md so publish() folds it
+      // onto the shared `review` channel its loop target consumes.
       const mdPath = key === 'refiner'
         ? null
         : key === 'manualWebUiTesting'
           ? join(pipelineDir, `webui-review-cycle${cycle}.md`)
-          : reviewPath(projectDir, baseName, datePrefix);
-      return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`) };
+          : key === 'planReviewer'
+            ? reviewPath(projectDir, baseName, datePrefix, 'plan-review')
+            : reviewPath(projectDir, baseName, datePrefix);
+      return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`), reviewKind: base };
     }
     case 'checklist':
       return { kind: 'artifact', path: join(pipelineDir, 'manual-tests-checklist.md') };
@@ -82,7 +91,7 @@ export function publish(produces, result, outputs, bus) {
       // implementer into `fix` mode.
       const mdPath = result.reviewMdPath ?? outputs.review?.mdPath;
       if (!mdPath) continue;
-      bus.review = { kind: 'review', mdPath, jsonPath: outputs.review?.jsonPath, verdict: result.review };
+      bus.review = { kind: 'review', mdPath, jsonPath: outputs.review?.jsonPath, verdict: result.review, reviewKind: outputs.review?.reviewKind };
     } else if (c === 'checklist') {
       const path = result.checklistPath || outputs.checklist?.path;
       if (path) bus.checklist = { kind: 'artifact', path };
@@ -102,13 +111,21 @@ export function publish(produces, result, outputs, bus) {
 export function legacyFields(node, inputs, outputs, cycle, baseName) {
   switch (node.key) {
     case 'planner':
-      return { planFilePath: outputs.plan?.path, baseName, answers: inputs.userPrompt?.answers || [] };
+      // reviewPath is set only when a review is bound (a plan-review -> planner
+      // rewind), which switches runPlannerPlan into its cold-replan branch.
+      return { planFilePath: outputs.plan?.path, baseName, answers: inputs.userPrompt?.answers || [], reviewPath: inputs.review?.mdPath };
     case 'refiner':
       return { inPlanPath: inputs.plan?.path, outPlanPath: outputs.plan?.path, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'implementer':
-      // ▲ C2: gate `fix` on a real review MD (mirrors today's `io.reviewMdPath ? …`),
-      // not mere truthiness of the review handle.
-      return { planPath: inputs.plan?.path, reviewPath: inputs.review?.mdPath, mode: inputs.review?.mdPath ? 'fix' : 'implement', cycle };
+      // The implementer fixes CODE reviews (impl-review / webui-review). A plan-review
+      // left on the shared `review` bus by a planReviewer -> planner loop is NOT for the
+      // implementer (it bounces to the planner), so it must not flip a first-pass
+      // implementer into fix mode. Discriminate by review provenance (reviewKind), not
+      // cycle — a linear `... -> reviewer -> implementer` forward edge legitimately fixes
+      // a code review at cycle 1 (see saved-pipeline-parity).
+      return { planPath: inputs.plan?.path, reviewPath: inputs.review?.mdPath, mode: (inputs.review?.mdPath && inputs.review?.reviewKind !== 'plan-review') ? 'fix' : 'implement', cycle };
+    case 'planReviewer':
+      return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'reviewer':
       return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'manualTestsChecklist':

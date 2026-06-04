@@ -144,13 +144,14 @@ Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 | --- | --- | --- |
 | Planner | `agents/maestro-planner.md` | Initial plan with code snippets; asks conceptual questions (3 options + free text) instead of assuming; appends Q&A to the plan. |
 | Plan Refiner | `agents/maestro-plan-refiner.md` | Reviews + refines the plan (and its code snippets); writes `-vN`; emits a severity-tagged review per cycle. |
+| Plan Review | `agents/maestro-plan-reviewer.md` | Reviews the plan (without rewriting it); writes review markdown + JSON; on blocking issues bounces back to the planner for a cold re-plan. |
 | Implementer | `agents/maestro-implementer.md` | Follows the latest plan with no deviation; TDD red-green-refactor; also runs in "fix" mode against a review. |
 | Code Reviewer | `agents/maestro-code-reviewer.md` | Reviews the git diff; writes review markdown + JSON; hands back to the implementer to fix. |
 
-Maestro now ships **6 runnable agents** and the agent system is **data-driven**:
+Maestro now ships **7 runnable agents** and the agent system is **data-driven**:
 each agent is a prompt (`agents/maestro-<role>.md`) plus a metadata sidecar
 (`agents/<key>.meta.json`), so new agents drop in without engine edits. Beyond
-the four above, it adds **Manual Tests Checklist** (drafts manual test cases) and
+the five above, it adds **Manual Tests Checklist** (drafts manual test cases) and
 **Manual web UI testing** (runs them against the live web UI via Playwright and
 emits a pass/fail verdict). To add your own, see
 [`docs/ADDING-AGENTS.md`](docs/ADDING-AGENTS.md).
@@ -162,14 +163,14 @@ emits a pass/fail verdict). To add your own, see
 - **Clarify** — planner asks one round of conceptual questions (up to four) before
   planning; answers are persisted and appended to the plan.
 - **Refine loop** — Refiner runs repeatedly. It stops when no `critical`/`major` issues
-  remain. Past the loop's **max cycles** (default 5) it asks you to **continue** or approve
+  remain. Past the loop's **max cycles** (default 3) it asks you to **continue** or approve
   **another** cycle, escalating indefinitely.
 - **Review loop** — Reviewer -> Implementer(fix) -> Reviewer ... stops when no
-  `critical`/`major` issues remain. Past the loop's **max cycles** (default 5) it asks the
+  `critical`/`major` issues remain. Past the loop's **max cycles** (default 3) it asks the
   same continue/another gate.
 
 Each feedback loop's max-cycle count is set per loop in the New Pipeline window's
-**Pipeline configuration** (default 5), not via a CLI flag.
+**Pipeline configuration** (default 3), not via a CLI flag.
 
 A run is "blocked" only by `critical` or `major` issues; `minor`/`suggestion` issues do
 not hold up the loop.

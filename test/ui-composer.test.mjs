@@ -66,7 +66,7 @@ test('opening the composer builds the palette from the agents/embedded registry'
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 10));
   const pills = window.document.querySelectorAll('#composer-palette .agent-pill');
-  assert.equal(pills.length, 6, 'six agent pills (embedded fallback)');
+  assert.equal(pills.length, 7, 'seven agent pills (embedded fallback)');
   assert.match(pills[0].textContent, /Plan/);
 });
 

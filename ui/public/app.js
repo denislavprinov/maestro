@@ -3003,6 +3003,7 @@ function statusPill(r) {
     case 'refine': return { family: 'peach', text: 'Refining' };
     case 'implement': return { family: 'blue', text: 'Implementing' };
     case 'review': return { family: 'peach', text: 'Reviewing' };
+    case 'plan-review': return { family: 'violet', text: 'Plan Review' };
     default: return { family: 'peach', text: 'Running' };
   }
 }

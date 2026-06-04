@@ -24,6 +24,7 @@ import {
   runRefiner,
   runImplementer,
   runReviewer,
+  runPlanReviewer,
   runManualTestsChecklist,
   runManualWebUiTesting,
 } from './phases.mjs';
@@ -54,6 +55,7 @@ async function producer(ctx) {
         answers: ctx.answers || [],
         planFilePath: ctx.planFilePath,
         baseName: ctx.baseName,
+        reviewPath: ctx.reviewPath,
       });
       return { status: 'ok', planPath, summary: 'Plan written.' };
     }
@@ -104,6 +106,16 @@ async function verifier(ctx) {
         cycle: ctx.cycle,
       });
       // CONV-5: thread the review markdown path so a loop rewind runs the implementer in `fix` mode.
+      return { ...verdict(review), reviewMdPath: ctx.reviewMdPath };
+    }
+    case 'planReviewer': {
+      const { review } = await runPlanReviewer(ctx, {
+        planPath: ctx.planPath,
+        reviewMdPath: ctx.reviewMdPath,
+        reviewJsonPath: ctx.reviewJsonPath,
+        cycle: ctx.cycle,
+      });
+      // Thread the review md path so a loop rewind to the planner reads the review.
       return { ...verdict(review), reviewMdPath: ctx.reviewMdPath };
     }
     case 'manualWebUiTesting': {
