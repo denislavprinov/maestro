@@ -2874,6 +2874,53 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
   });
 }
 
+// A history entry is deletable only when finished (never while live/running/created).
+function isDeletableEntry(p) {
+  if (!p || p.live) return false;
+  const s = String(p.status || '').toLowerCase();
+  return !['running', 'starting', 'created'].includes(s);
+}
+
+// Wire the Delete button in the expanded card. Shown only for finished entries.
+// Confirms via window.confirm (the app's destructive-action convention), then
+// DELETEs the pipeline and drops the card from the list.
+function setupDeleteButton(node, projectDir, p) {
+  const btn = node.querySelector('.hist-delete');
+  if (!btn) return;
+  if (!isDeletableEntry(p)) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation(); // never toggle the card
+    const label = p.title || p.id || 'this entry';
+    if (!window.confirm(
+      `Delete "${label}"?\n\nThis removes the pipeline records and its local branch/worktree. ` +
+      `The remote branch is kept. This cannot be undone.`)) return;
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = 'Deleting…';
+    try {
+      const qs = new URLSearchParams();
+      if (p.projectKey) qs.set('projectKey', p.projectKey);
+      else qs.set('projectDir', p.projectDir || projectDir);
+      const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}?${qs.toString()}`, { method: 'DELETE' });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+      node.remove();
+      if (el.navHistoryCount) {
+        const n = Math.max(0, (parseInt(el.navHistoryCount.textContent, 10) || 1) - 1);
+        el.navHistoryCount.textContent = String(n);
+      }
+      if (!el.history.querySelector('.hist-card')) {
+        el.history.appendChild(histEmpty('No saved pipelines yet for this folder.'));
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = prev;
+      btn.title = `Could not delete: ${err.message}`;
+    }
+  });
+}
+
 // Paint the post-PR mergeability pill. MERGEABLE -> green, CONFLICTING -> red,
 // UNKNOWN -> amber "checking…" (GitHub computes mergeability asynchronously).
 function setMergePill(el, mergeable) {
@@ -2923,6 +2970,7 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   // Right-side cluster (before the chevron): lines changed + Create-PR button.
   renderHistDiff(node.querySelector('.hist-diff'), p);
   setupPrButton(node, projectDir, p, ghAvailable);
+  setupDeleteButton(node, projectDir, p);
 
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');

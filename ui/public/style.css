@@ -557,6 +557,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-pr-link:hover{text-decoration:underline;}
 .hist-pr-link.merged{color:var(--muted, #888);}
 
+/* Delete action under the expanded card's stepper. Filled red to read as the
+   single destructive action (scoped to .hist-delete so the existing soft
+   .btn-danger rule is left untouched). */
+.hist-actions{display:flex;justify-content:flex-end;margin-top:14px;}
+.hist-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);
+  border:1.5px solid var(--red-ink,#d9534f);color:#fff;font-family:inherit;font-weight:600;
+  font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;}
+.hist-delete:hover:not(:disabled){filter:brightness(0.95);}
+.hist-delete:disabled{opacity:.6;cursor:default;}
+.hist-delete[hidden]{display:none;}
+.hist-delete svg{display:block;}
+
 /* ========================================================================== */
 /* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */
 /* (ported from docs/pipeline-composer/mockups; reuses :root tokens)          */

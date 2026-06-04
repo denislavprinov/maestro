@@ -31,6 +31,7 @@ import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { listLocalBranches, currentBranch, isValidSourceRef } from '../src/core/worktree.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
+import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -464,6 +465,42 @@ app.get('/api/history/:key/:id', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/runs/:id?projectKey=...  (or ?projectDir=...)
+// Remove a FINISHED pipeline and everything tied to it: its store folder, its
+// shared plan/review markdown, and its local branch + worktree. The remote
+// branch is never touched. Refused (409) while the run is live in this process.
+// ---------------------------------------------------------------------------
+app.delete('/api/runs/:id', async (req, res) => {
+  const id = req.params.id;
+  const projectKey = typeof req.query.projectKey === 'string' ? req.query.projectKey.trim() : '';
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (projectKey && !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(projectKey)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  if (!projectKey && !projectDir) return badRequest(res, 'projectKey or projectDir is required');
+
+  // Never tear down a pipeline that is still live in this server process.
+  const liveActive = [...runs.values()].some((r) =>
+    (r.pipelineId === id || r.id === id) &&
+    ['running', 'starting', 'created'].includes(String(r.status || '').toLowerCase()));
+  if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
+
+  try {
+    const report = await deletePipeline({
+      key: projectKey || null,
+      projectDir: projectKey ? null : projectDir,
+      id,
+    });
+    if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    res.json({ ok: true, ...report });
+  } catch (e) {
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
+    res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 });
 

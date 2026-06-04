@@ -47,6 +47,10 @@ test('orchestrator creates a worktree on source branch with a derived feature br
   assert.match(state.branch.worktreeDir, /\.maestro\/worktrees\//);
   assert.equal(state.branch.reusedExisting, false);
 
+  // The plan/review name linkage is persisted so a later delete is exact.
+  assert.equal(typeof state.baseName, 'string');
+  assert.match(state.datePrefix, /^\d{2}-\d{2}-\d{2}$/);
+
   const head = spawnSync('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD']);
   assert.equal(head.stdout.toString().trim(), 'main');
 });
