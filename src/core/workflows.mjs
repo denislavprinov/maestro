@@ -232,7 +232,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   // stepper cell via the snapshotted manifest; see buildStepperManifest).
   const UI_PHASE = {
     planner: 'plan', refiner: 'refine', implementer: 'implement', reviewer: 'review',
-    manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web',
+    manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web', planReviewer: 'plan-review',
   };
 
   const steps = [];
