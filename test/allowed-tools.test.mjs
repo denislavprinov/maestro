@@ -44,6 +44,26 @@ test('returns a fresh array; never mutates the base constant', () => {
   assert.deepEqual(BASE, before, 'base constant untouched');
 });
 
+test('fanOut=true appends Task and Agent to the allow-list', () => {
+  const out = effectiveAllowedTools(BASE, [], true);
+  assert.ok(out.includes('Task'), 'grants Task');
+  assert.ok(out.includes('Agent'), 'grants Agent');
+  assert.equal(out.length, BASE.length + 2);
+});
+
+test('fanOut defaults to false: third arg omitted leaves the base unchanged', () => {
+  assert.deepEqual(effectiveAllowedTools(BASE, []), BASE);
+  assert.deepEqual(effectiveAllowedTools(BASE, [], false), BASE);
+  const out = effectiveAllowedTools(BASE, []);
+  assert.ok(!out.includes('Task') && !out.includes('Agent'));
+});
+
+test('fanOut de-dupes Task/Agent already present', () => {
+  const out = effectiveAllowedTools([...BASE, 'Task'], [], true);
+  assert.equal(out.filter((t) => t === 'Task').length, 1);
+  assert.ok(out.includes('Agent'));
+});
+
 // ── integration: frontmatter → resolveWorkflow node.tools → effectiveAllowedTools ──
 
 test('resolved manualWebUiTesting node + base union grants browser tools AND keeps Write', async () => {

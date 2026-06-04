@@ -42,16 +42,19 @@ const IMPLEMENTER_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Grep',
  * @param {string[]|undefined} declared  node.tools from frontmatter, may be undefined
  * @returns {string[]} de-duplicated union, base entries first
  */
-export function effectiveAllowedTools(base, declared) {
+export function effectiveAllowedTools(base, declared, fanOut = false) {
   const out = Array.isArray(base) ? [...base] : [];
   const seen = new Set(out);
-  for (const t of Array.isArray(declared) ? declared : []) {
+  const add = (t) => {
     const name = String(t || '').trim();
-    if (name && !seen.has(name)) {
-      seen.add(name);
-      out.push(name);
-    }
-  }
+    if (name && !seen.has(name)) { seen.add(name); out.push(name); }
+  };
+  for (const t of Array.isArray(declared) ? declared : []) add(t);
+  // Fan-out: unlock the sub-agent tool so this agent can spawn its own sub-agents.
+  // Grant BOTH names defensively: the installed `claude` CLI's sub-agent tool is
+  // named `Task`; an allowed-but-nonexistent name is harmless. (Do NOT rely on the
+  // orchestrator's `toolTarget` log-formatter as proof either name is honored.)
+  if (fanOut) { add('Task'); add('Agent'); }
   return out;
 }
 
@@ -135,7 +138,7 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // for every dispatched node (orchestrator._nodeCtx); the clarify pre-step has
     // no node, so this falls back to the base list. Fixes "Browser permission not
     // granted" for the Manual Web UI Testing agent and makes future MCP agents work.
-    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools),
+    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools, !!(ctx.node && ctx.node.fanOut)),
     permissionMode: c.permissionMode || 'acceptEdits',
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
