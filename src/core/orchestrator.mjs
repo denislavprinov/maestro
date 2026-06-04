@@ -117,6 +117,15 @@ class Orchestrator extends EventEmitter {
     this.baseName = null;
     this.planDatePrefix = null; // DD-MM-YY captured once so -vN versions share it
 
+    // Sub-agent live-log labels: parent_tool_use_id -> label shown after "▸".
+    // Tool-use ids are unique per claude process, so entries never collide across
+    // runs/cycles; bounded by the number of sub-agents in a pipeline, so no reset.
+    this._subAgentLabels = new Map();
+    // Monotonic ordinal for sub-agents whose Task description was never captured,
+    // so their fallback tag (sub-agent-N) is an honest "Nth undescribed sub-agent",
+    // independent of how many described sub-agents share the map.
+    this._subAgentFallbackSeq = 0;
+
     this.state = {
       id: this.opts.pipelineId || null,
       title: this.opts.title || null,
@@ -944,9 +953,37 @@ class Orchestrator extends EventEmitter {
       this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)', attr);
     }
 
+    // Sub-agent attribution. A child (Task/Agent) event carries parent_tool_use_id
+    // = the id of the parent's Task tool_use block; main-agent events carry null/
+    // absent. parent_tool_use_id is a TOP-LEVEL stream-json field; the message-
+    // nested read is defensive. On a string `raw`, both reads yield undefined.
+    const subId = e.raw?.parent_tool_use_id ?? e.raw?.message?.parent_tool_use_id ?? null;
+
+    // Learn Task/Agent descriptions from MAIN-agent events (subId == null) so the
+    // child events below can be labeled by what their sub-agent was asked to do.
+    if (subId == null) registerSubAgents(e.raw, this._subAgentLabels);
+
+    // Display source: parent role for main events; "role ▸ label" for sub-agent
+    // events. `sub` drives the indented/dimmed web styling.
+    let source = role;
+    let sub = false;
+    if (subId != null) {
+      let label = this._subAgentLabels.get(subId);
+      if (!label) {
+        label = `sub-agent-${++this._subAgentFallbackSeq}`;
+        this._subAgentLabels.set(subId, label); // stamp so the ordinal stays stable for this id
+      }
+      source = `${role} ▸ ${label}`;
+      sub = true;
+    }
+    // Preserve the step attribution (nodeId/stepIndex/cycle) carried by attr so a
+    // sub-agent line stays pinned to the right pipeline step/cycle in the UI; just
+    // add `sub`. {...null} === {}, so attr === null (the clarify pre-step) is safe.
+    const logAttr = sub ? { ...attr, sub: true } : attr;
+
     const text = (e.text || '').trim();
     if (text) {
-      this._log(role, 'info', text, attr);
+      this._log(source, 'info', text, logAttr);
       return;
     }
     // No human-readable text. Rather than echo the bare stream-json envelope
@@ -955,7 +992,7 @@ class Orchestrator extends EventEmitter {
     // events — tool_result echoes (`user`) and the init `system` event — carry
     // no information and are dropped.
     for (const call of describeToolUses(e.raw, this.projectDir)) {
-      this._log(role, 'debug', `→ ${call}`, attr);
+      this._log(source, 'debug', `→ ${call}`, logAttr);
     }
   }
 
@@ -1229,6 +1266,7 @@ class Orchestrator extends EventEmitter {
       if (attr.nodeId != null) evt.nodeId = attr.nodeId;
       if (attr.stepIndex != null) evt.stepIndex = attr.stepIndex;
       if (attr.cycle != null) evt.cycle = attr.cycle;
+      if (attr.sub) evt.sub = true;        // drives sub-agent web styling
     }
     this._emit('log', evt);
   }
@@ -1346,6 +1384,32 @@ function rel(base, p) {
  * with no tool_use blocks — tool_result echoes, the system init event — so the
  * caller drops them instead of logging a contentless envelope type.
  */
+// Max chars for the sub-agent label inside the "[role ▸ label]" tag. Deliberately
+// shorter than toolTarget's 60-char Task clip: that 60 governs the parent's own
+// "→ Task <desc>" debug line, which has a whole row to itself; this 40 governs the
+// label embedded inside "[role ▸ label]", which shares a single flex row (web) and
+// sits inline in the terminal, so it must stay compact. The two clips are
+// independent on purpose — a long description may render at ≤60 on the parent line
+// and ≤40 inside the child tag.
+const SUBAGENT_LABEL_MAX = 40;
+
+/**
+ * Record id -> short description for every Task/Agent tool_use block in a
+ * MAIN-agent event, so a sub-agent's later events (which carry that id as
+ * parent_tool_use_id) can be labeled by the job they were given. Safe when
+ * `raw` is a string (non-JSON runner line): raw?.message?.content is undefined.
+ */
+function registerSubAgents(raw, labels) {
+  const content = raw?.message?.content;
+  if (!Array.isArray(content)) return;
+  for (const c of content) {
+    if (c?.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent') && c.id && !labels.has(c.id)) {
+      const desc = clip(c.input?.description || c.input?.prompt, SUBAGENT_LABEL_MAX);
+      if (desc) labels.set(c.id, desc); // empty desc left unset → fallback assigns sub-agent-N
+    }
+  }
+}
+
 function describeToolUses(raw, projectDir) {
   const content = raw?.message?.content;
   if (!Array.isArray(content)) return [];

@@ -13,6 +13,17 @@ function capture(role, evt, projectDir = '/tmp/proj') {
   return logs;
 }
 
+// Drive several [role, event] (optionally [role, event, attr]) tuples through ONE
+// orchestrator so sub-agent label state (this._subAgentLabels / _subAgentFallbackSeq)
+// accumulates across them.
+function captureSeq(events, projectDir = '/tmp/proj') {
+  const orch = createOrchestrator({ projectDir });
+  const logs = [];
+  orch.on('log', (l) => logs.push(l));
+  for (const [role, evt, attr] of events) orch._onAgentEvent(role, evt, attr);
+  return logs;
+}
+
 test('assistant tool_use is logged as a readable tool call, not bare "assistant"', () => {
   const logs = capture('planner', {
     type: 'assistant',
@@ -100,4 +111,96 @@ test('mock tool_use events (text + raw.file) still log their message at info', (
   assert.equal(logs.length, 1);
   assert.equal(logs[0].level, 'info');
   assert.equal(logs[0].text, 'wrote /tmp/proj/out.json');
+});
+
+// ── Sub-agent log separation (fan-out) ──────────────────────────────────────
+
+test('sub-agent assistant text is tagged "role ▸ <desc>" with sub=true; parent Task stays plain', () => {
+  const TASK_ID = 'toolu_01';
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: TASK_ID, name: 'Task', input: { description: 'research auth' } },
+    ] } } }],
+    ['planner', { type: 'assistant', text: 'Reading the auth module.',
+      raw: { type: 'assistant', parent_tool_use_id: TASK_ID, message: { content: [] } } }],
+  ]);
+  assert.equal(logs[0].source, 'planner');                 // parent's own Task call
+  assert.equal(logs[0].text, '→ Task research auth');
+  assert.equal(logs[0].sub, undefined);
+  assert.equal(logs[1].source, 'planner ▸ research auth'); // the sub-agent's text
+  assert.equal(logs[1].level, 'info');
+  assert.equal(logs[1].text, 'Reading the auth module.');
+  assert.equal(logs[1].sub, true);
+});
+
+test('a sub-agent tool_use (Read) is tagged + sub by the same parent id', () => {
+  const TASK_ID = 'toolu_02';
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: TASK_ID, name: 'Task', input: { description: 'research auth' } } ] } } }],
+    ['planner', { type: 'assistant', raw: { type: 'assistant', parent_tool_use_id: TASK_ID, message: { content: [
+      { type: 'tool_use', name: 'Read', input: { file_path: '/tmp/proj/src/auth.js' } } ] } } }],
+  ]);
+  assert.equal(logs[1].source, 'planner ▸ research auth');
+  assert.equal(logs[1].text, '→ Read src/auth.js');
+  assert.equal(logs[1].sub, true);
+});
+
+test('main-agent events are unchanged: plain role source, no sub', () => {
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', text: 'Thinking.', raw: { type: 'assistant', message: { content: [] } } }],
+  ]);
+  assert.equal(logs[0].source, 'planner');
+  assert.equal(logs[0].sub, undefined);
+});
+
+test('fallback: an unregistered parent id gets a stable sub-agent-N ordinal', () => {
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', text: 'a', raw: { type: 'assistant', parent_tool_use_id: 'orphan_A', message: { content: [] } } }],
+    ['planner', { type: 'assistant', text: 'b', raw: { type: 'assistant', parent_tool_use_id: 'orphan_B', message: { content: [] } } }],
+    ['planner', { type: 'assistant', text: 'c', raw: { type: 'assistant', parent_tool_use_id: 'orphan_A', message: { content: [] } } }],
+  ]);
+  assert.equal(logs[0].source, 'planner ▸ sub-agent-1');
+  assert.equal(logs[1].source, 'planner ▸ sub-agent-2');
+  assert.equal(logs[2].source, 'planner ▸ sub-agent-1'); // same id → same ordinal
+});
+
+test('two distinct described sub-agents get distinct description tags', () => {
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 't1', name: 'Task',  input: { description: 'research auth' } },
+      { type: 'tool_use', id: 't2', name: 'Agent', input: { description: 'audit deps' } } ] } } }],
+    ['planner', { type: 'assistant', text: 'x', raw: { type: 'assistant', parent_tool_use_id: 't1', message: { content: [] } } }],
+    ['planner', { type: 'assistant', text: 'y', raw: { type: 'assistant', parent_tool_use_id: 't2', message: { content: [] } } }],
+  ]);
+  assert.equal(logs.find((l) => l.text === 'x').source, 'planner ▸ research auth');
+  assert.equal(logs.find((l) => l.text === 'y').source, 'planner ▸ audit deps');
+});
+
+// OPTIONAL — a sub-agent line retains its step attribution (nodeId/stepIndex/cycle)
+test('sub-agent line preserves nodeId/stepIndex/cycle attribution and adds sub', () => {
+  const TASK_ID = 'toolu_03';
+  const attr = { nodeId: 'n1', stepIndex: 2, cycle: 1, stepKey: 'planner@1' };
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: TASK_ID, name: 'Task', input: { description: 'research auth' } } ] } } }, attr],
+    ['planner', { type: 'assistant', text: 'child line',
+      raw: { type: 'assistant', parent_tool_use_id: TASK_ID, message: { content: [] } } }, attr],
+  ]);
+  const child = logs.find((l) => l.text === 'child line');
+  assert.equal(child.source, 'planner ▸ research auth');
+  assert.equal(child.sub, true);
+  assert.equal(child.nodeId, 'n1');
+  assert.equal(child.stepIndex, 2);
+  assert.equal(child.cycle, 1);
+});
+
+// OPTIONAL — a string `raw` on a child-shaped event falls back to the plain role
+test('string raw (non-JSON runner line) stays under the plain role, no sub', () => {
+  const logs = captureSeq([
+    ['planner', { type: 'log', text: 'a non-JSON stdout line', raw: 'a non-JSON stdout line' }],
+  ]);
+  assert.equal(logs[0].source, 'planner');
+  assert.equal(logs[0].text, 'a non-JSON stdout line');
+  assert.equal(logs[0].sub, undefined);
 });

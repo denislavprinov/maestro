@@ -326,6 +326,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .lvl-warn .log-msg{color:var(--amber-ink);}
 .lvl-system .log-msg{color:var(--ink-3);font-style:italic;}
 
+/* sub-agent lines: nested under their parent agent (fan-out) */
+.log-line.sub-agent{padding-left:1.6em;opacity:.72;}
+.log-line.sub-agent .log-src{color:var(--peach-ink);}
+
 /* ---------- Running ---------- */
 .run-list{display:flex;flex-direction:column;gap:18px;}
 .run-card{padding:22px 24px;}

@@ -33,6 +33,7 @@ import {
   mergePalette,
   canConnect,
 } from './composer-core.mjs';
+import { logLineClass } from './log-line.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -1717,9 +1718,9 @@ const MAX_LOG_LINES = 4000;
 
 // Build one .log-line node from a normalized log record. (Same DOM shape the
 // old global appendLog produced: ts/src/msg spans + lvl class.)
-function buildLogLine({ source, level, text, ts }) {
+function buildLogLine({ source, level, text, ts, sub }) {
   const line = document.createElement('div');
-  line.className = 'log-line lvl-' + (level || 'info');
+  line.className = logLineClass(level, sub);
 
   const t = document.createElement('span');
   t.className = 'log-ts';
@@ -1741,7 +1742,7 @@ function buildLogLine({ source, level, text, ts }) {
 function onLog(r, msg) {
   const text = msg.text;
   if (text === undefined || text === null) return;
-  const rec = { ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text };
+  const rec = { ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text, sub: !!msg.sub };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
 
