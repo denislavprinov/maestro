@@ -1,11 +1,12 @@
 // test/dispatcher.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator, createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
 import { DEFAULT_WORKFLOW, writeWorkflow } from '../src/core/workflows.mjs';
+import { artifactPaths } from '../src/core/artifacts.mjs';
 
 const tmpDirs = [];
 async function makeTmpDir() {
@@ -311,4 +312,86 @@ test('run(): stamps state.stepper (preflight..done) and node phase events carry 
     phaseEvents.some((e) => e.phase === 'preflight' && e.nodeId == null),
     'the preflight bookend phase has no nodeId',
   );
+});
+
+test('custom workflow: a plan-review -> planner loop replans then converges end-to-end (mock)', async () => {
+  const home = await makeTmpDir();
+  const prevHome = process.env.MAESTRO_HOME;
+  process.env.MAESTRO_HOME = home;
+  try {
+    const tpl = await writeWorkflow({
+      name: 'Plan Review Loop',
+      steps: [
+        [{ id: 's0_0', key: 'planner' }],
+        [{ id: 's1_0', key: 'planReviewer' }],
+        [{ id: 's2_0', key: 'implementer' }],
+        [{ id: 's3_0', key: 'reviewer' }],
+      ],
+      feedbacks: [{ id: 'fb_planreview', from: 's1_0', to: 's0_0' }], // plan-review -> planner
+    });
+
+    const dir = await makeTmpDir();
+    const orch = makeOrch({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: tpl.id });
+
+    const runsByNode = {};
+    const seenKeys = new Set();
+    orch.on('state', (st) => {
+      for (const s of st.steps) {
+        if (s.nodeId && !seenKeys.has(s.key)) { seenKeys.add(s.key); runsByNode[s.nodeId] = (runsByNode[s.nodeId] || 0) + 1; }
+      }
+    });
+
+    // Capture the implementer's dispatched mode on each invocation (same idiom as the
+    // default-workflow test ~L184 and saved-pipeline-parity's `modes`). This is the
+    // load-bearing Task 4 check: a run-count of 1 alone does NOT prove the guard held
+    // — fix-mode changes the implementer's MODE, not its run count. Instance-local
+    // copy first so wrapping the producer does not mutate the shared defaultRunners
+    // singleton (orch._runners === defaultRunners) and leak a wrapper to later tests.
+    const implementerModes = [];
+    orch._runners = { ...orch._runners };
+    const realProducer = orch._runners.producer;
+    orch._runners.producer = async (ctx) => {
+      if (ctx?.node?.key === 'implementer') implementerModes.push(ctx.mode);
+      return realProducer(ctx);
+    };
+
+    const res = await orch.run();
+    assert.equal(res.status, 'done', 'plan-review workflow finishes under mock');
+
+    // Task 3 payoff: the cycle-2 replan minted a fresh -v2 plan (no clobber of v1).
+    // Plans live under the project-keyed store root's plans/ dir (a SIBLING of
+    // res.pipelineDir, which is the per-run pipelines/<id> subdir), so locate the
+    // plans dir from the projectDir via artifactPaths — the same resolver the
+    // channels/artifacts layer uses to allocate plan paths.
+    const plansDir = artifactPaths(dir).plans;
+    const planFiles = await readdir(plansDir);
+    assert.ok(planFiles.some((f) => /-v2\.md$/.test(f)), `expected a -v2 plan in ${plansDir}, saw ${planFiles.join(', ')}`);
+
+    // plan-review blocks at cycle 1 -> rewind to planner -> planner replans -> plan-review ok at cycle 2.
+    //
+    // NOTE on the planner count (=3, not the snippet's 2): the `seenKeys`-by-`s.key`
+    // idiom counts every DISTINCT step key attributed to a node. The planner node
+    // contributes THREE keys here, all tagged nodeId=s0_0:
+    //   clarify#1 (the one-shot clarify phase) + 0:s0_0 (plan, cycle 1)
+    //   + 0:s0_0#2 (the cycle-2 REPLAN, which mints the -v2 plan asserted above).
+    // Clarify runs once (it is not re-entered on the bounce), so the replan shows up
+    // as exactly +1 over a non-replanning planner. The near-246 PARALLEL test's
+    // planner is 2 precisely because its loop rewinds to the implementer, not the
+    // planner — so its plan phase fires once (clarify + 1 plan). Asserting 2 here
+    // would FALSELY claim the planner never replanned, contradicting the -v2 plan
+    // (and the plan-review contract). The true replan count under this idiom is 3.
+    assert.equal(runsByNode.s0_0, 3, 'planner replanned on the plan-review bounce (clarify + plan-v1 + plan-v2)');
+    assert.equal(runsByNode.s1_0, 2, 'plan reviewer ran twice (blocked then ok)');
+    assert.equal(runsByNode.s2_0, 1, 'implementer ran once (first pass, not flipped into fix mode by the plan-review)');
+
+    // Task 4 provenance guard, end-to-end: the plan-review (which DID pass at cycle 2)
+    // folds onto the SHARED `review` bus the implementer consumes, carrying a review
+    // md. A naive "review md present -> fix" would flip this first-pass implementer
+    // into fix mode. The guard (channels.mjs legacyFields: reviewKind !== 'plan-review')
+    // keeps it in `implement`. Asserting the MODE (not just the count) is what actually
+    // pins this — reverting the guard leaves the count at 1 but makes this mode 'fix'.
+    assert.deepEqual(implementerModes, ['implement'], 'plan-review did NOT flip the first-pass implementer into fix mode (Task 4 provenance guard)');
+  } finally {
+    if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
+  }
 });
