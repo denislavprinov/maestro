@@ -71,7 +71,7 @@ exact plan output path (`ai-artifacts/plans/$PREFIX-$NAME.md`), and the user's t
 It writes the build-ready plan (with code snippets) ending in a
 `## Clarifications (Q&A)` section. Track the latest plan path as `PLAN`.
 
-## Step 3 — Refine loop (cap 5)
+## Step 3 — Refine loop (cap 3)
 
 Set `cycle = 1`.
 1. Spawn **maestro-plan-refiner**. Task prompt: the input plan path (`PLAN`), the
@@ -82,8 +82,8 @@ Set `cycle = 1`.
    Update `PLAN` to the new `-vN` path the refiner wrote.
 3. Decide:
    - No blocking issues -> exit the loop.
-   - Blocking and `cycle < 5` -> `cycle += 1`, go to 1.
-   - Blocking and `cycle == 5` -> **AskUserQuestion gate** with two options:
+   - Blocking and `cycle < 3` -> `cycle += 1`, go to 1.
+   - Blocking and `cycle == 3` -> **AskUserQuestion gate** with two options:
      "Continue (accept the open issues)" and "Run another refine cycle". On
      "Continue" -> exit loop. On "Run another cycle" -> `cycle += 1`, go to 1.
 
@@ -97,7 +97,7 @@ Set `cycle = 1`.
    git add -A -N
    ```
 
-## Step 5 — Review loop (cap 5)
+## Step 5 — Review loop (cap 3)
 
 Set `cycle = 1`.
 1. Spawn **maestro-code-reviewer**. Task prompt: the plan path (`PLAN`), the
@@ -110,13 +110,13 @@ Set `cycle = 1`.
    above).
 3. Decide:
    - No blocking -> exit loop.
-   - Blocking and `cycle < 5`:
+   - Blocking and `cycle < 3`:
      a. Spawn **maestro-implementer** in `fix` mode. Task prompt: `MODE: fix`, the
         plan path, the review markdown + JSON paths, the graph instruction. It fixes
         ONLY the flagged critical/major issues with TDD.
      b. `git add -A -N`
      c. `cycle += 1`, go to 1.
-   - Blocking and `cycle == 5` -> **AskUserQuestion gate** ("Continue (accept open
+   - Blocking and `cycle == 3` -> **AskUserQuestion gate** ("Continue (accept open
      issues)" / "Run another review cycle"). On "Continue" -> exit. On another ->
      run the fix sub-steps (a, b), `cycle += 1`, go to 1.
 
@@ -128,7 +128,7 @@ summary of what was built and any open (accepted) issues. Append a closing line 
 
 ## Notes
 
-- Reproduce the loop caps (5/5), the single clarify round, and the critical|major
+- Reproduce the loop caps (3/3), the single clarify round, and the critical|major
   blocking rule exactly — they are the contract that makes the pipeline terminate.
 - The implementer never commits; you stage with `git add -A -N` so the reviewer's
   `git diff` against `CHECKPOINT` sees new files.

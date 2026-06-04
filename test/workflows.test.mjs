@@ -207,11 +207,11 @@ test('resolveWorkflow(default) yields a 4-step ExecutablePlan with prompts and d
   // loopSource flows through from the registry.
   assert.equal(flat.find((n) => n.key === 'reviewer').loopSource, true);
   assert.equal(flat.find((n) => n.key === 'planner').loopSource, false);
-  // Feedbacks carry the gate + a default maxCycles of 5 (orchestrator parity).
+  // Feedbacks carry the gate + a default maxCycles of 3 (matches the UI default).
   assert.equal(plan.feedbacks.length, 2);
   for (const f of plan.feedbacks) {
     assert.equal(f.gate, 'hasBlocking');
-    assert.equal(f.maxCycles, 5);
+    assert.equal(f.maxCycles, 3);
   }
 });
 

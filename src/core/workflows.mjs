@@ -19,10 +19,10 @@ import { resolveRunConfig } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 
 /**
- * Default feedback cycle count when run-config does not override it. DEFAULT_WORKFLOW's
- * feedback loops fall back to this (5), reproducing today's gate timing.
+ * Default feedback cycle count when run-config does not override it. Matches the
+ * Composer's per-loop input default (app.js), so an unset loop runs 3 cycles.
  */
-const DEFAULT_MAX_CYCLES = 5;
+const DEFAULT_MAX_CYCLES = 3;
 
 /** Default location of the agent prompt markdown files (mirrors orchestrator.mjs). */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
@@ -68,7 +68,7 @@ function parseFrontmatterTools(text) {
  *   - review -> implement (s3_0 -> s2_0): on blocking review issues, run an
  *     implementer fix pass (the 'to' step) then re-review.
  * Default cycle counts come from run-config resolution (resolveRunConfig falls
- * back to DEFAULT_MAX_CYCLES = 5).
+ * back to DEFAULT_MAX_CYCLES = 3).
  * NOT persisted to the user store; always present; readWorkflow('wf_default')
  * returns it.
  * @type {{id:string,name:string,version:number,steps:Array<Array<{id:string,key:string}>>,feedbacks:Array<{id:string,from:string,to:string}>,createdAt:string,updatedAt:string}}

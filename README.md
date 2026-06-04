@@ -162,14 +162,14 @@ emits a pass/fail verdict). To add your own, see
 - **Clarify** — planner asks one round of conceptual questions (up to four) before
   planning; answers are persisted and appended to the plan.
 - **Refine loop** — Refiner runs repeatedly. It stops when no `critical`/`major` issues
-  remain. Past the loop's **max cycles** (default 5) it asks you to **continue** or approve
+  remain. Past the loop's **max cycles** (default 3) it asks you to **continue** or approve
   **another** cycle, escalating indefinitely.
 - **Review loop** — Reviewer -> Implementer(fix) -> Reviewer ... stops when no
-  `critical`/`major` issues remain. Past the loop's **max cycles** (default 5) it asks the
+  `critical`/`major` issues remain. Past the loop's **max cycles** (default 3) it asks the
   same continue/another gate.
 
 Each feedback loop's max-cycle count is set per loop in the New Pipeline window's
-**Pipeline configuration** (default 5), not via a CLI flag.
+**Pipeline configuration** (default 3), not via a CLI flag.
 
 A run is "blocked" only by `critical` or `major` issues; `minor`/`suggestion` issues do
 not hold up the loop.
