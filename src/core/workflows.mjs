@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 import { maestroHome } from './projects.mjs';
-import { resolveRunConfig } from './config.mjs';
+import { resolveRunConfig, readConfig } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 
 /**
@@ -227,6 +227,11 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   if (!tpl) throw new Error(`workflow not found: ${workflowId}`);
   const reg = registry && typeof registry === 'object' ? registry : {};
   const { nodes: nodeCfg, feedbacks: fbCfg } = await resolveRunConfig(projectDir, workflowId);
+  // Legacy per-role config (what the Default-workflow UI writes) applies ONLY to
+  // the default workflow's nodes — this is what makes its per-agent model/effort/
+  // fanOut actually reach the main runs (saved workflows use nodeCfg only).
+  const stepsCfg = workflowId === DEFAULT_WORKFLOW.id ? (await readConfig(projectDir)).steps : {};
+  const firstDefined = (...vals) => vals.find((v) => v !== undefined);
   // CONV-4: map each agent key to the UI stepper bucket the live view understands,
   // so the dispatcher can emit a real `'phase'` per node (every node gets its own
   // stepper cell via the snapshotted manifest; see buildStepperManifest).
@@ -242,6 +247,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
       const meta = reg[node.key] || {};
       const { prompt, tools } = await loadAgentFile(agentsDir, meta.agentFile ?? null);
       const sel = nodeCfg[node.id] || {};
+      const legacy = stepsCfg[node.key] || {};
       resolvedGroup.push({
         nodeId: node.id,
         key: node.key,
@@ -249,8 +255,9 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
         runnerType: meta.runnerType || 'producer',
         agentFile: meta.agentFile ?? null,
         agentPrompt: prompt,
-        model: sel.model,            // undefined unless configured (folded later)
-        effort: sel.effort,          // undefined unless configured
+        model: firstDefined(sel.model, legacy.model),     // undefined unless configured (folded later)
+        effort: firstDefined(sel.effort, legacy.effort),  // undefined unless configured
+        fanOut: !!firstDefined(sel.fanOut, legacy.fanOut, meta.fanOut, false), // node > role > sidecar > false
         tools,
         loopSource: !!meta.loopSource,
         consumes: meta.consumes || [],

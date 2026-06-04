@@ -15,7 +15,7 @@ import {
   resolveWorkflow,
   buildStepperManifest,
 } from '../src/core/workflows.mjs';
-import { setNodeModel, setFeedbackCycles } from '../src/core/config.mjs';
+import { setNodeModel, setFeedbackCycles, setStep } from '../src/core/config.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs'; // ▲ v3: add (not yet imported)
 
 // Each test gets its own ~/.maestro via MAESTRO_HOME so the global store is
@@ -347,4 +347,50 @@ test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', asy
   assert.deepEqual(planner.consumes, ['userPrompt', 'review']);
   assert.deepEqual(implementer.produces, ['code']);
   assert.deepEqual(implementer.optionalConsumes, ['review']);
+});
+
+test('resolveWorkflow stamps fanOut from the sidecar default for wf_default', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry();
+  const plan = await resolveWorkflow(p, 'wf_default', reg);
+  const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
+  assert.equal(byKey('planner').fanOut, true, 'planner default ON');
+  assert.equal(byKey('implementer').fanOut, false, 'implementer default OFF');
+});
+
+test('a per-node fanOut override beats the sidecar default (wf_default)', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry();
+  await setNodeModel(p, 'wf_default', 's0_0', { fanOut: false }); // force planner OFF
+  await setNodeModel(p, 'wf_default', 's2_0', { fanOut: true });  // force implementer ON
+  const plan = await resolveWorkflow(p, 'wf_default', reg);
+  const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
+  assert.equal(byKey('planner').fanOut, false);
+  assert.equal(byKey('implementer').fanOut, true);
+});
+
+test('legacy steps[role] reaches wf_default main-run nodes (model/effort + fanOut)', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry();
+  await setStep(p, 'implementer', { model: 'claude-opus-4-8', effort: 'high' });
+  await setStep(p, 'reviewer', { fanOut: true });
+  const plan = await resolveWorkflow(p, 'wf_default', reg);
+  const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
+  assert.equal(byKey('implementer').model, 'claude-opus-4-8', 'default-workflow model now reaches the node');
+  assert.equal(byKey('implementer').effort, 'high');
+  assert.equal(byKey('reviewer').fanOut, true);
+});
+
+test('legacy steps are NOT applied to a saved (non-default) workflow', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry();
+  await writeWorkflow({ id: 'wf_saved', name: 'Saved', steps: [[{ id: 'n0', key: 'implementer' }]], feedbacks: [] });
+  await setStep(p, 'implementer', { model: 'claude-opus-4-8' });
+  const plan = await resolveWorkflow(p, 'wf_saved', reg);
+  const impl = plan.steps.flat().find((n) => n.key === 'implementer');
+  assert.equal(impl.model, undefined, 'saved-workflow node ignores legacy steps');
 });
