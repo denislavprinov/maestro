@@ -18,6 +18,7 @@ const state = {
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
+  stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -625,6 +626,10 @@ async function loadConfig(projectDir) {
     state.config = data.config || { steps: {}, customModels: [] };
     state.models = Array.isArray(data.models) ? data.models : [];
     state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
+    state.stepDefaults = {};
+    if (Array.isArray(data.steps)) {
+      for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = { fanOut: !!s.fanOut };
+    }
   } catch {
     /* keep last-known config */
   }
@@ -1166,6 +1171,7 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
       if (!node || !node.id) return;
       const meta = reg[node.key] || null;
       const saved = nodes[node.id] || {};
+      const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
       rows.push({
         nodeId: node.id,
         key: node.key,
@@ -1175,6 +1181,7 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
         parallel: members.length > 1,
         model: typeof saved.model === 'string' ? saved.model : '',
         effort: typeof saved.effort === 'string' ? saved.effort : '',
+        fanOut: typeof saved.fanOut === 'boolean' ? saved.fanOut : metaFan,
       });
     });
   });
@@ -1298,6 +1305,12 @@ function renderStepConfigs() {
     const caption = document.querySelector(`.step-current[data-role="${role}"]`);
     if (!modelSel || !effortSel) continue;
     renderModelEffortPair(modelSel, effortSel, caption, state.config.steps[role] || {});
+    const fanCb = document.querySelector(`.step-fanout[data-role="${role}"]`);
+    if (fanCb) {
+      const savedFan = (state.config.steps[role] || {}).fanOut;
+      const defFan = (state.stepDefaults[role] || {}).fanOut || false;
+      fanCb.checked = typeof savedFan === 'boolean' ? savedFan : defFan;
+    }
   }
 }
 
@@ -1421,7 +1434,17 @@ function renderNodeRows(rows) {
     effortSel.dataset.nodeId = row.nodeId;
     effortSel.setAttribute('aria-label', `${row.label} effort`);
     eWrap.appendChild(effortSel);
-    picks.append(mWrap, eWrap);
+    const fanWrap = document.createElement('label');
+    fanWrap.className = 'fanout-toggle';
+    const fanCb = document.createElement('input');
+    fanCb.type = 'checkbox';
+    fanCb.className = 'step-fanout';
+    fanCb.dataset.nodeId = row.nodeId;
+    fanCb.checked = !!row.fanOut;
+    const fanTxt = document.createElement('span');
+    fanTxt.textContent = 'Fan-out';
+    fanWrap.append(fanCb, fanTxt);
+    picks.append(mWrap, eWrap, fanWrap);
     card.appendChild(picks);
 
     const caption = document.createElement('small');
@@ -1480,14 +1503,14 @@ if (el.workflowSelect) {
   });
 }
 
-async function saveStep(role, model, effort) {
+async function saveStep(role, model, effort, fanOut) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -1504,14 +1527,14 @@ async function saveStep(role, model, effort) {
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -1601,6 +1624,22 @@ el.pipelineConfig.addEventListener('change', (e) => {
     const n = Math.max(1, Math.round(Number(t.value) || 1));
     t.value = String(n); // normalize the field
     saveFeedback(state.workflowId, t.dataset.fbId, n);
+    return;
+  }
+
+  // Fan-out toggles (checkboxes). Send the row's current model/effort alongside
+  // fanOut so the replace-on-model/effort setters don't wipe them.
+  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-fanout')) {
+    const fanOut = !!t.checked;
+    if (t.dataset.nodeId) {
+      const nodeId = t.dataset.nodeId;
+      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
+    } else if (t.dataset.role) {
+      const cur = state.config.steps[t.dataset.role] || {};
+      saveStep(t.dataset.role, cur.model || '', cur.effort || '', fanOut);
+    }
     return;
   }
 

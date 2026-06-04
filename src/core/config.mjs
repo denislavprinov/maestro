@@ -71,14 +71,17 @@ function defaultConfig() {
   return { steps: {}, customModels: [] };
 }
 
-/** Keep only known step keys carrying a non-empty model and/or effort string. */
+/** Keep only known step keys carrying a non-empty model/effort and/or a fanOut boolean. */
 function sanitizeSteps(steps) {
   const out = {};
   for (const [k, v] of Object.entries(steps || {})) {
     if (!STEP_KEYS.has(k) || !v || typeof v !== 'object') continue;
     const model = typeof v.model === 'string' ? v.model.trim() : '';
     const effort = typeof v.effort === 'string' ? v.effort.trim() : '';
-    if (model || effort) out[k] = { ...(model && { model }), ...(effort && { effort }) };
+    const fanOut = typeof v.fanOut === 'boolean' ? v.fanOut : undefined;
+    if (model || effort || fanOut !== undefined) {
+      out[k] = { ...(model && { model }), ...(effort && { effort }), ...(fanOut !== undefined && { fanOut }) };
+    }
   }
   return out;
 }
@@ -161,9 +164,16 @@ export async function setStep(projectDir, step, selection = {}) {
   }
 
   const cfg = await readRaw(projectDir);
+  const prev = cfg.steps[step] || {};
+  // model/effort keep replace semantics (undefined => cleared); fanOut is preserved
+  // when the caller omits it (only the toggle sends it), and set when a boolean.
+  const fanOut = typeof selection.fanOut === 'boolean'
+    ? selection.fanOut
+    : (typeof prev.fanOut === 'boolean' ? prev.fanOut : undefined);
+
   const steps = { ...cfg.steps };
-  if (!model && !effort) delete steps[step];
-  else steps[step] = { ...(model && { model }), ...(effort && { effort }) };
+  if (!model && !effort && fanOut === undefined) delete steps[step];
+  else steps[step] = { ...(model && { model }), ...(effort && { effort }), ...(fanOut !== undefined && { fanOut }) };
 
   const updated = { ...cfg, steps };
   await writeRaw(projectDir, updated);
@@ -247,12 +257,13 @@ async function writeWholeFile(projectDir, obj) {
   await rename(tmp, file);
 }
 
-/** Coerce a per-node selection to a clean {model?,effort?} or null (both blank). */
+/** Coerce a per-node selection to a clean {model?,effort?,fanOut?} or null (all empty). */
 function cleanNodeSel(selection) {
   const model = typeof selection?.model === 'string' ? selection.model.trim() : '';
   const effort = typeof selection?.effort === 'string' ? selection.effort.trim() : '';
-  if (!model && !effort) return null;
-  return { ...(model && { model }), ...(effort && { effort }) };
+  const fanOut = typeof selection?.fanOut === 'boolean' ? selection.fanOut : undefined;
+  if (!model && !effort && fanOut === undefined) return null;
+  return { ...(model && { model }), ...(effort && { effort }), ...(fanOut !== undefined && { fanOut }) };
 }
 
 /**
@@ -293,13 +304,17 @@ function bucket(whole, workflowId) {
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {string} nodeId
- * @param {{model?:string,effort?:string}} selection
+ * @param {{model?:string,effort?:string,fanOut?:boolean}} selection
  * @returns {Promise<void>}
  */
 export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
   const whole = await readWholeFile(projectDir);
   const wf = bucket(whole, workflowId);
-  const sel = cleanNodeSel(selection);
+  const prev = wf.nodes[nodeId] || {};
+  const fanOut = typeof selection.fanOut === 'boolean'
+    ? selection.fanOut
+    : (typeof prev.fanOut === 'boolean' ? prev.fanOut : undefined);
+  const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, fanOut });
   if (sel) wf.nodes[nodeId] = sel;
   else delete wf.nodes[nodeId];
   await writeWholeFile(projectDir, whole);

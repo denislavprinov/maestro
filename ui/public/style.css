@@ -657,3 +657,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stages.compact .stage .lbl.acc-amber, .stages.compact .stage .stage-node.acc-amber {box-shadow:inset 3px 0 0 -1px var(--amber);}
 .stages.compact .stage .lbl.acc-red,   .stages.compact .stage .stage-node.acc-red   {box-shadow:inset 3px 0 0 -1px var(--red);}
 .stages.compact .stage .lbl[class*="acc-"]{padding-left:8px;}
+
+/* Per-agent fan-out toggle in the New Pipeline rows. */
+.fanout-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted, #888);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.fanout-toggle input { margin: 0; cursor: pointer; }

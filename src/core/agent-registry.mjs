@@ -95,6 +95,7 @@ function normalizeMeta(raw) {
     agentFile: typeof raw.agentFile === 'string' && raw.agentFile.trim() ? raw.agentFile.trim() : null,
     runnerType,
     loopSource: !!raw.loopSource,
+    fanOut: !!raw.fanOut,
     consumes,
     optionalConsumes,
     produces,
@@ -138,10 +139,10 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR) {
  * for the hardcoded AGENT_STEPS). The original four roles keep their short legacy
  * labels; any additional agent uses its `displayName`.
  * @param {Record<string, object>} registry
- * @returns {Array<{key:string,label:string}>}
+ * @returns {Array<{key:string,label:string,fanOut:boolean}>}
  */
 export function registryToSteps(registry) {
   return Object.values(registry || {})
     .sort((a, b) => a.order - b.order)
-    .map((m) => ({ key: m.key, label: LEGACY_LABELS[m.key] || m.displayName }));
+    .map((m) => ({ key: m.key, label: LEGACY_LABELS[m.key] || m.displayName, fanOut: !!m.fanOut }));
 }
