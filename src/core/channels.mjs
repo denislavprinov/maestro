@@ -20,23 +20,32 @@ export function allocate(channel, ctx) {
   const { projectDir, pipelineDir, baseName, datePrefix, cycle, key } = ctx;
   switch (channel) {
     case 'plan': {
-      // ▲ C1: the planner writes the canonical v1 file (it has no inbound loop, so
-      // cycle is always 1) — exactly today's seeded `io.planPath`. Only the refiner
-      // versions up to cycle+1 (matching _nodeIo's refiner arm). Producer-aware.
-      const version = key === 'planner' ? 1 : cycle + 1;
+      // The planner is cycle-aware so a plan-review -> planner loop writes a fresh
+      // -vN on each replan instead of clobbering v1 (cycle is 1 on the first pass,
+      // so v1 has NO -v suffix, matching today's seeded io.planPath). The refiner
+      // versions up to cycle+1 (a self-loop never produces v1).
+      const version = key === 'planner' ? cycle : cycle + 1;
       return { kind: 'artifact', path: planPath(projectDir, baseName, version, datePrefix) };
     }
     case 'review': {
       // Review json basename differs by producing role (keeps existing filenames).
-      const base = key === 'refiner' ? 'refine-review' : key === 'manualWebUiTesting' ? 'webui-review' : 'impl-review';
-      // ▲ C2: the refiner emits ONLY a json verdict (loop-gating); it has no review
-      // md. A null md marks the review "private" so publish() never folds it onto the
-      // shared `review` channel an implementer consumes.
+      const base = key === 'refiner'
+        ? 'refine-review'
+        : key === 'manualWebUiTesting'
+          ? 'webui-review'
+          : key === 'planReviewer'
+            ? 'plan-review'
+            : 'impl-review';
+      // ▲ C2: the refiner emits ONLY a json verdict (its md is null => private to its
+      // self-loop). Every other verifier carries a review md so publish() folds it
+      // onto the shared `review` channel its loop target consumes.
       const mdPath = key === 'refiner'
         ? null
         : key === 'manualWebUiTesting'
           ? join(pipelineDir, `webui-review-cycle${cycle}.md`)
-          : reviewPath(projectDir, baseName, datePrefix);
+          : key === 'planReviewer'
+            ? reviewPath(projectDir, baseName, datePrefix, 'plan-review')
+            : reviewPath(projectDir, baseName, datePrefix);
       return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`) };
     }
     case 'checklist':
