@@ -1259,6 +1259,7 @@ if (typeof window !== 'undefined') {
     buildFeedbackRows,
     defaultEffortFor,
     renderModelEffortPair,
+    renderNodeRows,
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     buildStepper,
