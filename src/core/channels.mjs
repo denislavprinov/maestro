@@ -46,7 +46,7 @@ export function allocate(channel, ctx) {
           : key === 'planReviewer'
             ? reviewPath(projectDir, baseName, datePrefix, 'plan-review')
             : reviewPath(projectDir, baseName, datePrefix);
-      return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`) };
+      return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`), reviewKind: base };
     }
     case 'checklist':
       return { kind: 'artifact', path: join(pipelineDir, 'manual-tests-checklist.md') };
@@ -91,7 +91,7 @@ export function publish(produces, result, outputs, bus) {
       // implementer into `fix` mode.
       const mdPath = result.reviewMdPath ?? outputs.review?.mdPath;
       if (!mdPath) continue;
-      bus.review = { kind: 'review', mdPath, jsonPath: outputs.review?.jsonPath, verdict: result.review };
+      bus.review = { kind: 'review', mdPath, jsonPath: outputs.review?.jsonPath, verdict: result.review, reviewKind: outputs.review?.reviewKind };
     } else if (c === 'checklist') {
       const path = result.checklistPath || outputs.checklist?.path;
       if (path) bus.checklist = { kind: 'artifact', path };
@@ -111,13 +111,21 @@ export function publish(produces, result, outputs, bus) {
 export function legacyFields(node, inputs, outputs, cycle, baseName) {
   switch (node.key) {
     case 'planner':
-      return { planFilePath: outputs.plan?.path, baseName, answers: inputs.userPrompt?.answers || [] };
+      // reviewPath is set only when a review is bound (a plan-review -> planner
+      // rewind), which switches runPlannerPlan into its cold-replan branch.
+      return { planFilePath: outputs.plan?.path, baseName, answers: inputs.userPrompt?.answers || [], reviewPath: inputs.review?.mdPath };
     case 'refiner':
       return { inPlanPath: inputs.plan?.path, outPlanPath: outputs.plan?.path, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'implementer':
-      // ▲ C2: gate `fix` on a real review MD (mirrors today's `io.reviewMdPath ? …`),
-      // not mere truthiness of the review handle.
-      return { planPath: inputs.plan?.path, reviewPath: inputs.review?.mdPath, mode: inputs.review?.mdPath ? 'fix' : 'implement', cycle };
+      // The implementer fixes CODE reviews (impl-review / webui-review). A plan-review
+      // left on the shared `review` bus by a planReviewer -> planner loop is NOT for the
+      // implementer (it bounces to the planner), so it must not flip a first-pass
+      // implementer into fix mode. Discriminate by review provenance (reviewKind), not
+      // cycle — a linear `... -> reviewer -> implementer` forward edge legitimately fixes
+      // a code review at cycle 1 (see saved-pipeline-parity).
+      return { planPath: inputs.plan?.path, reviewPath: inputs.review?.mdPath, mode: (inputs.review?.mdPath && inputs.review?.reviewKind !== 'plan-review') ? 'fix' : 'implement', cycle };
+    case 'planReviewer':
+      return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'reviewer':
       return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'manualTestsChecklist':
