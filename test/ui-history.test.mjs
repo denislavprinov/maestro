@@ -102,7 +102,7 @@ function runsListResponse(pipelines, live = []) {
 test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav count=2', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) {
+      if (url.includes('/api/history')) {
         return runsListResponse([
           { id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' },
           { id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' },
@@ -111,7 +111,6 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
       return null;
     },
   });
-  ctx.selectProject();
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
@@ -135,7 +134,7 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
 test('expanding a card toggles aria-expanded, unhides detail, tints stepper from fetched state', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) {
+      if (url.includes('/api/history')) {
         return runsListResponse([{ id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' }]);
       }
       // Lazy per-card detail fetch: GET /api/runs/:id?projectDir=...
@@ -149,7 +148,6 @@ test('expanding a card toggles aria-expanded, unhides detail, tints stepper from
       return null;
     },
   });
-  ctx.selectProject();
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
@@ -189,7 +187,7 @@ test('clicking the title opens the viewer modal (distinct from expand)', async (
   let detailFetches = 0;
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) {
+      if (url.includes('/api/history')) {
         return runsListResponse([{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
       }
       if (url.includes('/api/runs/p-done')) {
@@ -199,7 +197,6 @@ test('clicking the title opens the viewer modal (distinct from expand)', async (
       return null;
     },
   });
-  ctx.selectProject();
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
@@ -220,7 +217,7 @@ test('clicking the title opens the viewer modal (distinct from expand)', async (
 test('keyboard: Enter on the head toggles expand', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) {
+      if (url.includes('/api/history')) {
         return runsListResponse([{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
       }
       if (url.includes('/api/runs/p-done')) {
@@ -229,7 +226,6 @@ test('keyboard: Enter on the head toggles expand', async () => {
       return null;
     },
   });
-  ctx.selectProject();
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
@@ -245,45 +241,13 @@ test('keyboard: Enter on the head toggles expand', async () => {
   assert.ok(stages.every((s) => s.classList.contains('s-done')), 'DONE tints all stages done');
 });
 
-test('pipelines and live runs are merged + deduped by id', async () => {
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) {
-        return runsListResponse(
-          [{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }],
-          // one NEW live run (surfaces) + one already on disk (deduped away).
-          [
-            { id: 'live-1', runId: 'live-1', title: 'Live run', status: 'running', live: true },
-            { id: 'p-done', runId: 'p-done', title: 'Done run', status: 'done', live: true },
-          ],
-        );
-      }
-      return null;
-    },
-  });
-  ctx.selectProject();
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-
-  const doc = ctx.window.document;
-  const cards = doc.querySelectorAll('#history .hist-card');
-  assert.equal(cards.length, 2, 'disk(1) + unique live(1) = 2 (duplicate id deduped)');
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '2');
-
-  const badges = [...doc.querySelectorAll('#history .badge')].map((b) => b.textContent);
-  assert.ok(badges.includes('RUNNING'), 'the live-only run shows a RUNNING badge');
-  const runningBadge = [...doc.querySelectorAll('#history .badge')].find((b) => b.textContent === 'RUNNING');
-  assert.ok(runningBadge.classList.contains('running'), 'RUNNING badge uses the .running variant');
-});
-
 test('empty history renders a .hist-empty div (no <li>)', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) return runsListResponse([], []);
+      if (url.includes('/api/history')) return runsListResponse([], []);
       return null;
     },
   });
-  ctx.selectProject();
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
@@ -298,13 +262,12 @@ test('empty history renders a .hist-empty div (no <li>)', async () => {
 test('history load error renders a .hist-empty div (no <li>)', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) {
+      if (url.includes('/api/history')) {
         return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
       }
       return null;
     },
   });
-  ctx.selectProject();
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
@@ -332,14 +295,14 @@ test('History card renders the persisted manifest nodes on expand', async () => 
       ],
     },
   };
-  const { window, selectProject, showHistory } = await boot({
+  const { window, showHistory } = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: customState, auditMarkdown: '' }) });
-      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Custom', status: 'stopped', startedAt: '2026-06-02T00:00:00Z' }]);
+      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Custom', status: 'stopped', startedAt: '2026-06-02T00:00:00Z' }]);
       return null;
     },
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
@@ -354,14 +317,14 @@ test('History card renders the persisted manifest nodes on expand', async () => 
 
 test('History card without a saved manifest still renders the legacy six', async () => {
   const legacyState = { status: 'done', phase: 'done', steps: [] }; // no .stepper
-  const { window, selectProject, showHistory } = await boot({
+  const { window, showHistory } = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: legacyState, auditMarkdown: '' }) });
-      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Old', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
+      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Old', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
       return null;
     },
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
@@ -387,7 +350,7 @@ test('History card shows per-node model·effort from the saved manifest', async 
       ],
     },
   };
-  const { window, selectProject, showHistory } = await boot({
+  const { window, showHistory } = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/config')) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({
@@ -399,13 +362,13 @@ test('History card shows per-node model·effort from the saved manifest', async 
       if (url.includes('/api/runs/')) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: customState, auditMarkdown: '' }) });
       }
-      if (url.includes('/api/runs?')) {
+      if (url.includes('/api/history')) {
         return runsList([{ id: 'p1', title: 'Custom', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
       }
       return null;
     },
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve

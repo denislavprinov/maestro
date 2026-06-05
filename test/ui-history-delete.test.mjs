@@ -36,13 +36,14 @@ async function boot({ fetchHandler } = {}) {
 }
 const runs = (pipelines, ghAvailable) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live: [], ghAvailable }) });
 
-const FIN = { id: 'p1', title: 'Feat', status: 'stopped', startedAt: '2026-06-02T00:00:00Z' };
+const FIN = { id: 'p1', title: 'Feat', status: 'stopped', startedAt: '2026-06-02T00:00:00Z',
+              projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj' };
 
 test('finished entry shows an enabled Delete button under the stepper', async () => {
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([FIN], false) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([FIN], false) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   const btn = card.querySelector('.hist-detail .hist-delete');
@@ -51,10 +52,10 @@ test('finished entry shows an enabled Delete button under the stepper', async ()
 });
 
 test('running entry hides the Delete button', async () => {
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([{ ...FIN, status: 'running' }], false) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([{ ...FIN, status: 'running' }], false) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const btn = window.document.querySelector('#history .hist-card .hist-delete');
   assert.equal(btn.hidden, true);
@@ -62,9 +63,9 @@ test('running entry hides the Delete button', async () => {
 
 test('confirm + click issues DELETE with the id and removes the card', async () => {
   let deleted = null;
-  const { window, selectProject, showHistory } = await boot({
+  const { window, showHistory } = await boot({
     fetchHandler: (url, opts) => {
-      if (url.includes('/api/runs?')) return runs([FIN], false);
+      if (url.includes('/api/history')) return runs([FIN], false);
       if (url.includes('/api/runs/p1') && opts.method === 'DELETE') {
         deleted = url;
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
@@ -73,27 +74,27 @@ test('confirm + click issues DELETE with the id and removes the card', async () 
     },
   });
   window.confirm = () => true; // stub the popup
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   card.querySelector('.hist-delete').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   assert.ok(deleted && deleted.includes('/api/runs/p1'), 'DELETE called for p1');
-  assert.match(deleted, /projectDir=/, 'project-view delete passes projectDir');
+  assert.match(deleted, /projectKey=/, 'history delete passes projectKey');
   assert.equal(window.document.querySelector('#history .hist-card'), null, 'card removed from the list');
 });
 
 test('declining the confirm popup makes no request', async () => {
   let called = false;
-  const { window, selectProject, showHistory } = await boot({
+  const { window, showHistory } = await boot({
     fetchHandler: (url, opts) => {
-      if (url.includes('/api/runs?')) return runs([FIN], false);
+      if (url.includes('/api/history')) return runs([FIN], false);
       if (opts.method === 'DELETE') { called = true; return Promise.resolve({ ok: true, status: 200, json: async () => ({}) }); }
       return null;
     },
   });
   window.confirm = () => false;
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   window.document.querySelector('.hist-delete').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));

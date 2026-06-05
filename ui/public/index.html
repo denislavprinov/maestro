@@ -285,12 +285,12 @@
               <h1>History</h1>
               <div class="sub">Completed and stopped pipelines</div>
             </div>
-            <label class="all-proj-toggle" title="Show pipelines from every project on this machine">
-              <input type="checkbox" id="allProjectsToggle" />
-              All projects
-            </label>
             <button type="button" id="refresh-history" class="btn-ghost" style="padding:11px 20px">Refresh</button>
           </div>
+
+          <!-- Project filter pills: "All Projects" + one per project that has history.
+               Built by renderHistoryPills() from the /api/history dataset. -->
+          <div class="hist-filter" id="historyFilter" aria-label="Filter history by project"></div>
 
           <div class="run-list" id="history"></div>
 

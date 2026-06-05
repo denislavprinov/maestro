@@ -39,11 +39,11 @@ const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 2
 
 test('history card shows the pipeline total next to the date', async () => {
   const ctx = await boot({
-    fetchHandler: (url) => url.includes('/api/runs?')
+    fetchHandler: (url) => url.includes('/api/history')
       ? runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.42 }])
       : null,
   });
-  ctx.selectProject(); ctx.showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const total = ctx.window.document.querySelector('#history .hist-card .hist-total');
   assert.equal(total.textContent, '$0.42');
@@ -51,11 +51,11 @@ test('history card shows the pipeline total next to the date', async () => {
 
 test('the history total is tooltip-labelled as an estimate with the exact value', async () => {
   const ctx = await boot({
-    fetchHandler: (url) => url.includes('/api/runs?')
+    fetchHandler: (url) => url.includes('/api/history')
       ? runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.42 }])
       : null,
   });
-  ctx.selectProject(); ctx.showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const total = ctx.window.document.querySelector('#history .hist-card .hist-total');
   assert.equal(total.textContent, '$0.42', 'visible figure unchanged');
@@ -77,12 +77,12 @@ test('expanding a card paints per-phase cost from saved steps (refine cycles sum
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.30 }]);
+      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.30 }]);
       if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
-  ctx.selectProject(); ctx.showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const head = ctx.window.document.querySelector('#history .hist-head');
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -107,12 +107,12 @@ test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays b
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/runs?')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0 }]);
+      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0 }]);
       if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
-  ctx.selectProject(); ctx.showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
   // collapsed total is a truthful $0.00
   assert.equal(ctx.window.document.querySelector('#history .hist-card .hist-total').textContent, '$0.00');
