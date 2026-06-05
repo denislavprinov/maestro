@@ -6,6 +6,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { useTempHome } from './helpers/temp-home.mjs';
+
+// Outer isolation that outlives the per-suite before/after: /api/run returns a
+// runId and the orchestrator finishes ASYNC in-process, so a store write can
+// land after this file's before/after restores MAESTRO_HOME. Keeping a temp
+// home set for the whole file means that late write still goes to temp, not ~.
+useTempHome(after);
+
 let homeDir, srv, base, prevHome;
 const JSONH = { 'Content-Type': 'application/json' };
 

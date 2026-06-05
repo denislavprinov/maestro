@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { createOrchestrator, createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
 import { DEFAULT_WORKFLOW, writeWorkflow } from '../src/core/workflows.mjs';
 import { artifactPaths } from '../src/core/artifacts.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+
+useTempHome(after); // file-wide store isolation for tests that don't sandbox themselves
 
 const tmpDirs = [];
 async function makeTmpDir() {

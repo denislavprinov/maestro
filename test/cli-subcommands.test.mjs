@@ -7,8 +7,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { useTempHome } from './helpers/temp-home.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname, '..', 'src', 'cli', 'maestro.mjs');
+
+// Default-isolate store for runs that don't pass an explicit `home`. run()
+// spreads process.env into the child, so this temp home propagates.
+useTempHome(after);
 
 const created = [];
 async function freshHome() {

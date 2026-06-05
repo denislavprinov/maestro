@@ -7,7 +7,13 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { useTempHome } from './helpers/temp-home.mjs';
+
 const CLI = resolve(fileURLToPath(import.meta.url), '..', '..', 'src', 'cli', 'maestro.mjs');
+
+// Isolate store: spawned children inherit process.env, so this temp home
+// reaches the CLI subprocess too (it passes no env / spreads process.env).
+useTempHome(after);
 
 const created = [];
 after(() => Promise.all(created.map((d) => rm(d, { recursive: true, force: true }))));

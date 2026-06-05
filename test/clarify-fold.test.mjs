@@ -5,6 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator, plannerNodeIdOf, plannerNodeOf } from '../src/core/orchestrator.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+
+useTempHome(after); // store writes -> isolated temp home, not real ~/.maestro
 
 const tmpDirs = [];
 async function makeTmpDir() {
