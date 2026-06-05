@@ -54,6 +54,36 @@ async function freshStore(repoDir, { id, base, datePrefix, status, branch, title
 // store.mjs reads MAESTRO_HOME and appends '.maestro', so MAESTRO_HOME = <home>.
 const homeOf = (root) => join(root, '..', '..', '..');
 
+// A workspace store dir (store/workspaces/<wkey>/) with one pipeline whose
+// state.branches is the per-project map. `members` is [{ projectDir, branch }].
+async function freshWorkspaceStore({ wkey, id, base, datePrefix, status, title, members }) {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-del-ws-'));
+  created.push(home);
+  const root = join(home, '.maestro', 'store', 'workspaces', wkey);
+  const pdir = join(root, 'pipelines', `${datePrefix}-${base}-${id}`);
+  await mkdir(pdir, { recursive: true });
+  const branches = {};
+  const projects = [];
+  for (let i = 0; i < members.length; i++) {
+    const pk = `member-0000000${i + 1}`;
+    projects.push({ projectKey: pk, projectDir: members[i].projectDir, projectName: `m${i}` });
+    branches[pk] = members[i].branch; // { source, feature, worktreeDir, reusedExisting }
+  }
+  const state = {
+    id, title: title ?? 'Add login screen', status, target: 'workspace',
+    workspaceKey: wkey, workspaceId: wkey, projects, branches,
+  };
+  await writeFile(join(pdir, 'state.json'), JSON.stringify(state), 'utf8');
+  await writeFile(join(pdir, 'prompt.md'), `# ${title ?? 'Add login screen'}\n`, 'utf8');
+  await mkdir(join(root, 'plans'), { recursive: true });
+  await mkdir(join(root, 'reviews'), { recursive: true });
+  await writeFile(join(root, 'plans', `${datePrefix}-${base}.md`), '# plan', 'utf8');
+  await writeFile(join(root, 'reviews', `${datePrefix}-${base}-impl-review.md`), '# r', 'utf8');
+  await writeFile(join(root, 'plans', `${datePrefix}-${base}-extra.md`), '# keep', 'utf8');
+  // MAESTRO_HOME = <home>; root nests 4 deep (.maestro/store/workspaces/<wkey>).
+  return { home, root, pdir };
+}
+
 test('deletePipeline removes dir, plan/review files, local branch; keeps siblings + remote', async () => {
   const repo = await freshRepo();
   // Real worktree + feature branch off main.
@@ -128,6 +158,90 @@ test('deletePipeline returns null for an unknown id', async () => {
   process.env.MAESTRO_HOME = homeOf(root);
   try {
     assert.equal(await deletePipeline({ key: 'proj-00000001', id: 'nope' }), null);
+  } finally {
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
+});
+
+test('deletePipeline({workspaceKey}) removes the ws-store dir + iterates state.branches per project', async () => {
+  // Two real repos, each with its own worktree + feature branch, recorded in the
+  // per-project state.branches map. Delete must clean BOTH and remove the ws dir.
+  const repoA = await freshRepo();
+  const repoB = await freshRepo();
+  const wtA = await createWorktree({
+    projectDir: repoA, pipelineId: 'ws01', sourceBranch: 'main',
+    featureBranch: 'maestro/add-login-screen-ws01',
+  });
+  const wtB = await createWorktree({
+    projectDir: repoB, pipelineId: 'ws01', sourceBranch: 'main',
+    featureBranch: 'maestro/add-login-screen-ws01',
+  });
+  const prev = process.env.MAESTRO_HOME;
+  const wkey = 'wks-demo-9f3a1c20';
+  const { home, root, pdir } = await freshWorkspaceStore({
+    wkey, id: 'ws01', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done',
+    title: 'Add login screen',
+    members: [
+      { projectDir: repoA, branch: { source: 'main', feature: wtA.branch, worktreeDir: wtA.worktreeDir, reusedExisting: false } },
+      { projectDir: repoB, branch: { source: 'main', feature: wtB.branch, worktreeDir: wtB.worktreeDir, reusedExisting: false } },
+    ],
+  });
+  process.env.MAESTRO_HOME = home;
+  try {
+    const report = await deletePipeline({ workspaceKey: wkey, id: 'ws01' });
+    assert.ok(report && report.ok);
+    assert.equal(existsSync(pdir), false, 'workspace pipeline dir removed');
+    // Shared plan/review markdown in the WORKSPACE store removed (sibling kept).
+    const plans = await readdir(join(root, 'plans'));
+    assert.deepEqual(plans.sort(), ['04-06-26-add-login-screen-extra.md'], 'only the sibling survives');
+    const reviews = await readdir(join(root, 'reviews'));
+    assert.equal(reviews.length, 0, 'review md removed');
+    // BOTH per-project worktrees + branches cleaned.
+    assert.equal(existsSync(wtA.worktreeDir), false, 'member A worktree gone');
+    assert.equal(existsSync(wtB.worktreeDir), false, 'member B worktree gone');
+    assert.ok(!(await listLocalBranches(repoA)).includes(wtA.branch), 'member A branch deleted');
+    assert.ok(!(await listLocalBranches(repoB)).includes(wtB.branch), 'member B branch deleted');
+  } finally {
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
+});
+
+test('deletePipeline({workspaceKey}) refuses a running workspace pipeline', async () => {
+  const repoA = await freshRepo();
+  const repoB = await freshRepo();
+  const prev = process.env.MAESTRO_HOME;
+  const wkey = 'wks-demo-9f3a1c20';
+  const { home } = await freshWorkspaceStore({
+    wkey, id: 'wsrun', base: 'add-login-screen', datePrefix: '04-06-26', status: 'running',
+    members: [
+      { projectDir: repoA, branch: null },
+      { projectDir: repoB, branch: null },
+    ],
+  });
+  process.env.MAESTRO_HOME = home;
+  try {
+    await assert.rejects(() => deletePipeline({ workspaceKey: wkey, id: 'wsrun' }),
+      (e) => e && e.code === 'RUNNING');
+  } finally {
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
+});
+
+test('deletePipeline({workspaceKey}) returns null for an unknown workspace id', async () => {
+  const repoA = await freshRepo();
+  const repoB = await freshRepo();
+  const prev = process.env.MAESTRO_HOME;
+  const wkey = 'wks-demo-9f3a1c20';
+  const { home } = await freshWorkspaceStore({
+    wkey, id: 'present', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done',
+    members: [
+      { projectDir: repoA, branch: null },
+      { projectDir: repoB, branch: null },
+    ],
+  });
+  process.env.MAESTRO_HOME = home;
+  try {
+    assert.equal(await deletePipeline({ workspaceKey: wkey, id: 'nope' }), null);
   } finally {
     if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
   }

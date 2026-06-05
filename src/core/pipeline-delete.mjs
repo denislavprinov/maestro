@@ -102,17 +102,28 @@ async function removeMatching(dir, re) {
 }
 
 /**
- * @param {{ projectDir?:string, key?:string, id:string }} args
+ * @param {{ projectDir?:string, key?:string, workspaceKey?:string, id:string }} args
  * @returns {Promise<null | { ok, id, pipelineDir, planFiles, reviewFiles, branch, worktree, warnings }>}
  *          null => no pipeline with that id (404). Throws err(code:'RUNNING'|'BAD_REQUEST') for guards.
+ *
+ * When `workspaceKey` is set the pipeline lives in the workspace store
+ * (store/workspaces/<workspaceKey>/); branch/worktree cleanup iterates the
+ * per-project `state.branches` map (each entry {feature,worktreeDir} keyed by
+ * projectKey) against the matching `state.projects[].projectDir`, instead of the
+ * single scalar `state.branch`. The ACTIVE-status guard and deriveNames are
+ * unchanged. Result warnings[] aggregates per-project failures.
  */
-export async function deletePipeline({ projectDir = null, key = null, id } = {}) {
+export async function deletePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
 
   // Resolve the store key ONCE so the pipeline dir and the shared plan/review
-  // files are always read from the same store root.
-  let storeKey = key || (projectDir ? projectKey(projectDir) : null);
-  if (!storeKey) throw err('projectKey or projectDir is required', 'BAD_REQUEST');
+  // files are always read from the same store root. A workspace pipeline lives
+  // under the literal "workspaces/<workspaceKey>" segment (projectStorePath joins
+  // it under storeRoot()), so the dir/plan/review resolution below is reused as-is.
+  let storeKey = workspaceKey
+    ? `workspaces/${workspaceKey}`
+    : (key || (projectDir ? projectKey(projectDir) : null));
+  if (!storeKey) throw err('projectKey, projectDir or workspaceKey is required', 'BAD_REQUEST');
 
   const dir = await findPipelineDir(join(projectStorePath(storeKey), 'pipelines'), id);
   if (!dir) return null;
@@ -120,8 +131,9 @@ export async function deletePipeline({ projectDir = null, key = null, id } = {})
   let state = null;
   try { state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')); } catch { state = null; }
   // When we derived the key from a projectDir, prefer the key the entry recorded
-  // for itself (defensive; for a given repo these are equal).
-  if (!key && state?.projectKey) storeKey = String(state.projectKey);
+  // for itself (defensive; for a given repo these are equal). Never for a
+  // workspace pipeline — its store key is the composite path, not state.projectKey.
+  if (!workspaceKey && !key && state?.projectKey) storeKey = String(state.projectKey);
 
   if (ACTIVE.has(String(state?.status || '').toLowerCase())) {
     throw err('cannot delete a running pipeline', 'RUNNING');
@@ -146,19 +158,40 @@ export async function deletePipeline({ projectDir = null, key = null, id } = {})
     report.warnings.push('could not derive plan/review name; shared markdown left in place');
   }
 
-  // 2) Local branch + worktree (remote untouched). Best-effort.
-  const repoDir = state?.projectDir || projectDir || null;
-  const feature = state?.branch?.feature || null;
-  const wt = state?.branch?.worktreeDir || null;
-  if (repoDir && (feature || wt)) {
-    const liveWt = wt && existsSync(wt) ? wt : null;                 // skip already-removed worktrees
-    const liveBranch = feature && (await branchExists(repoDir, feature)) ? feature : null; // skip merged/deleted
-    if (liveWt || liveBranch) {
+  // 2) Local branch(es) + worktree(s) (remote untouched). Best-effort.
+  if (workspaceKey) {
+    // Per-project: iterate state.branches keyed by projectKey, cleaning each
+    // member's worktree+branch in its OWN repo (state.projects[].projectDir).
+    const branches = state?.branches && typeof state.branches === 'object' ? state.branches : {};
+    const projects = Array.isArray(state?.projects) ? state.projects : [];
+    const dirByKey = new Map(projects.map((p) => [p.projectKey, p.projectDir]));
+    for (const [pk, br] of Object.entries(branches)) {
+      const repoDir = dirByKey.get(pk) || null;
+      const feature = br?.feature || null;
+      const wt = br?.worktreeDir || null;
+      if (!repoDir || (!feature && !wt)) continue;
+      const liveWt = wt && existsSync(wt) ? wt : null;
+      const liveBranch = feature && (await branchExists(repoDir, feature)) ? feature : null;
+      if (!liveWt && !liveBranch) continue;
       const res = await removeWorktree({ projectDir: repoDir, worktreeDir: liveWt, branch: liveBranch, force: true });
-      report.branch = liveBranch;
-      report.worktree = liveWt;
       for (const s of res.steps.filter((x) => !x.ok)) {
-        report.warnings.push(`${s.step}: ${s.stderr || 'failed'}`);
+        report.warnings.push(`${pk}: ${s.step}: ${s.stderr || 'failed'}`);
+      }
+    }
+  } else {
+    const repoDir = state?.projectDir || projectDir || null;
+    const feature = state?.branch?.feature || null;
+    const wt = state?.branch?.worktreeDir || null;
+    if (repoDir && (feature || wt)) {
+      const liveWt = wt && existsSync(wt) ? wt : null;                 // skip already-removed worktrees
+      const liveBranch = feature && (await branchExists(repoDir, feature)) ? feature : null; // skip merged/deleted
+      if (liveWt || liveBranch) {
+        const res = await removeWorktree({ projectDir: repoDir, worktreeDir: liveWt, branch: liveBranch, force: true });
+        report.branch = liveBranch;
+        report.worktree = liveWt;
+        for (const s of res.steps.filter((x) => !x.ok)) {
+          report.warnings.push(`${s.step}: ${s.stderr || 'failed'}`);
+        }
       }
     }
   }
