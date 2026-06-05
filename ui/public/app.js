@@ -19,6 +19,9 @@ const state = {
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
+  historyAll: [],    // full /api/history dataset; client-side filter cache
+  historyFilter: '', // active projectKey filter for History; '' === All Projects
+  ghAvailable: false,// gh CLI availability, from the last /api/history load
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -75,6 +78,7 @@ const el = {
   wfFeedbackConfig: $('#wf-feedback-config'),
 
   history: $('#history'),
+  historyFilter: $('#historyFilter'),
   refreshHistory: $('#refresh-history'),
   navHistoryCount: $('#nav-history-count'),
 
@@ -242,10 +246,7 @@ function onHello(msg) {
   updateNavCounts();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
-  if (cur === 'history') {
-    const d = selectedProjectPath();
-    if (d) loadHistory(d);
-  }
+  if (cur === 'history') loadHistoryView();
 }
 
 function currentView() {
@@ -2163,11 +2164,12 @@ function finishRun(r, status) {
     paintStepper(r);
   }
 
-  const projectDir = r.projectDir;
   // Card drops out of the live view (liveRuns excludes terminal statuses).
   renderRunningView();
   updateNavCounts();
-  if (projectDir && projectDir === selectedProjectPath()) loadHistory(projectDir);
+  // History is machine-wide + decoupled from the project picker now; if the user
+  // is looking at it, refetch so the just-finished pipeline appears.
+  if (currentView() === 'history') loadHistoryView();
 
   // Client-evict heavy fields; keep the model so a stray duplicate event/hello
   // re-upserts onto the (already _finished) model rather than a fresh one.
@@ -2350,8 +2352,7 @@ function onProjectChanged() {
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
-    loadHistory(path);
-    loadConfig(path);
+    loadConfig(path);        // (per-project history load removed — History is independent now)
     refreshBranches(path);
   } else {
     state.projectDir = '';
@@ -2700,81 +2701,151 @@ if (runListEl) {
 
 // ---------------------------------------------------------------------------
 // History
+//
+// The tab is driven entirely by GET /api/history (every project with pipelines
+// on disk, onboarded or not). The project pills and per-project sticky sections
+// are derived client-side from that single dataset; selecting a pill is a pure
+// in-memory filter (no refetch). The chosen project is remembered for the
+// History filter only — independent of the New-Pipeline project picker.
 // ---------------------------------------------------------------------------
-const allProjectsToggle = document.querySelector('#allProjectsToggle');
-function historyIsAllMode() { return !!(allProjectsToggle && allProjectsToggle.checked); }
+const HISTORY_FILTER_KEY = 'maestro.history.project'; // stores a projectKey; '' === All Projects
 
-// Refresh honors the active mode: machine-wide when "All projects" is ticked,
-// otherwise the selected project's history.
-el.refreshHistory.addEventListener('click', () => {
-  if (historyIsAllMode()) { loadAllHistory(); return; }
-  const dir = selectedProjectPath();
-  if (dir) loadHistory(dir);
-  else setFormMsg('Select a project to load history.', 'err');
-});
+// Refresh re-fetches /api/history; the active filter is preserved (it lives in
+// localStorage, which loadHistoryView restores).
+el.refreshHistory.addEventListener('click', () => loadHistoryView());
 
-if (allProjectsToggle) {
-  allProjectsToggle.addEventListener('change', () => {
-    if (historyIsAllMode()) loadAllHistory();
-    else {
-      const dir = selectedProjectPath();
-      if (dir) loadHistory(dir);
-      else { el.history.innerHTML = ''; el.history.appendChild(histEmpty('Select a project to load history.')); }
-    }
-  });
-}
-
-async function loadAllHistory() {
+async function loadHistoryView() {
   try {
     const res = await fetch('/api/history');
     const data = await safeJson(res);
     if (!res.ok) { renderHistoryError(data.error || `HTTP ${res.status}`); return; }
-    renderHistory(null, data.pipelines || [], [], !!data.ghAvailable);
-  } catch (e) { renderHistoryError(e.message); }
-}
-
-async function loadHistory(projectDir) {
-  try {
-    const res = await fetch(`/api/runs?projectDir=${encodeURIComponent(projectDir)}`);
-    const data = await safeJson(res);
-    if (!res.ok) {
-      renderHistoryError(data.error || `HTTP ${res.status}`);
-      return;
-    }
-    renderHistory(projectDir, data.pipelines || [], data.live || [], !!data.ghAvailable);
+    state.historyAll = Array.isArray(data.pipelines) ? data.pipelines : [];
+    state.ghAvailable = !!data.ghAvailable;
+    // Restore the remembered filter, but only if that project still has history;
+    // otherwise fall back to All Projects (the default).
+    const saved = localStorage.getItem(HISTORY_FILTER_KEY) || '';
+    state.historyFilter = saved && state.historyAll.some((p) => p && p.projectKey === saved) ? saved : '';
+    paintHistory();
   } catch (e) {
     renderHistoryError(e.message);
   }
 }
 
-// Render the #history container as expandable .hist-card DIVs (never <li>).
-// Merges the disk `pipelines` with the in-memory `live` runs (deduped by id) so
-// an active/just-finished run surfaces even before it's written to disk.
-function renderHistory(projectDir, pipelines, live = [], ghAvailable = false) {
-  el.history.innerHTML = '';
-
-  // Merge: start from disk records, append any live entry whose id isn't present.
-  const records = [...(Array.isArray(pipelines) ? pipelines : [])];
-  const seen = new Set(records.map((p) => p && p.id).filter(Boolean));
-  for (const lr of Array.isArray(live) ? live : []) {
-    if (!lr) continue;
-    const id = lr.id || lr.runId;
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    // Normalize a live entry into a record shape the card builder understands.
-    records.push({ id, title: lr.title, status: lr.status || 'running', live: true, startedAt: lr.startedAt });
+// Distinct projects present in the dataset, in most-recent-activity order
+// (listAllPipelines is newest-first, so first encounter === most recent pipeline).
+function historyProjects() {
+  const seen = new Map(); // projectKey -> { key, name, count }
+  for (const p of state.historyAll) {
+    if (!p || !p.projectKey) continue;
+    const cur = seen.get(p.projectKey);
+    if (cur) cur.count += 1;
+    else seen.set(p.projectKey, { key: p.projectKey, name: p.projectName || p.projectKey, count: 1 });
   }
+  return [...seen.values()];
+}
+
+// Build the pill row: "All Projects" + one pill per project. Clicking sets the
+// filter, persists it, and repaints.
+function renderHistoryPills() {
+  const host = el.historyFilter;
+  if (!host) return;
+  host.innerHTML = '';
+
+  const mkPill = (key, label, count) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    const active = state.historyFilter === key;
+    b.className = 'hist-pill' + (active ? ' active' : '');
+    b.dataset.projectKey = key;
+    b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    const txt = document.createElement('span');
+    txt.textContent = label;
+    b.appendChild(txt);
+    b.appendChild(document.createTextNode(' ')); // keep label/count separable in textContent
+    const c = document.createElement('span');
+    c.className = 'pill-count';
+    c.textContent = String(count);
+    b.appendChild(c);
+    b.addEventListener('click', () => setHistoryFilter(key));
+    return b;
+  };
+
+  host.appendChild(mkPill('', 'All Projects', state.historyAll.length));
+  for (const pr of historyProjects()) host.appendChild(mkPill(pr.key, pr.name, pr.count));
+}
+
+// Switch the active project filter, persist it (so it survives reloads), repaint.
+// Selecting All Projects clears the memory (the default needs no stored value).
+function setHistoryFilter(key) {
+  state.historyFilter = key || '';
+  if (state.historyFilter) localStorage.setItem(HISTORY_FILTER_KEY, state.historyFilter);
+  else localStorage.removeItem(HISTORY_FILTER_KEY);
+  paintHistory();
+}
+
+// Repaint pills + the list from the in-memory dataset (no refetch).
+function paintHistory() {
+  // If the active filter's project is gone (e.g. its last pipeline was just
+  // deleted in this session), fall back to All Projects so the view never
+  // strands on an empty, unselectable filter.
+  if (state.historyFilter && !state.historyAll.some((p) => p && p.projectKey === state.historyFilter)) {
+    state.historyFilter = '';
+    localStorage.removeItem(HISTORY_FILTER_KEY);
+  }
+  renderHistoryPills();
+  renderHistory();
+}
+
+// Render #history from state.historyAll filtered by state.historyFilter.
+//   All Projects ('')  -> per-project sections, each with a sticky header.
+//   A specific project -> flat list (the active pill already names the project).
+function renderHistory() {
+  const host = el.history;
+  host.innerHTML = '';
+  const all = Array.isArray(state.historyAll) ? state.historyAll : [];
+  const filter = state.historyFilter;
+  const records = filter ? all.filter((p) => p && p.projectKey === filter) : all;
 
   if (el.navHistoryCount) el.navHistoryCount.textContent = String(records.length);
 
   if (!records.length) {
-    el.history.appendChild(histEmpty('No saved pipelines yet for this folder.'));
+    host.appendChild(histEmpty(filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
     return;
   }
 
-  records.forEach((p) => {
-    el.history.appendChild(buildHistCard(projectDir, p, ghAvailable));
-  });
+  if (filter) {
+    for (const p of records) host.appendChild(buildHistCard(p.projectDir || null, p, state.ghAvailable));
+    return;
+  }
+
+  // All Projects: bucket by projectKey, preserving the newest-first group order.
+  const groups = new Map(); // key -> { name, items: [] }
+  for (const p of records) {
+    const key = p && p.projectKey ? p.projectKey : '';
+    let g = groups.get(key);
+    if (!g) { g = { name: (p && p.projectName) || key || '(unknown project)', items: [] }; groups.set(key, g); }
+    g.items.push(p);
+  }
+  for (const g of groups.values()) host.appendChild(buildHistGroup(g));
+}
+
+// One per-project section: a sticky, non-collapsible header + that project's cards.
+function buildHistGroup(group) {
+  const wrap = document.createElement('section');
+  wrap.className = 'hist-group';
+
+  const head = document.createElement('div');
+  head.className = 'hist-group-head';
+  const name = document.createElement('span');
+  name.textContent = group.name;
+  const count = document.createElement('span');
+  count.className = 'pill-count';
+  count.textContent = String(group.items.length);
+  head.append(name, ' ', count); // space keeps name/count separable in textContent
+  wrap.appendChild(head);
+
+  for (const p of group.items) wrap.appendChild(buildHistCard(p.projectDir || null, p, state.ghAvailable));
+  return wrap;
 }
 
 // One row of the history empty/error state — a DIV (never an <li>).
@@ -2905,14 +2976,11 @@ function setupDeleteButton(node, projectDir, p) {
       const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}?${qs.toString()}`, { method: 'DELETE' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      node.remove();
-      if (el.navHistoryCount) {
-        const n = Math.max(0, (parseInt(el.navHistoryCount.textContent, 10) || 1) - 1);
-        el.navHistoryCount.textContent = String(n);
-      }
-      if (!el.history.querySelector('.hist-card')) {
-        el.history.appendChild(histEmpty('No saved pipelines yet for this folder.'));
-      }
+      // Drop from the in-memory dataset and repaint so the list, the per-project
+      // section/count, and the pills all stay consistent (removing a project's
+      // last pipeline also drops its pill).
+      state.historyAll = state.historyAll.filter((r) => !(r && r.id === p.id && r.projectKey === p.projectKey));
+      paintHistory();
     } catch (err) {
       btn.disabled = false;
       btn.textContent = prev;
@@ -2950,7 +3018,7 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   const titleEl = node.querySelector('.h-meta b');
   const title = p.title || id || '(untitled)';
   if (titleEl) {
-    titleEl.textContent = p.projectName ? `${p.projectName} — ${title}` : title;
+    titleEl.textContent = title; // project shown by the pill / section header
     titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewPipeline(projectDir, id, p.title, p); });
   }
   const whenEl = node.querySelector('.h-meta small');
@@ -3441,10 +3509,7 @@ function showView(name) {
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
   navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
   if (name === 'running') renderRunningView();
-  if (name === 'history') {
-    if (historyIsAllMode()) loadAllHistory();
-    else { const d = selectedProjectPath(); if (d) loadHistory(d); }
-  }
+  if (name === 'history') loadHistoryView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
 }

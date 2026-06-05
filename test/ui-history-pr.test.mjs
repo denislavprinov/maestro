@@ -39,13 +39,14 @@ const runs = (pipelines, ghAvailable) => Promise.resolve({ ok: true, status: 200
 const SURVIVED = {
   id: 'p1', title: 'Feat', status: 'stopped', startedAt: '2026-06-02T00:00:00Z',
   branch: 'maestro/feat-1', sourceBranch: 'main', survived: true, added: 12, removed: 5,
+  projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj',
 };
 
 test('survived entry: branch line under meta + green/red diff chip', async () => {
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([SURVIVED], true) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([SURVIVED], true) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.h-meta .hist-branch').textContent, 'maestro/feat-1');
@@ -55,9 +56,9 @@ test('survived entry: branch line under meta + green/red diff chip', async () =>
 
 test('Create-PR button shows when gh available; click opens PR + merge pill', async () => {
   let prBody = null;
-  const { window, selectProject, showHistory } = await boot({
+  const { window, showHistory } = await boot({
     fetchHandler: (url, opts) => {
-      if (url.includes('/api/runs?')) return runs([SURVIVED], true);
+      if (url.includes('/api/history')) return runs([SURVIVED], true);
       // NOTE: match the exact path — `/api/projects`.includes('/api/pr') is true,
       // so a loose substring check would swallow the project-list fetch.
       if (url.endsWith('/api/pr')) {
@@ -67,7 +68,7 @@ test('Create-PR button shows when gh available; click opens PR + merge pill', as
       return null;
     },
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   const btn = card.querySelector('.hist-pr');
@@ -84,11 +85,11 @@ test('Create-PR button shows when gh available; click opens PR + merge pill', as
 });
 
 test('button hidden when gh unavailable, and for non-survived branches', async () => {
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?')
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history')
       ? runs([SURVIVED, { ...SURVIVED, id: 'p2', survived: false }], false) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const cards = window.document.querySelectorAll('#history .hist-card');
   assert.equal(cards[0].querySelector('.hist-pr').hidden, true, 'gh unavailable hides button');
@@ -97,10 +98,10 @@ test('button hidden when gh unavailable, and for non-survived branches', async (
 
 test('open PR: no Create-PR button, shows a "View PR" link to the existing PR', async () => {
   const OPEN = { ...SURVIVED, id: 'po', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } };
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([OPEN], true) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([OPEN], true) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr'), null, 'Create-PR button is gone');
@@ -111,10 +112,10 @@ test('open PR: no Create-PR button, shows a "View PR" link to the existing PR', 
 
 test('merged PR: shows a "Merged" link, no button', async () => {
   const MERGED = { ...SURVIVED, id: 'pm', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } };
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([MERGED], true) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([MERGED], true) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr'), null);
@@ -127,10 +128,10 @@ test('closed (unmerged) PR is treated as none: Create-PR button still shows', as
   // Defense in depth: even if a stray CLOSED pr object reaches the client, the UI
   // must not hide the button. (In practice the server now sends pr:null here.)
   const CLOSED = { ...SURVIVED, id: 'pc', pr: { state: 'CLOSED', url: 'https://gh/x/pull/1', number: 1 } };
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([CLOSED], true) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([CLOSED], true) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr').hidden, false, 'button visible for a closed/unmerged PR');
@@ -143,10 +144,10 @@ test('merged PR with branch gone (survived=false) still shows the Merged link', 
     ...SURVIVED, id: 'pmg', survived: false,
     pr: { state: 'MERGED', url: 'https://gh/x/pull/2', number: 2 },
   };
-  const { window, selectProject, showHistory } = await boot({
-    fetchHandler: (url) => (url.includes('/api/runs?') ? runs([MERGED_GONE], true) : null),
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([MERGED_GONE], true) : null),
   });
-  selectProject(); showHistory();
+  showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr'), null);

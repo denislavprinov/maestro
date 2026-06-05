@@ -476,6 +476,23 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-detail .detail-error{color:var(--red-ink);font-size:12.5px;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
+/* ---------- History project-filter pills ---------- */
+.hist-filter{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px;}
+.hist-pill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
+  border:1.5px solid var(--line-2);border-radius:999px;padding:7px 14px;font-weight:600;
+  font-size:12.5px;color:var(--ink-2);cursor:pointer;white-space:nowrap;
+  transition:border-color .12s,color .12s,background .12s;}
+.hist-pill:hover{border-color:var(--ink-3);color:var(--ink);}
+.hist-pill.active{background:var(--ink);border-color:var(--ink);color:#fff;}
+.hist-pill .pill-count{font-size:11px;font-weight:600;opacity:.7;}
+
+/* ---------- History per-project sticky sections (All Projects view) ---------- */
+.hist-group{display:flex;flex-direction:column;gap:18px;}
+.hist-group + .hist-group{margin-top:18px;}
+.hist-group-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:10px;
+  background:var(--bg);padding:10px 2px;margin:0;font-weight:700;font-size:14px;color:var(--ink);}
+.hist-group-head .pill-count{font-size:11.5px;font-weight:600;color:var(--ink-3);}
+
 /* ---------- Saved-markdown viewer ---------- */
 .viewer{font-family:var(--mono);font-size:12.5px;line-height:1.7;background:#FBFBF9;border:1px solid var(--line);
   border-radius:16px;padding:18px 20px;max-height:480px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:0;}

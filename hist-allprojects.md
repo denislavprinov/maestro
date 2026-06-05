@@ -1,0 +1,5402 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e7]: maestro
+    - navigation [ref=e8]:
+      - link "New pipeline" [ref=e9] [cursor=pointer]:
+        - /url: "#new"
+        - img [ref=e10]
+        - generic [ref=e12]: New pipeline
+      - link "Running 0" [ref=e13] [cursor=pointer]:
+        - /url: "#running"
+        - img [ref=e14]
+        - generic [ref=e17]: Running
+        - generic [ref=e18]: "0"
+      - link "History 396" [ref=e148] [cursor=pointer]:
+        - /url: "#history"
+        - img [ref=e20]
+        - generic [ref=e23]: History
+        - generic [ref=e24]: "396"
+      - link "Pipeline Composer" [ref=e25] [cursor=pointer]:
+        - /url: "#composer"
+        - img [ref=e26]
+        - generic [ref=e31]: Pipeline Composer
+      - link "Settings" [ref=e32] [cursor=pointer]:
+        - /url: "#settings"
+        - img [ref=e33]
+        - generic [ref=e36]: Settings
+    - generic [ref=e38]:
+      - generic "WebSocket status" [ref=e39]
+      - generic [ref=e40]: connected
+  - main [ref=e41]:
+    - generic [ref=e149]:
+      - generic [ref=e150]:
+        - generic [ref=e151]:
+          - heading "History" [level=1] [ref=e152]
+          - generic [ref=e153]: Completed and stopped pipelines
+        - button "Refresh" [ref=e154] [cursor=pointer]
+      - generic "Filter history by project" [ref=e155]:
+        - button "All Projects 396" [pressed] [ref=e156] [cursor=pointer]:
+          - generic [ref=e157]: All Projects
+          - generic [ref=e158]: "396"
+        - button "Maestro 8" [ref=e159] [cursor=pointer]:
+          - generic [ref=e160]: Maestro
+          - generic [ref=e161]: "8"
+        - button "maestro-clarify-fold-G2brw5 1" [ref=e162] [cursor=pointer]:
+          - generic [ref=e163]: maestro-clarify-fold-G2brw5
+          - generic [ref=e164]: "1"
+        - button "maestro-clarify-KoqHsp 1" [ref=e165] [cursor=pointer]:
+          - generic [ref=e166]: maestro-clarify-KoqHsp
+          - generic [ref=e167]: "1"
+        - button "maestro-clarify-8PHNJa 1" [ref=e168] [cursor=pointer]:
+          - generic [ref=e169]: maestro-clarify-8PHNJa
+          - generic [ref=e170]: "1"
+        - button "maestro-clarify-fold-4ix8jU 1" [ref=e171] [cursor=pointer]:
+          - generic [ref=e172]: maestro-clarify-fold-4ix8jU
+          - generic [ref=e173]: "1"
+        - button "maestro-clarify-fold-ZpCaoN 1" [ref=e174] [cursor=pointer]:
+          - generic [ref=e175]: maestro-clarify-fold-ZpCaoN
+          - generic [ref=e176]: "1"
+        - button "maestro-clarify-fold-4MxQ9J 1" [ref=e177] [cursor=pointer]:
+          - generic [ref=e178]: maestro-clarify-fold-4MxQ9J
+          - generic [ref=e179]: "1"
+        - button "maestro-master-jtwyPB 1" [ref=e180] [cursor=pointer]:
+          - generic [ref=e181]: maestro-master-jtwyPB
+          - generic [ref=e182]: "1"
+        - button "maestro-parent-QtONAc 1" [ref=e183] [cursor=pointer]:
+          - generic [ref=e184]: maestro-parent-QtONAc
+          - generic [ref=e185]: "1"
+        - button "maestro-orch-USqKja 1" [ref=e186] [cursor=pointer]:
+          - generic [ref=e187]: maestro-orch-USqKja
+          - generic [ref=e188]: "1"
+        - button "maestro-orch-gszB78 1" [ref=e189] [cursor=pointer]:
+          - generic [ref=e190]: maestro-orch-gszB78
+          - generic [ref=e191]: "1"
+        - button "maestro-orch-RpPRkj 1" [ref=e192] [cursor=pointer]:
+          - generic [ref=e193]: maestro-orch-RpPRkj
+          - generic [ref=e194]: "1"
+        - button "maestro-orch-mOjlxm 1" [ref=e195] [cursor=pointer]:
+          - generic [ref=e196]: maestro-orch-mOjlxm
+          - generic [ref=e197]: "1"
+        - button "maestro-master-szHIdj 1" [ref=e198] [cursor=pointer]:
+          - generic [ref=e199]: maestro-master-szHIdj
+          - generic [ref=e200]: "1"
+        - button "maestro-parent-fJyvMH 1" [ref=e201] [cursor=pointer]:
+          - generic [ref=e202]: maestro-parent-fJyvMH
+          - generic [ref=e203]: "1"
+        - button "maestro-orch-fUMyYY 1" [ref=e204] [cursor=pointer]:
+          - generic [ref=e205]: maestro-orch-fUMyYY
+          - generic [ref=e206]: "1"
+        - button "maestro-orch-7PjRrK 1" [ref=e207] [cursor=pointer]:
+          - generic [ref=e208]: maestro-orch-7PjRrK
+          - generic [ref=e209]: "1"
+        - button "maestro-orch-x5aY1Q 1" [ref=e210] [cursor=pointer]:
+          - generic [ref=e211]: maestro-orch-x5aY1Q
+          - generic [ref=e212]: "1"
+        - button "maestro-orch-lX7Xj7 1" [ref=e213] [cursor=pointer]:
+          - generic [ref=e214]: maestro-orch-lX7Xj7
+          - generic [ref=e215]: "1"
+        - button "maestro-orch-fTlWVO 1" [ref=e216] [cursor=pointer]:
+          - generic [ref=e217]: maestro-orch-fTlWVO
+          - generic [ref=e218]: "1"
+        - button "maestro-orch-pmrJcA 1" [ref=e219] [cursor=pointer]:
+          - generic [ref=e220]: maestro-orch-pmrJcA
+          - generic [ref=e221]: "1"
+        - button "maestro-master-RHIomG 1" [ref=e222] [cursor=pointer]:
+          - generic [ref=e223]: maestro-master-RHIomG
+          - generic [ref=e224]: "1"
+        - button "maestro-parent-JyDiD6 1" [ref=e225] [cursor=pointer]:
+          - generic [ref=e226]: maestro-parent-JyDiD6
+          - generic [ref=e227]: "1"
+        - button "maestro-orch-iohWTW 1" [ref=e228] [cursor=pointer]:
+          - generic [ref=e229]: maestro-orch-iohWTW
+          - generic [ref=e230]: "1"
+        - button "maestro-orch-9yJ9qm 1" [ref=e231] [cursor=pointer]:
+          - generic [ref=e232]: maestro-orch-9yJ9qm
+          - generic [ref=e233]: "1"
+        - button "maestro-orch-5Zyx4d 1" [ref=e234] [cursor=pointer]:
+          - generic [ref=e235]: maestro-orch-5Zyx4d
+          - generic [ref=e236]: "1"
+        - button "maestro-orch-z6lS8l 1" [ref=e237] [cursor=pointer]:
+          - generic [ref=e238]: maestro-orch-z6lS8l
+          - generic [ref=e239]: "1"
+        - button "maestro-orch-JV8h95 1" [ref=e240] [cursor=pointer]:
+          - generic [ref=e241]: maestro-orch-JV8h95
+          - generic [ref=e242]: "1"
+        - button "maestro-master-4CSacQ 1" [ref=e243] [cursor=pointer]:
+          - generic [ref=e244]: maestro-master-4CSacQ
+          - generic [ref=e245]: "1"
+        - button "maestro-parent-6onTVe 1" [ref=e246] [cursor=pointer]:
+          - generic [ref=e247]: maestro-parent-6onTVe
+          - generic [ref=e248]: "1"
+        - button "maestro-orch-pseznW 1" [ref=e249] [cursor=pointer]:
+          - generic [ref=e250]: maestro-orch-pseznW
+          - generic [ref=e251]: "1"
+        - button "maestro-orch-tfzR7v 1" [ref=e252] [cursor=pointer]:
+          - generic [ref=e253]: maestro-orch-tfzR7v
+          - generic [ref=e254]: "1"
+        - button "maestro-orch-17pWWm 1" [ref=e255] [cursor=pointer]:
+          - generic [ref=e256]: maestro-orch-17pWWm
+          - generic [ref=e257]: "1"
+        - button "maestro-orch-Fpxc70 1" [ref=e258] [cursor=pointer]:
+          - generic [ref=e259]: maestro-orch-Fpxc70
+          - generic [ref=e260]: "1"
+        - button "maestro-orch-YeWrpt 1" [ref=e261] [cursor=pointer]:
+          - generic [ref=e262]: maestro-orch-YeWrpt
+          - generic [ref=e263]: "1"
+        - button "maestro-master-hGByre 1" [ref=e264] [cursor=pointer]:
+          - generic [ref=e265]: maestro-master-hGByre
+          - generic [ref=e266]: "1"
+        - button "maestro-parent-XXuIFR 1" [ref=e267] [cursor=pointer]:
+          - generic [ref=e268]: maestro-parent-XXuIFR
+          - generic [ref=e269]: "1"
+        - button "maestro-orch-6cVzHI 1" [ref=e270] [cursor=pointer]:
+          - generic [ref=e271]: maestro-orch-6cVzHI
+          - generic [ref=e272]: "1"
+        - button "maestro-orch-vJAgoP 1" [ref=e273] [cursor=pointer]:
+          - generic [ref=e274]: maestro-orch-vJAgoP
+          - generic [ref=e275]: "1"
+        - button "maestro-orch-xmv5dz 1" [ref=e276] [cursor=pointer]:
+          - generic [ref=e277]: maestro-orch-xmv5dz
+          - generic [ref=e278]: "1"
+        - button "maestro-orch-0HixGl 1" [ref=e279] [cursor=pointer]:
+          - generic [ref=e280]: maestro-orch-0HixGl
+          - generic [ref=e281]: "1"
+        - button "maestro-orch-wrEHTF 1" [ref=e282] [cursor=pointer]:
+          - generic [ref=e283]: maestro-orch-wrEHTF
+          - generic [ref=e284]: "1"
+        - button "maestro-run-slurBq 1" [ref=e285] [cursor=pointer]:
+          - generic [ref=e286]: maestro-run-slurBq
+          - generic [ref=e287]: "1"
+        - button "maestro-run-cmXSrh 1" [ref=e288] [cursor=pointer]:
+          - generic [ref=e289]: maestro-run-cmXSrh
+          - generic [ref=e290]: "1"
+        - button "maestro-master-Z6kyQU 1" [ref=e291] [cursor=pointer]:
+          - generic [ref=e292]: maestro-master-Z6kyQU
+          - generic [ref=e293]: "1"
+        - button "maestro-parent-QRTb58 1" [ref=e294] [cursor=pointer]:
+          - generic [ref=e295]: maestro-parent-QRTb58
+          - generic [ref=e296]: "1"
+        - button "maestro-orch-Csflkr 1" [ref=e297] [cursor=pointer]:
+          - generic [ref=e298]: maestro-orch-Csflkr
+          - generic [ref=e299]: "1"
+        - button "maestro-orch-DHoPq5 1" [ref=e300] [cursor=pointer]:
+          - generic [ref=e301]: maestro-orch-DHoPq5
+          - generic [ref=e302]: "1"
+        - button "maestro-dispatch-bGVzYN 1" [ref=e303] [cursor=pointer]:
+          - generic [ref=e304]: maestro-dispatch-bGVzYN
+          - generic [ref=e305]: "1"
+        - button "maestro-orch-bRgJGb 1" [ref=e306] [cursor=pointer]:
+          - generic [ref=e307]: maestro-orch-bRgJGb
+          - generic [ref=e308]: "1"
+        - button "maestro-orch-Imm7Jh 1" [ref=e309] [cursor=pointer]:
+          - generic [ref=e310]: maestro-orch-Imm7Jh
+          - generic [ref=e311]: "1"
+        - button "maestro-timing-0MyUjP 1" [ref=e312] [cursor=pointer]:
+          - generic [ref=e313]: maestro-timing-0MyUjP
+          - generic [ref=e314]: "1"
+        - button "maestro-orch-nDcyPS 1" [ref=e315] [cursor=pointer]:
+          - generic [ref=e316]: maestro-orch-nDcyPS
+          - generic [ref=e317]: "1"
+        - button "maestro-cli-bJd6Mj 1" [ref=e318] [cursor=pointer]:
+          - generic [ref=e319]: maestro-cli-bJd6Mj
+          - generic [ref=e320]: "1"
+        - button "maestro-dispatch-hQAzf0 1" [ref=e321] [cursor=pointer]:
+          - generic [ref=e322]: maestro-dispatch-hQAzf0
+          - generic [ref=e323]: "1"
+        - button "maestro-clarify-fold-Vf02xp 1" [ref=e324] [cursor=pointer]:
+          - generic [ref=e325]: maestro-clarify-fold-Vf02xp
+          - generic [ref=e326]: "1"
+        - button "maestro-clarify-vwbzkn 1" [ref=e327] [cursor=pointer]:
+          - generic [ref=e328]: maestro-clarify-vwbzkn
+          - generic [ref=e329]: "1"
+        - button "maestro-run-GSUvZa 1" [ref=e330] [cursor=pointer]:
+          - generic [ref=e331]: maestro-run-GSUvZa
+          - generic [ref=e332]: "1"
+        - button "maestro-run-Ay7Web 1" [ref=e333] [cursor=pointer]:
+          - generic [ref=e334]: maestro-run-Ay7Web
+          - generic [ref=e335]: "1"
+        - button "maestro-master-9XrzKc 1" [ref=e336] [cursor=pointer]:
+          - generic [ref=e337]: maestro-master-9XrzKc
+          - generic [ref=e338]: "1"
+        - button "maestro-parent-dDaXuv 1" [ref=e339] [cursor=pointer]:
+          - generic [ref=e340]: maestro-parent-dDaXuv
+          - generic [ref=e341]: "1"
+        - button "maestro-orch-c5ETDi 1" [ref=e342] [cursor=pointer]:
+          - generic [ref=e343]: maestro-orch-c5ETDi
+          - generic [ref=e344]: "1"
+        - button "maestro-orch-UP23vS 1" [ref=e345] [cursor=pointer]:
+          - generic [ref=e346]: maestro-orch-UP23vS
+          - generic [ref=e347]: "1"
+        - button "maestro-orch-k4c0Ou 1" [ref=e348] [cursor=pointer]:
+          - generic [ref=e349]: maestro-orch-k4c0Ou
+          - generic [ref=e350]: "1"
+        - button "maestro-dispatch-RouMwx 1" [ref=e351] [cursor=pointer]:
+          - generic [ref=e352]: maestro-dispatch-RouMwx
+          - generic [ref=e353]: "1"
+        - button "maestro-orch-Dn7Czm 1" [ref=e354] [cursor=pointer]:
+          - generic [ref=e355]: maestro-orch-Dn7Czm
+          - generic [ref=e356]: "1"
+        - button "maestro-orch-xy8gBG 1" [ref=e357] [cursor=pointer]:
+          - generic [ref=e358]: maestro-orch-xy8gBG
+          - generic [ref=e359]: "1"
+        - button "maestro-timing-PGcmcS 1" [ref=e360] [cursor=pointer]:
+          - generic [ref=e361]: maestro-timing-PGcmcS
+          - generic [ref=e362]: "1"
+        - button "maestro-dispatch-bDegJf 1" [ref=e363] [cursor=pointer]:
+          - generic [ref=e364]: maestro-dispatch-bDegJf
+          - generic [ref=e365]: "1"
+        - button "maestro-cli-1BaWT3 1" [ref=e366] [cursor=pointer]:
+          - generic [ref=e367]: maestro-cli-1BaWT3
+          - generic [ref=e368]: "1"
+        - button "maestro-clarify-oJVfOt 1" [ref=e369] [cursor=pointer]:
+          - generic [ref=e370]: maestro-clarify-oJVfOt
+          - generic [ref=e371]: "1"
+        - button "maestro-clarify-fold-NlhCRj 1" [ref=e372] [cursor=pointer]:
+          - generic [ref=e373]: maestro-clarify-fold-NlhCRj
+          - generic [ref=e374]: "1"
+        - button "maestro-run-n6o2E0 1" [ref=e375] [cursor=pointer]:
+          - generic [ref=e376]: maestro-run-n6o2E0
+          - generic [ref=e377]: "1"
+        - button "maestro-run-LVUxwW 1" [ref=e378] [cursor=pointer]:
+          - generic [ref=e379]: maestro-run-LVUxwW
+          - generic [ref=e380]: "1"
+        - button "maestro-master-mjz2l2 1" [ref=e381] [cursor=pointer]:
+          - generic [ref=e382]: maestro-master-mjz2l2
+          - generic [ref=e383]: "1"
+        - button "maestro-parent-yAhzVa 1" [ref=e384] [cursor=pointer]:
+          - generic [ref=e385]: maestro-parent-yAhzVa
+          - generic [ref=e386]: "1"
+        - button "maestro-orch-4FuraN 1" [ref=e387] [cursor=pointer]:
+          - generic [ref=e388]: maestro-orch-4FuraN
+          - generic [ref=e389]: "1"
+        - button "maestro-orch-FZme3p 1" [ref=e390] [cursor=pointer]:
+          - generic [ref=e391]: maestro-orch-FZme3p
+          - generic [ref=e392]: "1"
+        - button "maestro-orch-DEeazQ 1" [ref=e393] [cursor=pointer]:
+          - generic [ref=e394]: maestro-orch-DEeazQ
+          - generic [ref=e395]: "1"
+        - button "maestro-dispatch-jT6gwQ 1" [ref=e396] [cursor=pointer]:
+          - generic [ref=e397]: maestro-dispatch-jT6gwQ
+          - generic [ref=e398]: "1"
+        - button "maestro-orch-zy05R8 1" [ref=e399] [cursor=pointer]:
+          - generic [ref=e400]: maestro-orch-zy05R8
+          - generic [ref=e401]: "1"
+        - button "maestro-orch-N5K0Tc 1" [ref=e402] [cursor=pointer]:
+          - generic [ref=e403]: maestro-orch-N5K0Tc
+          - generic [ref=e404]: "1"
+        - button "maestro-timing-Ue1LNm 1" [ref=e405] [cursor=pointer]:
+          - generic [ref=e406]: maestro-timing-Ue1LNm
+          - generic [ref=e407]: "1"
+        - button "maestro-dispatch-OqArDp 1" [ref=e408] [cursor=pointer]:
+          - generic [ref=e409]: maestro-dispatch-OqArDp
+          - generic [ref=e410]: "1"
+        - button "maestro-cli-JNckER 1" [ref=e411] [cursor=pointer]:
+          - generic [ref=e412]: maestro-cli-JNckER
+          - generic [ref=e413]: "1"
+        - button "maestro-clarify-fold-IJXA1O 1" [ref=e414] [cursor=pointer]:
+          - generic [ref=e415]: maestro-clarify-fold-IJXA1O
+          - generic [ref=e416]: "1"
+        - button "maestro-clarify-ba1vK7 1" [ref=e417] [cursor=pointer]:
+          - generic [ref=e418]: maestro-clarify-ba1vK7
+          - generic [ref=e419]: "1"
+        - button "maestro-run-3ISFSi 1" [ref=e420] [cursor=pointer]:
+          - generic [ref=e421]: maestro-run-3ISFSi
+          - generic [ref=e422]: "1"
+        - button "maestro-run-WXiBxI 1" [ref=e423] [cursor=pointer]:
+          - generic [ref=e424]: maestro-run-WXiBxI
+          - generic [ref=e425]: "1"
+        - button "maestro-master-qEBZPu 1" [ref=e426] [cursor=pointer]:
+          - generic [ref=e427]: maestro-master-qEBZPu
+          - generic [ref=e428]: "1"
+        - button "maestro-parent-aMCYAf 1" [ref=e429] [cursor=pointer]:
+          - generic [ref=e430]: maestro-parent-aMCYAf
+          - generic [ref=e431]: "1"
+        - button "maestro-orch-ceawDV 1" [ref=e432] [cursor=pointer]:
+          - generic [ref=e433]: maestro-orch-ceawDV
+          - generic [ref=e434]: "1"
+        - button "maestro-orch-TE2rFh 1" [ref=e435] [cursor=pointer]:
+          - generic [ref=e436]: maestro-orch-TE2rFh
+          - generic [ref=e437]: "1"
+        - button "maestro-orch-lUily9 1" [ref=e438] [cursor=pointer]:
+          - generic [ref=e439]: maestro-orch-lUily9
+          - generic [ref=e440]: "1"
+        - button "maestro-dispatch-2wxC4c 1" [ref=e441] [cursor=pointer]:
+          - generic [ref=e442]: maestro-dispatch-2wxC4c
+          - generic [ref=e443]: "1"
+        - button "maestro-orch-9NvBgd 1" [ref=e444] [cursor=pointer]:
+          - generic [ref=e445]: maestro-orch-9NvBgd
+          - generic [ref=e446]: "1"
+        - button "maestro-orch-1VNGnB 1" [ref=e447] [cursor=pointer]:
+          - generic [ref=e448]: maestro-orch-1VNGnB
+          - generic [ref=e449]: "1"
+        - button "maestro-cli-AcBXd1 1" [ref=e450] [cursor=pointer]:
+          - generic [ref=e451]: maestro-cli-AcBXd1
+          - generic [ref=e452]: "1"
+        - button "maestro-dispatch-jRKDsf 1" [ref=e453] [cursor=pointer]:
+          - generic [ref=e454]: maestro-dispatch-jRKDsf
+          - generic [ref=e455]: "1"
+        - button "maestro-timing-oZuVoZ 1" [ref=e456] [cursor=pointer]:
+          - generic [ref=e457]: maestro-timing-oZuVoZ
+          - generic [ref=e458]: "1"
+        - button "maestro-clarify-fold-nAM92p 1" [ref=e459] [cursor=pointer]:
+          - generic [ref=e460]: maestro-clarify-fold-nAM92p
+          - generic [ref=e461]: "1"
+        - button "maestro-clarify-hV7Ibl 1" [ref=e462] [cursor=pointer]:
+          - generic [ref=e463]: maestro-clarify-hV7Ibl
+          - generic [ref=e464]: "1"
+        - button "maestro-run-YZor1s 1" [ref=e465] [cursor=pointer]:
+          - generic [ref=e466]: maestro-run-YZor1s
+          - generic [ref=e467]: "1"
+        - button "maestro-run-NwSr66 1" [ref=e468] [cursor=pointer]:
+          - generic [ref=e469]: maestro-run-NwSr66
+          - generic [ref=e470]: "1"
+        - button "maestro-dispatch-eLI4Vj 1" [ref=e471] [cursor=pointer]:
+          - generic [ref=e472]: maestro-dispatch-eLI4Vj
+          - generic [ref=e473]: "1"
+        - button "maestro-dispatch-1DTIFz 1" [ref=e474] [cursor=pointer]:
+          - generic [ref=e475]: maestro-dispatch-1DTIFz
+          - generic [ref=e476]: "1"
+        - button "maestro-master-WJouba 1" [ref=e477] [cursor=pointer]:
+          - generic [ref=e478]: maestro-master-WJouba
+          - generic [ref=e479]: "1"
+        - button "maestro-parent-LHi9V2 1" [ref=e480] [cursor=pointer]:
+          - generic [ref=e481]: maestro-parent-LHi9V2
+          - generic [ref=e482]: "1"
+        - button "maestro-orch-PEiBSL 1" [ref=e483] [cursor=pointer]:
+          - generic [ref=e484]: maestro-orch-PEiBSL
+          - generic [ref=e485]: "1"
+        - button "maestro-orch-LITnXy 1" [ref=e486] [cursor=pointer]:
+          - generic [ref=e487]: maestro-orch-LITnXy
+          - generic [ref=e488]: "1"
+        - button "maestro-orch-U0p5qq 1" [ref=e489] [cursor=pointer]:
+          - generic [ref=e490]: maestro-orch-U0p5qq
+          - generic [ref=e491]: "1"
+        - button "maestro-dispatch-wjZDVQ 1" [ref=e492] [cursor=pointer]:
+          - generic [ref=e493]: maestro-dispatch-wjZDVQ
+          - generic [ref=e494]: "1"
+        - button "maestro-orch-AJ6YCs 1" [ref=e495] [cursor=pointer]:
+          - generic [ref=e496]: maestro-orch-AJ6YCs
+          - generic [ref=e497]: "1"
+        - button "maestro-orch-HExgj6 1" [ref=e498] [cursor=pointer]:
+          - generic [ref=e499]: maestro-orch-HExgj6
+          - generic [ref=e500]: "1"
+        - button "maestro-run-eBggVM 1" [ref=e501] [cursor=pointer]:
+          - generic [ref=e502]: maestro-run-eBggVM
+          - generic [ref=e503]: "1"
+        - button "maestro-run-MjHcrQ 1" [ref=e504] [cursor=pointer]:
+          - generic [ref=e505]: maestro-run-MjHcrQ
+          - generic [ref=e506]: "1"
+        - button "maestro-timing-fUsykW 1" [ref=e507] [cursor=pointer]:
+          - generic [ref=e508]: maestro-timing-fUsykW
+          - generic [ref=e509]: "1"
+        - button "maestro-dispatch-bWXo7p 1" [ref=e510] [cursor=pointer]:
+          - generic [ref=e511]: maestro-dispatch-bWXo7p
+          - generic [ref=e512]: "1"
+        - button "maestro-clarify-7oMtJK 1" [ref=e513] [cursor=pointer]:
+          - generic [ref=e514]: maestro-clarify-7oMtJK
+          - generic [ref=e515]: "1"
+        - button "maestro-clarify-fold-IQiuiQ 1" [ref=e516] [cursor=pointer]:
+          - generic [ref=e517]: maestro-clarify-fold-IQiuiQ
+          - generic [ref=e518]: "1"
+        - button "maestro-cli-hTmPpK 1" [ref=e519] [cursor=pointer]:
+          - generic [ref=e520]: maestro-cli-hTmPpK
+          - generic [ref=e521]: "1"
+        - button "maestro-master-qiK3eT 1" [ref=e522] [cursor=pointer]:
+          - generic [ref=e523]: maestro-master-qiK3eT
+          - generic [ref=e524]: "1"
+        - button "maestro-parent-Z0JqXX 1" [ref=e525] [cursor=pointer]:
+          - generic [ref=e526]: maestro-parent-Z0JqXX
+          - generic [ref=e527]: "1"
+        - button "maestro-orch-9ZAcrr 1" [ref=e528] [cursor=pointer]:
+          - generic [ref=e529]: maestro-orch-9ZAcrr
+          - generic [ref=e530]: "1"
+        - button "maestro-orch-jGTc42 1" [ref=e531] [cursor=pointer]:
+          - generic [ref=e532]: maestro-orch-jGTc42
+          - generic [ref=e533]: "1"
+        - button "maestro-orch-mAkhtd 1" [ref=e534] [cursor=pointer]:
+          - generic [ref=e535]: maestro-orch-mAkhtd
+          - generic [ref=e536]: "1"
+        - button "maestro-dispatch-byuAwJ 1" [ref=e537] [cursor=pointer]:
+          - generic [ref=e538]: maestro-dispatch-byuAwJ
+          - generic [ref=e539]: "1"
+        - button "maestro-orch-on7e7y 1" [ref=e540] [cursor=pointer]:
+          - generic [ref=e541]: maestro-orch-on7e7y
+          - generic [ref=e542]: "1"
+        - button "maestro-orch-fB9hlZ 1" [ref=e543] [cursor=pointer]:
+          - generic [ref=e544]: maestro-orch-fB9hlZ
+          - generic [ref=e545]: "1"
+        - button "maestro-timing-UB4hpL 1" [ref=e546] [cursor=pointer]:
+          - generic [ref=e547]: maestro-timing-UB4hpL
+          - generic [ref=e548]: "1"
+        - button "maestro-cli-hcF2Q2 1" [ref=e549] [cursor=pointer]:
+          - generic [ref=e550]: maestro-cli-hcF2Q2
+          - generic [ref=e551]: "1"
+        - button "maestro-clarify-OAoTMv 1" [ref=e552] [cursor=pointer]:
+          - generic [ref=e553]: maestro-clarify-OAoTMv
+          - generic [ref=e554]: "1"
+        - button "maestro-dispatch-5p2qrV 1" [ref=e555] [cursor=pointer]:
+          - generic [ref=e556]: maestro-dispatch-5p2qrV
+          - generic [ref=e557]: "1"
+        - button "maestro-clarify-fold-qqi9Ol 1" [ref=e558] [cursor=pointer]:
+          - generic [ref=e559]: maestro-clarify-fold-qqi9Ol
+          - generic [ref=e560]: "1"
+        - button "maestro-run-ne8J5N 1" [ref=e561] [cursor=pointer]:
+          - generic [ref=e562]: maestro-run-ne8J5N
+          - generic [ref=e563]: "1"
+        - button "maestro-run-Wigb1L 1" [ref=e564] [cursor=pointer]:
+          - generic [ref=e565]: maestro-run-Wigb1L
+          - generic [ref=e566]: "1"
+        - button "maestro-master-gcfmr5 1" [ref=e567] [cursor=pointer]:
+          - generic [ref=e568]: maestro-master-gcfmr5
+          - generic [ref=e569]: "1"
+        - button "maestro-parent-Qi55Og 1" [ref=e570] [cursor=pointer]:
+          - generic [ref=e571]: maestro-parent-Qi55Og
+          - generic [ref=e572]: "1"
+        - button "maestro-orch-r8yQDf 1" [ref=e573] [cursor=pointer]:
+          - generic [ref=e574]: maestro-orch-r8yQDf
+          - generic [ref=e575]: "1"
+        - button "maestro-orch-TT4Lxy 1" [ref=e576] [cursor=pointer]:
+          - generic [ref=e577]: maestro-orch-TT4Lxy
+          - generic [ref=e578]: "1"
+        - button "maestro-orch-u2tt9U 1" [ref=e579] [cursor=pointer]:
+          - generic [ref=e580]: maestro-orch-u2tt9U
+          - generic [ref=e581]: "1"
+        - button "maestro-dispatch-HBtvw0 1" [ref=e582] [cursor=pointer]:
+          - generic [ref=e583]: maestro-dispatch-HBtvw0
+          - generic [ref=e584]: "1"
+        - button "maestro-orch-c1MlUG 1" [ref=e585] [cursor=pointer]:
+          - generic [ref=e586]: maestro-orch-c1MlUG
+          - generic [ref=e587]: "1"
+        - button "maestro-cli-JOV6fj 1" [ref=e588] [cursor=pointer]:
+          - generic [ref=e589]: maestro-cli-JOV6fj
+          - generic [ref=e590]: "1"
+        - button "maestro-orch-0UaMCT 1" [ref=e591] [cursor=pointer]:
+          - generic [ref=e592]: maestro-orch-0UaMCT
+          - generic [ref=e593]: "1"
+        - button "maestro-timing-g8iUo4 1" [ref=e594] [cursor=pointer]:
+          - generic [ref=e595]: maestro-timing-g8iUo4
+          - generic [ref=e596]: "1"
+        - button "maestro-dispatch-dRMBoq 1" [ref=e597] [cursor=pointer]:
+          - generic [ref=e598]: maestro-dispatch-dRMBoq
+          - generic [ref=e599]: "1"
+        - button "maestro-clarify-fold-XRmwxp 1" [ref=e600] [cursor=pointer]:
+          - generic [ref=e601]: maestro-clarify-fold-XRmwxp
+          - generic [ref=e602]: "1"
+        - button "maestro-clarify-UBZyHv 1" [ref=e603] [cursor=pointer]:
+          - generic [ref=e604]: maestro-clarify-UBZyHv
+          - generic [ref=e605]: "1"
+        - button "maestro-run-x0deWm 1" [ref=e606] [cursor=pointer]:
+          - generic [ref=e607]: maestro-run-x0deWm
+          - generic [ref=e608]: "1"
+        - button "maestro-run-YrmFaP 1" [ref=e609] [cursor=pointer]:
+          - generic [ref=e610]: maestro-run-YrmFaP
+          - generic [ref=e611]: "1"
+        - button "maestro-master-oDNPzU 1" [ref=e612] [cursor=pointer]:
+          - generic [ref=e613]: maestro-master-oDNPzU
+          - generic [ref=e614]: "1"
+        - button "maestro-parent-9F818e 1" [ref=e615] [cursor=pointer]:
+          - generic [ref=e616]: maestro-parent-9F818e
+          - generic [ref=e617]: "1"
+        - button "maestro-orch-mwe8Uo 1" [ref=e618] [cursor=pointer]:
+          - generic [ref=e619]: maestro-orch-mwe8Uo
+          - generic [ref=e620]: "1"
+        - button "maestro-orch-BsIOjR 1" [ref=e621] [cursor=pointer]:
+          - generic [ref=e622]: maestro-orch-BsIOjR
+          - generic [ref=e623]: "1"
+        - button "maestro-orch-zLgwRZ 1" [ref=e624] [cursor=pointer]:
+          - generic [ref=e625]: maestro-orch-zLgwRZ
+          - generic [ref=e626]: "1"
+        - button "maestro-dispatch-VtY4oU 1" [ref=e627] [cursor=pointer]:
+          - generic [ref=e628]: maestro-dispatch-VtY4oU
+          - generic [ref=e629]: "1"
+        - button "maestro-orch-OoPeiL 1" [ref=e630] [cursor=pointer]:
+          - generic [ref=e631]: maestro-orch-OoPeiL
+          - generic [ref=e632]: "1"
+        - button "maestro-orch-ijqbWz 1" [ref=e633] [cursor=pointer]:
+          - generic [ref=e634]: maestro-orch-ijqbWz
+          - generic [ref=e635]: "1"
+        - button "maestro-dispatch-tUQNUY 1" [ref=e636] [cursor=pointer]:
+          - generic [ref=e637]: maestro-dispatch-tUQNUY
+          - generic [ref=e638]: "1"
+        - button "maestro-timing-nMCuD1 1" [ref=e639] [cursor=pointer]:
+          - generic [ref=e640]: maestro-timing-nMCuD1
+          - generic [ref=e641]: "1"
+        - button "maestro-cli-opt3CD 1" [ref=e642] [cursor=pointer]:
+          - generic [ref=e643]: maestro-cli-opt3CD
+          - generic [ref=e644]: "1"
+        - button "maestro-clarify-fold-HwDScG 1" [ref=e645] [cursor=pointer]:
+          - generic [ref=e646]: maestro-clarify-fold-HwDScG
+          - generic [ref=e647]: "1"
+        - button "maestro-clarify-ie23Ia 1" [ref=e648] [cursor=pointer]:
+          - generic [ref=e649]: maestro-clarify-ie23Ia
+          - generic [ref=e650]: "1"
+        - button "maestro-run-Vea0RI 1" [ref=e651] [cursor=pointer]:
+          - generic [ref=e652]: maestro-run-Vea0RI
+          - generic [ref=e653]: "1"
+        - button "maestro-run-OanP06 1" [ref=e654] [cursor=pointer]:
+          - generic [ref=e655]: maestro-run-OanP06
+          - generic [ref=e656]: "1"
+        - button "maestro-master-dDBcm8 1" [ref=e657] [cursor=pointer]:
+          - generic [ref=e658]: maestro-master-dDBcm8
+          - generic [ref=e659]: "1"
+        - button "maestro-parent-oSu1ZF 1" [ref=e660] [cursor=pointer]:
+          - generic [ref=e661]: maestro-parent-oSu1ZF
+          - generic [ref=e662]: "1"
+        - button "maestro-orch-ypt0ax 1" [ref=e663] [cursor=pointer]:
+          - generic [ref=e664]: maestro-orch-ypt0ax
+          - generic [ref=e665]: "1"
+        - button "maestro-orch-7V557x 1" [ref=e666] [cursor=pointer]:
+          - generic [ref=e667]: maestro-orch-7V557x
+          - generic [ref=e668]: "1"
+        - button "maestro-orch-a7GF1U 1" [ref=e669] [cursor=pointer]:
+          - generic [ref=e670]: maestro-orch-a7GF1U
+          - generic [ref=e671]: "1"
+        - button "maestro-dispatch-JhJSpl 1" [ref=e672] [cursor=pointer]:
+          - generic [ref=e673]: maestro-dispatch-JhJSpl
+          - generic [ref=e674]: "1"
+        - button "maestro-orch-6UWbbs 1" [ref=e675] [cursor=pointer]:
+          - generic [ref=e676]: maestro-orch-6UWbbs
+          - generic [ref=e677]: "1"
+        - button "maestro-timing-vH06bG 1" [ref=e678] [cursor=pointer]:
+          - generic [ref=e679]: maestro-timing-vH06bG
+          - generic [ref=e680]: "1"
+        - button "maestro-orch-coyj0V 1" [ref=e681] [cursor=pointer]:
+          - generic [ref=e682]: maestro-orch-coyj0V
+          - generic [ref=e683]: "1"
+        - button "maestro-cli-lz1L0e 1" [ref=e684] [cursor=pointer]:
+          - generic [ref=e685]: maestro-cli-lz1L0e
+          - generic [ref=e686]: "1"
+        - button "maestro-clarify-vKveam 1" [ref=e687] [cursor=pointer]:
+          - generic [ref=e688]: maestro-clarify-vKveam
+          - generic [ref=e689]: "1"
+        - button "maestro-dispatch-GCjW95 1" [ref=e690] [cursor=pointer]:
+          - generic [ref=e691]: maestro-dispatch-GCjW95
+          - generic [ref=e692]: "1"
+        - button "maestro-clarify-fold-EM4LZD 1" [ref=e693] [cursor=pointer]:
+          - generic [ref=e694]: maestro-clarify-fold-EM4LZD
+          - generic [ref=e695]: "1"
+        - button "maestro-run-EEFLRc 1" [ref=e696] [cursor=pointer]:
+          - generic [ref=e697]: maestro-run-EEFLRc
+          - generic [ref=e698]: "1"
+        - button "maestro-run-Wg2N6N 1" [ref=e699] [cursor=pointer]:
+          - generic [ref=e700]: maestro-run-Wg2N6N
+          - generic [ref=e701]: "1"
+        - button "maestro-master-JRRVBl 1" [ref=e702] [cursor=pointer]:
+          - generic [ref=e703]: maestro-master-JRRVBl
+          - generic [ref=e704]: "1"
+        - button "maestro-parent-WFIi0I 1" [ref=e705] [cursor=pointer]:
+          - generic [ref=e706]: maestro-parent-WFIi0I
+          - generic [ref=e707]: "1"
+        - button "maestro-orch-RupwjP 1" [ref=e708] [cursor=pointer]:
+          - generic [ref=e709]: maestro-orch-RupwjP
+          - generic [ref=e710]: "1"
+        - button "maestro-orch-sgZaYu 1" [ref=e711] [cursor=pointer]:
+          - generic [ref=e712]: maestro-orch-sgZaYu
+          - generic [ref=e713]: "1"
+        - button "maestro-orch-6ZIwwW 1" [ref=e714] [cursor=pointer]:
+          - generic [ref=e715]: maestro-orch-6ZIwwW
+          - generic [ref=e716]: "1"
+        - button "maestro-dispatch-SM6LXc 1" [ref=e717] [cursor=pointer]:
+          - generic [ref=e718]: maestro-dispatch-SM6LXc
+          - generic [ref=e719]: "1"
+        - button "maestro-orch-ZzhG60 1" [ref=e720] [cursor=pointer]:
+          - generic [ref=e721]: maestro-orch-ZzhG60
+          - generic [ref=e722]: "1"
+        - button "maestro-orch-jOVjSC 1" [ref=e723] [cursor=pointer]:
+          - generic [ref=e724]: maestro-orch-jOVjSC
+          - generic [ref=e725]: "1"
+        - button "maestro-timing-UXnnef 1" [ref=e726] [cursor=pointer]:
+          - generic [ref=e727]: maestro-timing-UXnnef
+          - generic [ref=e728]: "1"
+        - button "maestro-clarify-fold-knCEzN 1" [ref=e729] [cursor=pointer]:
+          - generic [ref=e730]: maestro-clarify-fold-knCEzN
+          - generic [ref=e731]: "1"
+        - button "maestro-cli-JVx7uO 1" [ref=e732] [cursor=pointer]:
+          - generic [ref=e733]: maestro-cli-JVx7uO
+          - generic [ref=e734]: "1"
+        - button "maestro-clarify-9V2gVk 1" [ref=e735] [cursor=pointer]:
+          - generic [ref=e736]: maestro-clarify-9V2gVk
+          - generic [ref=e737]: "1"
+        - button "maestro-dispatch-UlGQaR 1" [ref=e738] [cursor=pointer]:
+          - generic [ref=e739]: maestro-dispatch-UlGQaR
+          - generic [ref=e740]: "1"
+        - button "maestro-run-2kA6k9 1" [ref=e741] [cursor=pointer]:
+          - generic [ref=e742]: maestro-run-2kA6k9
+          - generic [ref=e743]: "1"
+        - button "maestro-run-UdJKRD 1" [ref=e744] [cursor=pointer]:
+          - generic [ref=e745]: maestro-run-UdJKRD
+          - generic [ref=e746]: "1"
+        - button "maestro-master-TClmZR 1" [ref=e747] [cursor=pointer]:
+          - generic [ref=e748]: maestro-master-TClmZR
+          - generic [ref=e749]: "1"
+        - button "maestro-parent-wZiuQX 1" [ref=e750] [cursor=pointer]:
+          - generic [ref=e751]: maestro-parent-wZiuQX
+          - generic [ref=e752]: "1"
+        - button "maestro-orch-OPugWX 1" [ref=e753] [cursor=pointer]:
+          - generic [ref=e754]: maestro-orch-OPugWX
+          - generic [ref=e755]: "1"
+        - button "maestro-orch-fQ2zpN 1" [ref=e756] [cursor=pointer]:
+          - generic [ref=e757]: maestro-orch-fQ2zpN
+          - generic [ref=e758]: "1"
+        - button "maestro-orch-bWq81D 1" [ref=e759] [cursor=pointer]:
+          - generic [ref=e760]: maestro-orch-bWq81D
+          - generic [ref=e761]: "1"
+        - button "maestro-dispatch-oujhNg 1" [ref=e762] [cursor=pointer]:
+          - generic [ref=e763]: maestro-dispatch-oujhNg
+          - generic [ref=e764]: "1"
+        - button "maestro-orch-OSSpMq 1" [ref=e765] [cursor=pointer]:
+          - generic [ref=e766]: maestro-orch-OSSpMq
+          - generic [ref=e767]: "1"
+        - button "maestro-orch-uZxK7P 1" [ref=e768] [cursor=pointer]:
+          - generic [ref=e769]: maestro-orch-uZxK7P
+          - generic [ref=e770]: "1"
+        - button "maestro-timing-3UYmb3 1" [ref=e771] [cursor=pointer]:
+          - generic [ref=e772]: maestro-timing-3UYmb3
+          - generic [ref=e773]: "1"
+        - button "maestro-dispatch-moFe4R 1" [ref=e774] [cursor=pointer]:
+          - generic [ref=e775]: maestro-dispatch-moFe4R
+          - generic [ref=e776]: "1"
+        - button "maestro-cli-Tef0K8 1" [ref=e777] [cursor=pointer]:
+          - generic [ref=e778]: maestro-cli-Tef0K8
+          - generic [ref=e779]: "1"
+        - button "maestro-clarify-gfxZLK 1" [ref=e780] [cursor=pointer]:
+          - generic [ref=e781]: maestro-clarify-gfxZLK
+          - generic [ref=e782]: "1"
+        - button "maestro-clarify-fold-Z15hTc 1" [ref=e783] [cursor=pointer]:
+          - generic [ref=e784]: maestro-clarify-fold-Z15hTc
+          - generic [ref=e785]: "1"
+        - button "maestro-run-dzClru 1" [ref=e786] [cursor=pointer]:
+          - generic [ref=e787]: maestro-run-dzClru
+          - generic [ref=e788]: "1"
+        - button "maestro-master-XxlWHH 1" [ref=e789] [cursor=pointer]:
+          - generic [ref=e790]: maestro-master-XxlWHH
+          - generic [ref=e791]: "1"
+        - button "maestro-parent-J0nmau 1" [ref=e792] [cursor=pointer]:
+          - generic [ref=e793]: maestro-parent-J0nmau
+          - generic [ref=e794]: "1"
+        - button "maestro-orch-wc528I 1" [ref=e795] [cursor=pointer]:
+          - generic [ref=e796]: maestro-orch-wc528I
+          - generic [ref=e797]: "1"
+        - button "maestro-orch-H92Cjm 1" [ref=e798] [cursor=pointer]:
+          - generic [ref=e799]: maestro-orch-H92Cjm
+          - generic [ref=e800]: "1"
+        - button "maestro-orch-BohPm0 1" [ref=e801] [cursor=pointer]:
+          - generic [ref=e802]: maestro-orch-BohPm0
+          - generic [ref=e803]: "1"
+        - button "maestro-dispatch-5JFOg4 1" [ref=e804] [cursor=pointer]:
+          - generic [ref=e805]: maestro-dispatch-5JFOg4
+          - generic [ref=e806]: "1"
+        - button "maestro-orch-HiqkGY 1" [ref=e807] [cursor=pointer]:
+          - generic [ref=e808]: maestro-orch-HiqkGY
+          - generic [ref=e809]: "1"
+        - button "maestro-orch-m09e7Z 1" [ref=e810] [cursor=pointer]:
+          - generic [ref=e811]: maestro-orch-m09e7Z
+          - generic [ref=e812]: "1"
+        - button "maestro-timing-6wSrVG 1" [ref=e813] [cursor=pointer]:
+          - generic [ref=e814]: maestro-timing-6wSrVG
+          - generic [ref=e815]: "1"
+        - button "maestro-cli-I6jYdK 1" [ref=e816] [cursor=pointer]:
+          - generic [ref=e817]: maestro-cli-I6jYdK
+          - generic [ref=e818]: "1"
+        - button "maestro-clarify-y33Tts 1" [ref=e819] [cursor=pointer]:
+          - generic [ref=e820]: maestro-clarify-y33Tts
+          - generic [ref=e821]: "1"
+        - button "maestro-clarify-fold-yTzwL0 1" [ref=e822] [cursor=pointer]:
+          - generic [ref=e823]: maestro-clarify-fold-yTzwL0
+          - generic [ref=e824]: "1"
+        - button "maestro-dispatch-8ZiOy3 1" [ref=e825] [cursor=pointer]:
+          - generic [ref=e826]: maestro-dispatch-8ZiOy3
+          - generic [ref=e827]: "1"
+        - button "maestro-run-VuCkcd 1" [ref=e828] [cursor=pointer]:
+          - generic [ref=e829]: maestro-run-VuCkcd
+          - generic [ref=e830]: "1"
+        - button "maestro-run-ZFREGc 1" [ref=e831] [cursor=pointer]:
+          - generic [ref=e832]: maestro-run-ZFREGc
+          - generic [ref=e833]: "1"
+        - button "maestro-master-178Q2t 1" [ref=e834] [cursor=pointer]:
+          - generic [ref=e835]: maestro-master-178Q2t
+          - generic [ref=e836]: "1"
+        - button "maestro-parent-YshFBA 1" [ref=e837] [cursor=pointer]:
+          - generic [ref=e838]: maestro-parent-YshFBA
+          - generic [ref=e839]: "1"
+        - button "maestro-orch-qfSJdy 1" [ref=e840] [cursor=pointer]:
+          - generic [ref=e841]: maestro-orch-qfSJdy
+          - generic [ref=e842]: "1"
+        - button "maestro-orch-7J9dG2 1" [ref=e843] [cursor=pointer]:
+          - generic [ref=e844]: maestro-orch-7J9dG2
+          - generic [ref=e845]: "1"
+        - button "maestro-orch-FgHmRx 1" [ref=e846] [cursor=pointer]:
+          - generic [ref=e847]: maestro-orch-FgHmRx
+          - generic [ref=e848]: "1"
+        - button "maestro-dispatch-k5qinD 1" [ref=e849] [cursor=pointer]:
+          - generic [ref=e850]: maestro-dispatch-k5qinD
+          - generic [ref=e851]: "1"
+        - button "maestro-orch-8NCzWz 1" [ref=e852] [cursor=pointer]:
+          - generic [ref=e853]: maestro-orch-8NCzWz
+          - generic [ref=e854]: "1"
+        - button "maestro-orch-nRq0Y5 1" [ref=e855] [cursor=pointer]:
+          - generic [ref=e856]: maestro-orch-nRq0Y5
+          - generic [ref=e857]: "1"
+        - button "maestro-dispatch-w7Qj4k 1" [ref=e858] [cursor=pointer]:
+          - generic [ref=e859]: maestro-dispatch-w7Qj4k
+          - generic [ref=e860]: "1"
+        - button "maestro-timing-UAin0O 1" [ref=e861] [cursor=pointer]:
+          - generic [ref=e862]: maestro-timing-UAin0O
+          - generic [ref=e863]: "1"
+        - button "maestro-cli-sxNwuX 1" [ref=e864] [cursor=pointer]:
+          - generic [ref=e865]: maestro-cli-sxNwuX
+          - generic [ref=e866]: "1"
+        - button "maestro-clarify-fold-n2c9Rm 1" [ref=e867] [cursor=pointer]:
+          - generic [ref=e868]: maestro-clarify-fold-n2c9Rm
+          - generic [ref=e869]: "1"
+        - button "maestro-clarify-QzHxPN 1" [ref=e870] [cursor=pointer]:
+          - generic [ref=e871]: maestro-clarify-QzHxPN
+          - generic [ref=e872]: "1"
+        - button "maestro-run-3LaAdT 1" [ref=e873] [cursor=pointer]:
+          - generic [ref=e874]: maestro-run-3LaAdT
+          - generic [ref=e875]: "1"
+        - button "maestro-run-xiKEoL 1" [ref=e876] [cursor=pointer]:
+          - generic [ref=e877]: maestro-run-xiKEoL
+          - generic [ref=e878]: "1"
+        - button "maestro-master-Q4MfPC 1" [ref=e879] [cursor=pointer]:
+          - generic [ref=e880]: maestro-master-Q4MfPC
+          - generic [ref=e881]: "1"
+        - button "maestro-parent-rlbf9g 1" [ref=e882] [cursor=pointer]:
+          - generic [ref=e883]: maestro-parent-rlbf9g
+          - generic [ref=e884]: "1"
+        - button "maestro-orch-MhFwdh 1" [ref=e885] [cursor=pointer]:
+          - generic [ref=e886]: maestro-orch-MhFwdh
+          - generic [ref=e887]: "1"
+        - button "maestro-orch-cgMc7m 1" [ref=e888] [cursor=pointer]:
+          - generic [ref=e889]: maestro-orch-cgMc7m
+          - generic [ref=e890]: "1"
+        - button "maestro-orch-Ktf3dS 1" [ref=e891] [cursor=pointer]:
+          - generic [ref=e892]: maestro-orch-Ktf3dS
+          - generic [ref=e893]: "1"
+        - button "maestro-dispatch-TkbcWk 1" [ref=e894] [cursor=pointer]:
+          - generic [ref=e895]: maestro-dispatch-TkbcWk
+          - generic [ref=e896]: "1"
+        - button "maestro-orch-GHgvKn 1" [ref=e897] [cursor=pointer]:
+          - generic [ref=e898]: maestro-orch-GHgvKn
+          - generic [ref=e899]: "1"
+        - button "maestro-orch-UoZkb9 1" [ref=e900] [cursor=pointer]:
+          - generic [ref=e901]: maestro-orch-UoZkb9
+          - generic [ref=e902]: "1"
+        - button "maestro-clarify-lMviUJ 1" [ref=e903] [cursor=pointer]:
+          - generic [ref=e904]: maestro-clarify-lMviUJ
+          - generic [ref=e905]: "1"
+        - button "maestro-cli-rEtGsy 1" [ref=e906] [cursor=pointer]:
+          - generic [ref=e907]: maestro-cli-rEtGsy
+          - generic [ref=e908]: "1"
+        - button "maestro-clarify-fold-43RjKG 1" [ref=e909] [cursor=pointer]:
+          - generic [ref=e910]: maestro-clarify-fold-43RjKG
+          - generic [ref=e911]: "1"
+        - button "maestro-timing-nKiYHV 1" [ref=e912] [cursor=pointer]:
+          - generic [ref=e913]: maestro-timing-nKiYHV
+          - generic [ref=e914]: "1"
+        - button "maestro-dispatch-crDtGX 1" [ref=e915] [cursor=pointer]:
+          - generic [ref=e916]: maestro-dispatch-crDtGX
+          - generic [ref=e917]: "1"
+        - button "maestro-run-b1ay3C 1" [ref=e918] [cursor=pointer]:
+          - generic [ref=e919]: maestro-run-b1ay3C
+          - generic [ref=e920]: "1"
+        - button "maestro-run-0oyzL7 1" [ref=e921] [cursor=pointer]:
+          - generic [ref=e922]: maestro-run-0oyzL7
+          - generic [ref=e923]: "1"
+        - button "maestro-master-Nrw6BK 1" [ref=e924] [cursor=pointer]:
+          - generic [ref=e925]: maestro-master-Nrw6BK
+          - generic [ref=e926]: "1"
+        - button "maestro-parent-Mbv0Mx 1" [ref=e927] [cursor=pointer]:
+          - generic [ref=e928]: maestro-parent-Mbv0Mx
+          - generic [ref=e929]: "1"
+        - button "maestro-orch-2uW5Do 1" [ref=e930] [cursor=pointer]:
+          - generic [ref=e931]: maestro-orch-2uW5Do
+          - generic [ref=e932]: "1"
+        - button "maestro-orch-q4mltM 1" [ref=e933] [cursor=pointer]:
+          - generic [ref=e934]: maestro-orch-q4mltM
+          - generic [ref=e935]: "1"
+        - button "maestro-orch-BLF3UG 1" [ref=e936] [cursor=pointer]:
+          - generic [ref=e937]: maestro-orch-BLF3UG
+          - generic [ref=e938]: "1"
+        - button "maestro-dispatch-tCr7g9 1" [ref=e939] [cursor=pointer]:
+          - generic [ref=e940]: maestro-dispatch-tCr7g9
+          - generic [ref=e941]: "1"
+        - button "maestro-orch-A8floq 1" [ref=e942] [cursor=pointer]:
+          - generic [ref=e943]: maestro-orch-A8floq
+          - generic [ref=e944]: "1"
+        - button "maestro-cli-NWil0i 1" [ref=e945] [cursor=pointer]:
+          - generic [ref=e946]: maestro-cli-NWil0i
+          - generic [ref=e947]: "1"
+        - button "maestro-orch-vOz7U9 1" [ref=e948] [cursor=pointer]:
+          - generic [ref=e949]: maestro-orch-vOz7U9
+          - generic [ref=e950]: "1"
+        - button "maestro-clarify-UO5ENd 1" [ref=e951] [cursor=pointer]:
+          - generic [ref=e952]: maestro-clarify-UO5ENd
+          - generic [ref=e953]: "1"
+        - button "maestro-timing-MHkUXz 1" [ref=e954] [cursor=pointer]:
+          - generic [ref=e955]: maestro-timing-MHkUXz
+          - generic [ref=e956]: "1"
+        - button "maestro-dispatch-FS2zyP 1" [ref=e957] [cursor=pointer]:
+          - generic [ref=e958]: maestro-dispatch-FS2zyP
+          - generic [ref=e959]: "1"
+        - button "maestro-clarify-fold-PCO5rx 1" [ref=e960] [cursor=pointer]:
+          - generic [ref=e961]: maestro-clarify-fold-PCO5rx
+          - generic [ref=e962]: "1"
+        - button "maestro-run-neSd2C 1" [ref=e963] [cursor=pointer]:
+          - generic [ref=e964]: maestro-run-neSd2C
+          - generic [ref=e965]: "1"
+        - button "maestro-run-wboUxy 1" [ref=e966] [cursor=pointer]:
+          - generic [ref=e967]: maestro-run-wboUxy
+          - generic [ref=e968]: "1"
+        - button "maestro-master-gEKtQU 1" [ref=e969] [cursor=pointer]:
+          - generic [ref=e970]: maestro-master-gEKtQU
+          - generic [ref=e971]: "1"
+        - button "maestro-parent-EPVhgl 1" [ref=e972] [cursor=pointer]:
+          - generic [ref=e973]: maestro-parent-EPVhgl
+          - generic [ref=e974]: "1"
+        - button "maestro-orch-PGUP8M 1" [ref=e975] [cursor=pointer]:
+          - generic [ref=e976]: maestro-orch-PGUP8M
+          - generic [ref=e977]: "1"
+        - button "maestro-orch-gTr7gO 1" [ref=e978] [cursor=pointer]:
+          - generic [ref=e979]: maestro-orch-gTr7gO
+          - generic [ref=e980]: "1"
+        - button "maestro-orch-DXkb8D 1" [ref=e981] [cursor=pointer]:
+          - generic [ref=e982]: maestro-orch-DXkb8D
+          - generic [ref=e983]: "1"
+        - button "maestro-dispatch-rP4oX6 1" [ref=e984] [cursor=pointer]:
+          - generic [ref=e985]: maestro-dispatch-rP4oX6
+          - generic [ref=e986]: "1"
+        - button "maestro-orch-bMcicF 1" [ref=e987] [cursor=pointer]:
+          - generic [ref=e988]: maestro-orch-bMcicF
+          - generic [ref=e989]: "1"
+        - button "maestro-orch-LEd1lW 1" [ref=e990] [cursor=pointer]:
+          - generic [ref=e991]: maestro-orch-LEd1lW
+          - generic [ref=e992]: "1"
+        - button "maestro-timing-zanVf5 1" [ref=e993] [cursor=pointer]:
+          - generic [ref=e994]: maestro-timing-zanVf5
+          - generic [ref=e995]: "1"
+        - button "maestro-cli-M1583w 1" [ref=e996] [cursor=pointer]:
+          - generic [ref=e997]: maestro-cli-M1583w
+          - generic [ref=e998]: "1"
+        - button "maestro-clarify-DeHRvf 1" [ref=e999] [cursor=pointer]:
+          - generic [ref=e1000]: maestro-clarify-DeHRvf
+          - generic [ref=e1001]: "1"
+        - button "maestro-clarify-fold-4TcVmC 1" [ref=e1002] [cursor=pointer]:
+          - generic [ref=e1003]: maestro-clarify-fold-4TcVmC
+          - generic [ref=e1004]: "1"
+        - button "maestro-dispatch-vp8Pk1 1" [ref=e1005] [cursor=pointer]:
+          - generic [ref=e1006]: maestro-dispatch-vp8Pk1
+          - generic [ref=e1007]: "1"
+        - button "maestro-run-xRThnj 1" [ref=e1008] [cursor=pointer]:
+          - generic [ref=e1009]: maestro-run-xRThnj
+          - generic [ref=e1010]: "1"
+        - button "maestro-master-T6J7Rm 1" [ref=e1011] [cursor=pointer]:
+          - generic [ref=e1012]: maestro-master-T6J7Rm
+          - generic [ref=e1013]: "1"
+        - button "maestro-parent-UTeyxm 1" [ref=e1014] [cursor=pointer]:
+          - generic [ref=e1015]: maestro-parent-UTeyxm
+          - generic [ref=e1016]: "1"
+        - button "maestro-orch-mpm4v0 1" [ref=e1017] [cursor=pointer]:
+          - generic [ref=e1018]: maestro-orch-mpm4v0
+          - generic [ref=e1019]: "1"
+        - button "maestro-orch-lnrRYv 1" [ref=e1020] [cursor=pointer]:
+          - generic [ref=e1021]: maestro-orch-lnrRYv
+          - generic [ref=e1022]: "1"
+        - button "maestro-orch-uADvCV 1" [ref=e1023] [cursor=pointer]:
+          - generic [ref=e1024]: maestro-orch-uADvCV
+          - generic [ref=e1025]: "1"
+        - button "maestro-dispatch-9nknoe 1" [ref=e1026] [cursor=pointer]:
+          - generic [ref=e1027]: maestro-dispatch-9nknoe
+          - generic [ref=e1028]: "1"
+        - button "maestro-orch-8zjO7D 1" [ref=e1029] [cursor=pointer]:
+          - generic [ref=e1030]: maestro-orch-8zjO7D
+          - generic [ref=e1031]: "1"
+        - button "maestro-orch-QJtUGt 1" [ref=e1032] [cursor=pointer]:
+          - generic [ref=e1033]: maestro-orch-QJtUGt
+          - generic [ref=e1034]: "1"
+        - button "maestro-timing-dHuOnJ 1" [ref=e1035] [cursor=pointer]:
+          - generic [ref=e1036]: maestro-timing-dHuOnJ
+          - generic [ref=e1037]: "1"
+        - button "maestro-cli-D96fdc 1" [ref=e1038] [cursor=pointer]:
+          - generic [ref=e1039]: maestro-cli-D96fdc
+          - generic [ref=e1040]: "1"
+        - button "maestro-dispatch-ZEJbG3 1" [ref=e1041] [cursor=pointer]:
+          - generic [ref=e1042]: maestro-dispatch-ZEJbG3
+          - generic [ref=e1043]: "1"
+        - button "maestro-clarify-0u1J22 1" [ref=e1044] [cursor=pointer]:
+          - generic [ref=e1045]: maestro-clarify-0u1J22
+          - generic [ref=e1046]: "1"
+        - button "maestro-clarify-fold-QGDMnG 1" [ref=e1047] [cursor=pointer]:
+          - generic [ref=e1048]: maestro-clarify-fold-QGDMnG
+          - generic [ref=e1049]: "1"
+        - button "maestro-run-FRleUh 1" [ref=e1050] [cursor=pointer]:
+          - generic [ref=e1051]: maestro-run-FRleUh
+          - generic [ref=e1052]: "1"
+        - button "maestro-run-Jk1lXe 1" [ref=e1053] [cursor=pointer]:
+          - generic [ref=e1054]: maestro-run-Jk1lXe
+          - generic [ref=e1055]: "1"
+        - button "maestro-master-miNIBk 1" [ref=e1056] [cursor=pointer]:
+          - generic [ref=e1057]: maestro-master-miNIBk
+          - generic [ref=e1058]: "1"
+        - button "maestro-parent-qY8t6o 1" [ref=e1059] [cursor=pointer]:
+          - generic [ref=e1060]: maestro-parent-qY8t6o
+          - generic [ref=e1061]: "1"
+        - button "maestro-orch-LFZ22I 1" [ref=e1062] [cursor=pointer]:
+          - generic [ref=e1063]: maestro-orch-LFZ22I
+          - generic [ref=e1064]: "1"
+        - button "maestro-orch-chLlq2 1" [ref=e1065] [cursor=pointer]:
+          - generic [ref=e1066]: maestro-orch-chLlq2
+          - generic [ref=e1067]: "1"
+        - button "maestro-orch-qwCRK0 1" [ref=e1068] [cursor=pointer]:
+          - generic [ref=e1069]: maestro-orch-qwCRK0
+          - generic [ref=e1070]: "1"
+        - button "maestro-dispatch-d6Imvd 1" [ref=e1071] [cursor=pointer]:
+          - generic [ref=e1072]: maestro-dispatch-d6Imvd
+          - generic [ref=e1073]: "1"
+        - button "maestro-orch-LBOzGN 1" [ref=e1074] [cursor=pointer]:
+          - generic [ref=e1075]: maestro-orch-LBOzGN
+          - generic [ref=e1076]: "1"
+        - button "maestro-orch-eNjH11 1" [ref=e1077] [cursor=pointer]:
+          - generic [ref=e1078]: maestro-orch-eNjH11
+          - generic [ref=e1079]: "1"
+        - button "maestro-dispatch-oh0XbR 1" [ref=e1080] [cursor=pointer]:
+          - generic [ref=e1081]: maestro-dispatch-oh0XbR
+          - generic [ref=e1082]: "1"
+        - button "maestro-timing-xdmtEY 1" [ref=e1083] [cursor=pointer]:
+          - generic [ref=e1084]: maestro-timing-xdmtEY
+          - generic [ref=e1085]: "1"
+        - button "maestro-cli-lSd0Fx 1" [ref=e1086] [cursor=pointer]:
+          - generic [ref=e1087]: maestro-cli-lSd0Fx
+          - generic [ref=e1088]: "1"
+        - button "maestro-clarify-fold-mZxJRi 1" [ref=e1089] [cursor=pointer]:
+          - generic [ref=e1090]: maestro-clarify-fold-mZxJRi
+          - generic [ref=e1091]: "1"
+        - button "maestro-clarify-eXTLEt 1" [ref=e1092] [cursor=pointer]:
+          - generic [ref=e1093]: maestro-clarify-eXTLEt
+          - generic [ref=e1094]: "1"
+        - button "maestro-run-rprDEm 1" [ref=e1095] [cursor=pointer]:
+          - generic [ref=e1096]: maestro-run-rprDEm
+          - generic [ref=e1097]: "1"
+        - button "maestro-run-gjuuy7 1" [ref=e1098] [cursor=pointer]:
+          - generic [ref=e1099]: maestro-run-gjuuy7
+          - generic [ref=e1100]: "1"
+        - button "maestro-master-vkZw4q 1" [ref=e1101] [cursor=pointer]:
+          - generic [ref=e1102]: maestro-master-vkZw4q
+          - generic [ref=e1103]: "1"
+        - button "maestro-parent-KDQcCl 1" [ref=e1104] [cursor=pointer]:
+          - generic [ref=e1105]: maestro-parent-KDQcCl
+          - generic [ref=e1106]: "1"
+        - button "maestro-orch-B6REAK 1" [ref=e1107] [cursor=pointer]:
+          - generic [ref=e1108]: maestro-orch-B6REAK
+          - generic [ref=e1109]: "1"
+        - button "maestro-orch-NdMXzI 1" [ref=e1110] [cursor=pointer]:
+          - generic [ref=e1111]: maestro-orch-NdMXzI
+          - generic [ref=e1112]: "1"
+        - button "maestro-dispatch-5g4Mhk 1" [ref=e1113] [cursor=pointer]:
+          - generic [ref=e1114]: maestro-dispatch-5g4Mhk
+          - generic [ref=e1115]: "1"
+        - button "maestro-orch-eHWVYN 1" [ref=e1116] [cursor=pointer]:
+          - generic [ref=e1117]: maestro-orch-eHWVYN
+          - generic [ref=e1118]: "1"
+        - button "maestro-orch-cUf5u2 1" [ref=e1119] [cursor=pointer]:
+          - generic [ref=e1120]: maestro-orch-cUf5u2
+          - generic [ref=e1121]: "1"
+        - button "maestro-orch-Rq52Vq 1" [ref=e1122] [cursor=pointer]:
+          - generic [ref=e1123]: maestro-orch-Rq52Vq
+          - generic [ref=e1124]: "1"
+        - button "maestro-timing-hd4zxT 1" [ref=e1125] [cursor=pointer]:
+          - generic [ref=e1126]: maestro-timing-hd4zxT
+          - generic [ref=e1127]: "1"
+        - button "maestro-dispatch-DzR9qO 1" [ref=e1128] [cursor=pointer]:
+          - generic [ref=e1129]: maestro-dispatch-DzR9qO
+          - generic [ref=e1130]: "1"
+        - button "maestro-cli-b8CKbT 1" [ref=e1131] [cursor=pointer]:
+          - generic [ref=e1132]: maestro-cli-b8CKbT
+          - generic [ref=e1133]: "1"
+        - button "maestro-clarify-hOhtaA 1" [ref=e1134] [cursor=pointer]:
+          - generic [ref=e1135]: maestro-clarify-hOhtaA
+          - generic [ref=e1136]: "1"
+        - button "maestro-clarify-fold-c1zjQn 1" [ref=e1137] [cursor=pointer]:
+          - generic [ref=e1138]: maestro-clarify-fold-c1zjQn
+          - generic [ref=e1139]: "1"
+        - button "maestro-run-sJkmnZ 1" [ref=e1140] [cursor=pointer]:
+          - generic [ref=e1141]: maestro-run-sJkmnZ
+          - generic [ref=e1142]: "1"
+        - button "maestro-run-cf14sv 1" [ref=e1143] [cursor=pointer]:
+          - generic [ref=e1144]: maestro-run-cf14sv
+          - generic [ref=e1145]: "1"
+        - button "maestro-master-tINlev 1" [ref=e1146] [cursor=pointer]:
+          - generic [ref=e1147]: maestro-master-tINlev
+          - generic [ref=e1148]: "1"
+        - button "maestro-parent-Ieggor 1" [ref=e1149] [cursor=pointer]:
+          - generic [ref=e1150]: maestro-parent-Ieggor
+          - generic [ref=e1151]: "1"
+        - button "maestro-orch-PV1QP0 1" [ref=e1152] [cursor=pointer]:
+          - generic [ref=e1153]: maestro-orch-PV1QP0
+          - generic [ref=e1154]: "1"
+        - button "maestro-orch-aXsakJ 1" [ref=e1155] [cursor=pointer]:
+          - generic [ref=e1156]: maestro-orch-aXsakJ
+          - generic [ref=e1157]: "1"
+        - button "maestro-orch-hBX9T8 1" [ref=e1158] [cursor=pointer]:
+          - generic [ref=e1159]: maestro-orch-hBX9T8
+          - generic [ref=e1160]: "1"
+        - button "maestro-dispatch-JndEwA 1" [ref=e1161] [cursor=pointer]:
+          - generic [ref=e1162]: maestro-dispatch-JndEwA
+          - generic [ref=e1163]: "1"
+        - button "maestro-orch-q1L6W6 1" [ref=e1164] [cursor=pointer]:
+          - generic [ref=e1165]: maestro-orch-q1L6W6
+          - generic [ref=e1166]: "1"
+        - button "maestro-orch-BL4RIg 1" [ref=e1167] [cursor=pointer]:
+          - generic [ref=e1168]: maestro-orch-BL4RIg
+          - generic [ref=e1169]: "1"
+        - button "maestro-dispatch-6qHaFq 1" [ref=e1170] [cursor=pointer]:
+          - generic [ref=e1171]: maestro-dispatch-6qHaFq
+          - generic [ref=e1172]: "1"
+        - button "maestro-timing-yz7qFj 1" [ref=e1173] [cursor=pointer]:
+          - generic [ref=e1174]: maestro-timing-yz7qFj
+          - generic [ref=e1175]: "1"
+        - button "maestro-cli-8lU1ds 1" [ref=e1176] [cursor=pointer]:
+          - generic [ref=e1177]: maestro-cli-8lU1ds
+          - generic [ref=e1178]: "1"
+        - button "maestro-clarify-fold-nzmeqk 1" [ref=e1179] [cursor=pointer]:
+          - generic [ref=e1180]: maestro-clarify-fold-nzmeqk
+          - generic [ref=e1181]: "1"
+        - button "maestro-clarify-9YakSl 1" [ref=e1182] [cursor=pointer]:
+          - generic [ref=e1183]: maestro-clarify-9YakSl
+          - generic [ref=e1184]: "1"
+        - button "maestro-run-CdfwPO 1" [ref=e1185] [cursor=pointer]:
+          - generic [ref=e1186]: maestro-run-CdfwPO
+          - generic [ref=e1187]: "1"
+        - button "maestro-run-7pJXta 1" [ref=e1188] [cursor=pointer]:
+          - generic [ref=e1189]: maestro-run-7pJXta
+          - generic [ref=e1190]: "1"
+        - button "maestro-master-DrGurR 1" [ref=e1191] [cursor=pointer]:
+          - generic [ref=e1192]: maestro-master-DrGurR
+          - generic [ref=e1193]: "1"
+        - button "maestro-parent-NrKq6C 1" [ref=e1194] [cursor=pointer]:
+          - generic [ref=e1195]: maestro-parent-NrKq6C
+          - generic [ref=e1196]: "1"
+        - button "maestro-orch-qAuk6O 1" [ref=e1197] [cursor=pointer]:
+          - generic [ref=e1198]: maestro-orch-qAuk6O
+          - generic [ref=e1199]: "1"
+        - button "maestro-orch-DDL2Xc 1" [ref=e1200] [cursor=pointer]:
+          - generic [ref=e1201]: maestro-orch-DDL2Xc
+          - generic [ref=e1202]: "1"
+        - button "maestro-orch-rw4oL1 1" [ref=e1203] [cursor=pointer]:
+          - generic [ref=e1204]: maestro-orch-rw4oL1
+          - generic [ref=e1205]: "1"
+        - button "maestro-dispatch-WgfYkX 1" [ref=e1206] [cursor=pointer]:
+          - generic [ref=e1207]: maestro-dispatch-WgfYkX
+          - generic [ref=e1208]: "1"
+        - button "maestro-orch-de3II0 1" [ref=e1209] [cursor=pointer]:
+          - generic [ref=e1210]: maestro-orch-de3II0
+          - generic [ref=e1211]: "1"
+        - button "maestro-orch-pzHa98 1" [ref=e1212] [cursor=pointer]:
+          - generic [ref=e1213]: maestro-orch-pzHa98
+          - generic [ref=e1214]: "1"
+        - button "maestro-dispatch-FXBtrE 1" [ref=e1215] [cursor=pointer]:
+          - generic [ref=e1216]: maestro-dispatch-FXBtrE
+          - generic [ref=e1217]: "1"
+        - button "maestro-timing-BKwoO6 1" [ref=e1218] [cursor=pointer]:
+          - generic [ref=e1219]: maestro-timing-BKwoO6
+          - generic [ref=e1220]: "1"
+        - button "maestro-cli-BqXMN3 1" [ref=e1221] [cursor=pointer]:
+          - generic [ref=e1222]: maestro-cli-BqXMN3
+          - generic [ref=e1223]: "1"
+        - button "maestro-clarify-M2GRjT 1" [ref=e1224] [cursor=pointer]:
+          - generic [ref=e1225]: maestro-clarify-M2GRjT
+          - generic [ref=e1226]: "1"
+        - button "maestro-clarify-fold-Zo7Tk4 1" [ref=e1227] [cursor=pointer]:
+          - generic [ref=e1228]: maestro-clarify-fold-Zo7Tk4
+          - generic [ref=e1229]: "1"
+        - button "maestro-run-yl0Aeu 1" [ref=e1230] [cursor=pointer]:
+          - generic [ref=e1231]: maestro-run-yl0Aeu
+          - generic [ref=e1232]: "1"
+        - button "maestro-run-uARVVf 1" [ref=e1233] [cursor=pointer]:
+          - generic [ref=e1234]: maestro-run-uARVVf
+          - generic [ref=e1235]: "1"
+        - button "maestro-master-xmFHDB 1" [ref=e1236] [cursor=pointer]:
+          - generic [ref=e1237]: maestro-master-xmFHDB
+          - generic [ref=e1238]: "1"
+        - button "maestro-parent-IEPVjb 1" [ref=e1239] [cursor=pointer]:
+          - generic [ref=e1240]: maestro-parent-IEPVjb
+          - generic [ref=e1241]: "1"
+        - button "maestro-orch-MLdXp2 1" [ref=e1242] [cursor=pointer]:
+          - generic [ref=e1243]: maestro-orch-MLdXp2
+          - generic [ref=e1244]: "1"
+        - button "maestro-orch-LWK5Kg 1" [ref=e1245] [cursor=pointer]:
+          - generic [ref=e1246]: maestro-orch-LWK5Kg
+          - generic [ref=e1247]: "1"
+        - button "maestro-orch-g5T9BD 1" [ref=e1248] [cursor=pointer]:
+          - generic [ref=e1249]: maestro-orch-g5T9BD
+          - generic [ref=e1250]: "1"
+        - button "maestro-dispatch-tobAI3 1" [ref=e1251] [cursor=pointer]:
+          - generic [ref=e1252]: maestro-dispatch-tobAI3
+          - generic [ref=e1253]: "1"
+        - button "maestro-orch-ROWnOr 1" [ref=e1254] [cursor=pointer]:
+          - generic [ref=e1255]: maestro-orch-ROWnOr
+          - generic [ref=e1256]: "1"
+        - button "maestro-orch-at2bGx 1" [ref=e1257] [cursor=pointer]:
+          - generic [ref=e1258]: maestro-orch-at2bGx
+          - generic [ref=e1259]: "1"
+        - button "maestro-timing-BLPCHF 1" [ref=e1260] [cursor=pointer]:
+          - generic [ref=e1261]: maestro-timing-BLPCHF
+          - generic [ref=e1262]: "1"
+        - button "maestro-dispatch-Liw67h 1" [ref=e1263] [cursor=pointer]:
+          - generic [ref=e1264]: maestro-dispatch-Liw67h
+          - generic [ref=e1265]: "1"
+        - button "maestro-cli-d3jEu4 1" [ref=e1266] [cursor=pointer]:
+          - generic [ref=e1267]: maestro-cli-d3jEu4
+          - generic [ref=e1268]: "1"
+        - button "maestro-clarify-tsLpBb 1" [ref=e1269] [cursor=pointer]:
+          - generic [ref=e1270]: maestro-clarify-tsLpBb
+          - generic [ref=e1271]: "1"
+        - button "maestro-clarify-fold-OglTCd 1" [ref=e1272] [cursor=pointer]:
+          - generic [ref=e1273]: maestro-clarify-fold-OglTCd
+          - generic [ref=e1274]: "1"
+        - button "maestro-run-r7ZmFm 1" [ref=e1275] [cursor=pointer]:
+          - generic [ref=e1276]: maestro-run-r7ZmFm
+          - generic [ref=e1277]: "1"
+        - button "maestro-run-6pQgcT 1" [ref=e1278] [cursor=pointer]:
+          - generic [ref=e1279]: maestro-run-6pQgcT
+          - generic [ref=e1280]: "1"
+        - button "maestro-master-4xVMRQ 1" [ref=e1281] [cursor=pointer]:
+          - generic [ref=e1282]: maestro-master-4xVMRQ
+          - generic [ref=e1283]: "1"
+        - button "maestro-parent-8uDWvh 1" [ref=e1284] [cursor=pointer]:
+          - generic [ref=e1285]: maestro-parent-8uDWvh
+          - generic [ref=e1286]: "1"
+        - button "maestro-orch-fXMzwI 1" [ref=e1287] [cursor=pointer]:
+          - generic [ref=e1288]: maestro-orch-fXMzwI
+          - generic [ref=e1289]: "1"
+        - button "maestro-orch-fA248T 1" [ref=e1290] [cursor=pointer]:
+          - generic [ref=e1291]: maestro-orch-fA248T
+          - generic [ref=e1292]: "1"
+        - button "maestro-orch-k1zDJL 1" [ref=e1293] [cursor=pointer]:
+          - generic [ref=e1294]: maestro-orch-k1zDJL
+          - generic [ref=e1295]: "1"
+        - button "maestro-dispatch-Ke2NGL 1" [ref=e1296] [cursor=pointer]:
+          - generic [ref=e1297]: maestro-dispatch-Ke2NGL
+          - generic [ref=e1298]: "1"
+        - button "maestro-orch-Q0qYIo 1" [ref=e1299] [cursor=pointer]:
+          - generic [ref=e1300]: maestro-orch-Q0qYIo
+          - generic [ref=e1301]: "1"
+        - button "maestro-orch-GNog5p 1" [ref=e1302] [cursor=pointer]:
+          - generic [ref=e1303]: maestro-orch-GNog5p
+          - generic [ref=e1304]: "1"
+        - button "maestro-timing-cFk7Ea 1" [ref=e1305] [cursor=pointer]:
+          - generic [ref=e1306]: maestro-timing-cFk7Ea
+          - generic [ref=e1307]: "1"
+        - button "maestro-run-GapCZr 1" [ref=e1308] [cursor=pointer]:
+          - generic [ref=e1309]: maestro-run-GapCZr
+          - generic [ref=e1310]: "1"
+        - button "maestro-run-n8H418 1" [ref=e1311] [cursor=pointer]:
+          - generic [ref=e1312]: maestro-run-n8H418
+          - generic [ref=e1313]: "1"
+        - button "maestro-dispatch-Inpoct 1" [ref=e1314] [cursor=pointer]:
+          - generic [ref=e1315]: maestro-dispatch-Inpoct
+          - generic [ref=e1316]: "1"
+        - button "maestro-clarify-fold-T0XlPS 1" [ref=e1317] [cursor=pointer]:
+          - generic [ref=e1318]: maestro-clarify-fold-T0XlPS
+          - generic [ref=e1319]: "1"
+        - button "maestro-clarify-lBTNJ1 1" [ref=e1320] [cursor=pointer]:
+          - generic [ref=e1321]: maestro-clarify-lBTNJ1
+          - generic [ref=e1322]: "1"
+        - button "maestro-cli-KTgJWW 1" [ref=e1323] [cursor=pointer]:
+          - generic [ref=e1324]: maestro-cli-KTgJWW
+          - generic [ref=e1325]: "1"
+      - generic [ref=e1326]:
+        - generic [ref=e1327]:
+          - generic [ref=e1328]:
+            - generic [ref=e1329]: Maestro
+            - generic [ref=e1330]: "8"
+          - button "RUNNING History consolidation 05/06/2026, 10:30:3659m 44s$21.54 maestro/history-consolidation-526c642a lines changed Create PR" [ref=e1332] [cursor=pointer]:
+            - generic [ref=e1333]: RUNNING
+            - generic [ref=e1334]:
+              - generic [ref=e1335]: History consolidation
+              - text: 05/06/2026, 10:30:3659m 44s$21.54
+              - generic [ref=e1336]: maestro/history-consolidation-526c642a
+            - generic [ref=e1337]:
+              - generic "lines changed" [ref=e1338]:
+                - generic [ref=e1339]: "+0"
+                - generic [ref=e1340]: −0
+              - button "Create PR" [ref=e1341]
+            - img [ref=e1342]
+          - button "STOPPED Fix menu scroll 05/06/2026, 00:53:2825m 43s$5.63 maestro/fix-menu-scroll-a61fe2f9 lines changed Merged" [ref=e1345] [cursor=pointer]:
+            - generic [ref=e1346]: STOPPED
+            - generic [ref=e1347]:
+              - generic [ref=e1348]: Fix menu scroll
+              - text: 05/06/2026, 00:53:2825m 43s$5.63
+              - generic [ref=e1349]: maestro/fix-menu-scroll-a61fe2f9
+            - generic [ref=e1350]:
+              - generic "lines changed" [ref=e1351]:
+                - generic [ref=e1352]: "+58"
+                - generic [ref=e1353]: −3
+              - link "Merged" [ref=e1354]:
+                - /url: https://github.com/denislavprinov/maestro/pull/14
+            - img [ref=e1355]
+          - button "DONE Option to delete history entry 04/06/2026, 23:08:0148m 24s$18.19 maestro/option-to-delete-history-entry-5d2582e7 lines changed Merged" [ref=e1358] [cursor=pointer]:
+            - generic [ref=e1359]: DONE
+            - generic [ref=e1360]:
+              - generic [ref=e1361]: Option to delete history entry
+              - text: 04/06/2026, 23:08:0148m 24s$18.19
+              - generic [ref=e1362]: maestro/option-to-delete-history-entry-5d2582e7
+            - generic [ref=e1363]:
+              - generic "lines changed" [ref=e1364]:
+                - generic [ref=e1365]: "+585"
+                - generic [ref=e1366]: −0
+              - link "Merged" [ref=e1367]:
+                - /url: https://github.com/denislavprinov/maestro/pull/13
+            - img [ref=e1368]
+          - button "DONE Hide PR button on merged or already opened PRs 04/06/2026, 22:26:1526m 52s$9.16 maestro/hide-pr-button-on-merged-or-3be52074 lines changed Merged" [ref=e1371] [cursor=pointer]:
+            - generic [ref=e1372]: DONE
+            - generic [ref=e1373]:
+              - generic [ref=e1374]: Hide PR button on merged or already opened PRs
+              - text: 04/06/2026, 22:26:1526m 52s$9.16
+              - generic [ref=e1375]: maestro/hide-pr-button-on-merged-or-3be52074
+            - generic [ref=e1376]:
+              - generic "lines changed" [ref=e1377]:
+                - generic [ref=e1378]: "+312"
+                - generic [ref=e1379]: −9
+              - link "Merged" [ref=e1380]:
+                - /url: https://github.com/denislavprinov/maestro/pull/11
+            - img [ref=e1381]
+          - button "DONE Sub-agent log separation in live logs 04/06/2026, 22:23:2821m 36s$7.57 maestro/sub-agent-log-separation-in-live-30e11df5 lines changed Merged" [ref=e1384] [cursor=pointer]:
+            - generic [ref=e1385]: DONE
+            - generic [ref=e1386]:
+              - generic [ref=e1387]: Sub-agent log separation in live logs
+              - text: 04/06/2026, 22:23:2821m 36s$7.57
+              - generic [ref=e1388]: maestro/sub-agent-log-separation-in-live-30e11df5
+            - generic [ref=e1389]:
+              - generic "lines changed" [ref=e1390]:
+                - generic [ref=e1391]: "+253"
+                - generic [ref=e1392]: −5
+              - link "Merged" [ref=e1393]:
+                - /url: https://github.com/denislavprinov/maestro/pull/12
+            - img [ref=e1394]
+          - button "DONE History entries additional functionality 04/06/2026, 21:26:2843m 45s$15.70 maestro/history-entries-additional-functionality-03309792 lines changed Merged" [ref=e1397] [cursor=pointer]:
+            - generic [ref=e1398]: DONE
+            - generic [ref=e1399]:
+              - generic [ref=e1400]: History entries additional functionality
+              - text: 04/06/2026, 21:26:2843m 45s$15.70
+              - generic [ref=e1401]: maestro/history-entries-additional-functionality-03309792
+            - generic [ref=e1402]:
+              - generic "lines changed" [ref=e1403]:
+                - generic [ref=e1404]: "+601"
+                - generic [ref=e1405]: −12
+              - link "Merged" [ref=e1406]:
+                - /url: https://github.com/denislavprinov/maestro/pull/9
+            - img [ref=e1407]
+          - button "DONE Plan Review colour fix in new pipeline 04/06/2026, 21:34:3517m 16s$6.33 maestro/plan-review-colour-fix-in-new-276cd07a lines changed Merged" [ref=e1410] [cursor=pointer]:
+            - generic [ref=e1411]: DONE
+            - generic [ref=e1412]:
+              - generic [ref=e1413]: Plan Review colour fix in new pipeline
+              - text: 04/06/2026, 21:34:3517m 16s$6.33
+              - generic [ref=e1414]: maestro/plan-review-colour-fix-in-new-276cd07a
+            - generic [ref=e1415]:
+              - generic "lines changed" [ref=e1416]:
+                - generic [ref=e1417]: "+23"
+                - generic [ref=e1418]: −0
+              - link "Merged" [ref=e1419]:
+                - /url: https://github.com/denislavprinov/maestro/pull/10
+            - img [ref=e1420]
+          - button "DONE Change loop naming conventions 04/06/2026, 16:50:2724m 9s$9.26 maestro/change-loop-naming-conventions-d87552c8 lines changed Merged" [ref=e1423] [cursor=pointer]:
+            - generic [ref=e1424]: DONE
+            - generic [ref=e1425]:
+              - generic [ref=e1426]: Change loop naming conventions
+              - text: 04/06/2026, 16:50:2724m 9s$9.26
+              - generic [ref=e1427]: maestro/change-loop-naming-conventions-d87552c8
+            - generic [ref=e1428]:
+              - generic "lines changed" [ref=e1429]:
+                - generic [ref=e1430]: "+135"
+                - generic [ref=e1431]: −4
+              - link "Merged" [ref=e1432]:
+                - /url: https://github.com/denislavprinov/maestro/pull/7
+            - img [ref=e1433]
+        - generic [ref=e1435]:
+          - generic [ref=e1436]:
+            - generic [ref=e1437]: maestro-clarify-fold-G2brw5
+            - generic [ref=e1438]: "1"
+          - button "DONE 05-06-26-demo-task-bcde7b57 05/06/2026, 00:36:280s$0.00 maestro/demo-task-bcde7b57" [ref=e1440] [cursor=pointer]:
+            - generic [ref=e1441]: DONE
+            - generic [ref=e1442]:
+              - generic [ref=e1443]: 05-06-26-demo-task-bcde7b57
+              - text: 05/06/2026, 00:36:280s$0.00
+              - generic [ref=e1444]: maestro/demo-task-bcde7b57
+            - img [ref=e1445]
+        - generic [ref=e1447]:
+          - generic [ref=e1448]:
+            - generic [ref=e1449]: maestro-clarify-KoqHsp
+            - generic [ref=e1450]: "1"
+          - button "UNKNOWN 05-06-26-demo-task-f8e171b9 05/06/2026, 00:31:26" [ref=e1452] [cursor=pointer]:
+            - generic [ref=e1453]: UNKNOWN
+            - generic [ref=e1454]:
+              - generic [ref=e1455]: 05-06-26-demo-task-f8e171b9
+              - text: 05/06/2026, 00:31:26
+            - img [ref=e1456]
+        - generic [ref=e1458]:
+          - generic [ref=e1459]:
+            - generic [ref=e1460]: maestro-clarify-8PHNJa
+            - generic [ref=e1461]: "1"
+          - button "DONE 05-06-26-demo-task-3d2176c2 05/06/2026, 00:30:150s$0.00 maestro/demo-task-3d2176c2" [ref=e1463] [cursor=pointer]:
+            - generic [ref=e1464]: DONE
+            - generic [ref=e1465]:
+              - generic [ref=e1466]: 05-06-26-demo-task-3d2176c2
+              - text: 05/06/2026, 00:30:150s$0.00
+              - generic [ref=e1467]: maestro/demo-task-3d2176c2
+            - img [ref=e1468]
+        - generic [ref=e1470]:
+          - generic [ref=e1471]:
+            - generic [ref=e1472]: maestro-clarify-fold-4ix8jU
+            - generic [ref=e1473]: "1"
+          - button "UNKNOWN 05-06-26-demo-task-136d77ef 05/06/2026, 00:28:33" [ref=e1475] [cursor=pointer]:
+            - generic [ref=e1476]: UNKNOWN
+            - generic [ref=e1477]:
+              - generic [ref=e1478]: 05-06-26-demo-task-136d77ef
+              - text: 05/06/2026, 00:28:33
+            - img [ref=e1479]
+        - generic [ref=e1481]:
+          - generic [ref=e1482]:
+            - generic [ref=e1483]: maestro-clarify-fold-ZpCaoN
+            - generic [ref=e1484]: "1"
+          - button "DONE 05-06-26-demo-task-2bea4a4f 05/06/2026, 00:26:141s$0.00 maestro/demo-task-2bea4a4f" [ref=e1486] [cursor=pointer]:
+            - generic [ref=e1487]: DONE
+            - generic [ref=e1488]:
+              - generic [ref=e1489]: 05-06-26-demo-task-2bea4a4f
+              - text: 05/06/2026, 00:26:141s$0.00
+              - generic [ref=e1490]: maestro/demo-task-2bea4a4f
+            - img [ref=e1491]
+        - generic [ref=e1493]:
+          - generic [ref=e1494]:
+            - generic [ref=e1495]: maestro-clarify-fold-4MxQ9J
+            - generic [ref=e1496]: "1"
+          - button "UNKNOWN 05-06-26-demo-task-d2c8ac36 05/06/2026, 00:24:41" [ref=e1498] [cursor=pointer]:
+            - generic [ref=e1499]: UNKNOWN
+            - generic [ref=e1500]:
+              - generic [ref=e1501]: 05-06-26-demo-task-d2c8ac36
+              - text: 05/06/2026, 00:24:41
+            - img [ref=e1502]
+        - generic [ref=e1504]:
+          - generic [ref=e1505]:
+            - generic [ref=e1506]: maestro-master-jtwyPB
+            - generic [ref=e1507]: "1"
+          - button "DONE 04-06-26-x-41bcc43a 04/06/2026, 23:40:140s$0.00 maestro/x-41bcc43a" [ref=e1509] [cursor=pointer]:
+            - generic [ref=e1510]: DONE
+            - generic [ref=e1511]:
+              - generic [ref=e1512]: 04-06-26-x-41bcc43a
+              - text: 04/06/2026, 23:40:140s$0.00
+              - generic [ref=e1513]: maestro/x-41bcc43a
+            - img [ref=e1514]
+        - generic [ref=e1516]:
+          - generic [ref=e1517]:
+            - generic [ref=e1518]: maestro-parent-QtONAc
+            - generic [ref=e1519]: "1"
+          - button "DONE 04-06-26-x-ba5f0439 04/06/2026, 23:40:130s$0.00 maestro/x-ba5f0439" [ref=e1521] [cursor=pointer]:
+            - generic [ref=e1522]: DONE
+            - generic [ref=e1523]:
+              - generic [ref=e1524]: 04-06-26-x-ba5f0439
+              - text: 04/06/2026, 23:40:130s$0.00
+              - generic [ref=e1525]: maestro/x-ba5f0439
+            - img [ref=e1526]
+        - generic [ref=e1528]:
+          - generic [ref=e1529]:
+            - generic [ref=e1530]: maestro-orch-USqKja
+            - generic [ref=e1531]: "1"
+          - button "STOPPED 04-06-26-x-7d2577ea 04/06/2026, 23:40:120s$0.00 maestro/x-7d2577ea" [ref=e1533] [cursor=pointer]:
+            - generic [ref=e1534]: STOPPED
+            - generic [ref=e1535]:
+              - generic [ref=e1536]: 04-06-26-x-7d2577ea
+              - text: 04/06/2026, 23:40:120s$0.00
+              - generic [ref=e1537]: maestro/x-7d2577ea
+            - img [ref=e1538]
+        - generic [ref=e1540]:
+          - generic [ref=e1541]:
+            - generic [ref=e1542]: maestro-orch-gszB78
+            - generic [ref=e1543]: "1"
+          - button "DONE 04-06-26-add-login-flow-b883a0d7 04/06/2026, 23:40:110s$0.00 maestro/add-login-flow-b883a0d7" [ref=e1545] [cursor=pointer]:
+            - generic [ref=e1546]: DONE
+            - generic [ref=e1547]:
+              - generic [ref=e1548]: 04-06-26-add-login-flow-b883a0d7
+              - text: 04/06/2026, 23:40:110s$0.00
+              - generic [ref=e1549]: maestro/add-login-flow-b883a0d7
+            - img [ref=e1550]
+        - generic [ref=e1552]:
+          - generic [ref=e1553]:
+            - generic [ref=e1554]: maestro-orch-RpPRkj
+            - generic [ref=e1555]: "1"
+          - button "DONE 04-06-26-whatever-24e959d8 04/06/2026, 23:40:110s$0.00 feat/my-thing" [ref=e1557] [cursor=pointer]:
+            - generic [ref=e1558]: DONE
+            - generic [ref=e1559]:
+              - generic [ref=e1560]: 04-06-26-whatever-24e959d8
+              - text: 04/06/2026, 23:40:110s$0.00
+              - generic [ref=e1561]: feat/my-thing
+            - img [ref=e1562]
+        - generic [ref=e1564]:
+          - generic [ref=e1565]:
+            - generic [ref=e1566]: maestro-orch-mOjlxm
+            - generic [ref=e1567]: "1"
+          - button "DONE 04-06-26-add-login-flow-9d65e046 04/06/2026, 23:40:100s$0.00 maestro/add-login-flow-9d65e046" [ref=e1569] [cursor=pointer]:
+            - generic [ref=e1570]: DONE
+            - generic [ref=e1571]:
+              - generic [ref=e1572]: 04-06-26-add-login-flow-9d65e046
+              - text: 04/06/2026, 23:40:100s$0.00
+              - generic [ref=e1573]: maestro/add-login-flow-9d65e046
+            - img [ref=e1574]
+        - generic [ref=e1576]:
+          - generic [ref=e1577]:
+            - generic [ref=e1578]: maestro-master-szHIdj
+            - generic [ref=e1579]: "1"
+          - button "DONE 04-06-26-x-4057eef7 04/06/2026, 23:36:100s$0.00 maestro/x-4057eef7" [ref=e1581] [cursor=pointer]:
+            - generic [ref=e1582]: DONE
+            - generic [ref=e1583]:
+              - generic [ref=e1584]: 04-06-26-x-4057eef7
+              - text: 04/06/2026, 23:36:100s$0.00
+              - generic [ref=e1585]: maestro/x-4057eef7
+            - img [ref=e1586]
+        - generic [ref=e1588]:
+          - generic [ref=e1589]:
+            - generic [ref=e1590]: maestro-parent-fJyvMH
+            - generic [ref=e1591]: "1"
+          - button "DONE 04-06-26-x-d6266462 04/06/2026, 23:36:090s$0.00 maestro/x-d6266462" [ref=e1593] [cursor=pointer]:
+            - generic [ref=e1594]: DONE
+            - generic [ref=e1595]:
+              - generic [ref=e1596]: 04-06-26-x-d6266462
+              - text: 04/06/2026, 23:36:090s$0.00
+              - generic [ref=e1597]: maestro/x-d6266462
+            - img [ref=e1598]
+        - generic [ref=e1600]:
+          - generic [ref=e1601]:
+            - generic [ref=e1602]: maestro-orch-fUMyYY
+            - generic [ref=e1603]: "1"
+          - button "DONE 04-06-26-add-login-flow-e4673a7f 04/06/2026, 23:36:090s$0.00 maestro/add-login-flow-e4673a7f" [ref=e1605] [cursor=pointer]:
+            - generic [ref=e1606]: DONE
+            - generic [ref=e1607]:
+              - generic [ref=e1608]: 04-06-26-add-login-flow-e4673a7f
+              - text: 04/06/2026, 23:36:090s$0.00
+              - generic [ref=e1609]: maestro/add-login-flow-e4673a7f
+            - img [ref=e1610]
+        - generic [ref=e1612]:
+          - generic [ref=e1613]:
+            - generic [ref=e1614]: maestro-orch-7PjRrK
+            - generic [ref=e1615]: "1"
+          - button "STOPPED 04-06-26-x-0a99bae4 04/06/2026, 23:36:080s$0.00 maestro/x-0a99bae4" [ref=e1617] [cursor=pointer]:
+            - generic [ref=e1618]: STOPPED
+            - generic [ref=e1619]:
+              - generic [ref=e1620]: 04-06-26-x-0a99bae4
+              - text: 04/06/2026, 23:36:080s$0.00
+              - generic [ref=e1621]: maestro/x-0a99bae4
+            - img [ref=e1622]
+        - generic [ref=e1624]:
+          - generic [ref=e1625]:
+            - generic [ref=e1626]: maestro-orch-x5aY1Q
+            - generic [ref=e1627]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-2391e7a0 04/06/2026, 23:36:08" [ref=e1629] [cursor=pointer]:
+            - generic [ref=e1630]: UNKNOWN
+            - generic [ref=e1631]:
+              - generic [ref=e1632]: 04-06-26-add-login-flow-2391e7a0
+              - text: 04/06/2026, 23:36:08
+            - img [ref=e1633]
+        - generic [ref=e1635]:
+          - generic [ref=e1636]:
+            - generic [ref=e1637]: maestro-orch-lX7Xj7
+            - generic [ref=e1638]: "1"
+          - button "UNKNOWN 04-06-26-whatever-593638db 04/06/2026, 23:36:07" [ref=e1640] [cursor=pointer]:
+            - generic [ref=e1641]: UNKNOWN
+            - generic [ref=e1642]:
+              - generic [ref=e1643]: 04-06-26-whatever-593638db
+              - text: 04/06/2026, 23:36:07
+            - img [ref=e1644]
+        - generic [ref=e1646]:
+          - generic [ref=e1647]:
+            - generic [ref=e1648]: maestro-orch-fTlWVO
+            - generic [ref=e1649]: "1"
+          - button "DONE 04-06-26-add-login-flow-d355df2a 04/06/2026, 23:36:060s$0.00 maestro/add-login-flow-d355df2a" [ref=e1651] [cursor=pointer]:
+            - generic [ref=e1652]: DONE
+            - generic [ref=e1653]:
+              - generic [ref=e1654]: 04-06-26-add-login-flow-d355df2a
+              - text: 04/06/2026, 23:36:060s$0.00
+              - generic [ref=e1655]: maestro/add-login-flow-d355df2a
+            - img [ref=e1656]
+        - generic [ref=e1658]:
+          - generic [ref=e1659]:
+            - generic [ref=e1660]: maestro-orch-pmrJcA
+            - generic [ref=e1661]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-d6266a55 04/06/2026, 23:35:56" [ref=e1663] [cursor=pointer]:
+            - generic [ref=e1664]: UNKNOWN
+            - generic [ref=e1665]:
+              - generic [ref=e1666]: 04-06-26-add-login-flow-d6266a55
+              - text: 04/06/2026, 23:35:56
+            - img [ref=e1667]
+        - generic [ref=e1669]:
+          - generic [ref=e1670]:
+            - generic [ref=e1671]: maestro-master-RHIomG
+            - generic [ref=e1672]: "1"
+          - button "UNKNOWN 04-06-26-x-2f09c50d 04/06/2026, 21:16:09" [ref=e1674] [cursor=pointer]:
+            - generic [ref=e1675]: UNKNOWN
+            - generic [ref=e1676]:
+              - generic [ref=e1677]: 04-06-26-x-2f09c50d
+              - text: 04/06/2026, 21:16:09
+            - img [ref=e1678]
+        - generic [ref=e1680]:
+          - generic [ref=e1681]:
+            - generic [ref=e1682]: maestro-parent-JyDiD6
+            - generic [ref=e1683]: "1"
+          - button "UNKNOWN 04-06-26-x-09edbeda 04/06/2026, 21:16:08" [ref=e1685] [cursor=pointer]:
+            - generic [ref=e1686]: UNKNOWN
+            - generic [ref=e1687]:
+              - generic [ref=e1688]: 04-06-26-x-09edbeda
+              - text: 04/06/2026, 21:16:08
+            - img [ref=e1689]
+        - generic [ref=e1691]:
+          - generic [ref=e1692]:
+            - generic [ref=e1693]: maestro-orch-iohWTW
+            - generic [ref=e1694]: "1"
+          - button "DONE 04-06-26-add-login-flow-ad0e8904 04/06/2026, 21:16:070s$0.00 maestro/add-login-flow-ad0e8904" [ref=e1696] [cursor=pointer]:
+            - generic [ref=e1697]: DONE
+            - generic [ref=e1698]:
+              - generic [ref=e1699]: 04-06-26-add-login-flow-ad0e8904
+              - text: 04/06/2026, 21:16:070s$0.00
+              - generic [ref=e1700]: maestro/add-login-flow-ad0e8904
+            - img [ref=e1701]
+        - generic [ref=e1703]:
+          - generic [ref=e1704]:
+            - generic [ref=e1705]: maestro-orch-9yJ9qm
+            - generic [ref=e1706]: "1"
+          - button "STOPPED 04-06-26-x-03cd81d0 04/06/2026, 21:16:060s$0.00 maestro/x-03cd81d0" [ref=e1708] [cursor=pointer]:
+            - generic [ref=e1709]: STOPPED
+            - generic [ref=e1710]:
+              - generic [ref=e1711]: 04-06-26-x-03cd81d0
+              - text: 04/06/2026, 21:16:060s$0.00
+              - generic [ref=e1712]: maestro/x-03cd81d0
+            - img [ref=e1713]
+        - generic [ref=e1715]:
+          - generic [ref=e1716]:
+            - generic [ref=e1717]: maestro-orch-5Zyx4d
+            - generic [ref=e1718]: "1"
+          - button "DONE 04-06-26-add-login-flow-633d51ba 04/06/2026, 21:16:050s$0.00 maestro/add-login-flow-633d51ba" [ref=e1720] [cursor=pointer]:
+            - generic [ref=e1721]: DONE
+            - generic [ref=e1722]:
+              - generic [ref=e1723]: 04-06-26-add-login-flow-633d51ba
+              - text: 04/06/2026, 21:16:050s$0.00
+              - generic [ref=e1724]: maestro/add-login-flow-633d51ba
+            - img [ref=e1725]
+        - generic [ref=e1727]:
+          - generic [ref=e1728]:
+            - generic [ref=e1729]: maestro-orch-z6lS8l
+            - generic [ref=e1730]: "1"
+          - button "UNKNOWN 04-06-26-whatever-3f5fd05f 04/06/2026, 21:16:05" [ref=e1732] [cursor=pointer]:
+            - generic [ref=e1733]: UNKNOWN
+            - generic [ref=e1734]:
+              - generic [ref=e1735]: 04-06-26-whatever-3f5fd05f
+              - text: 04/06/2026, 21:16:05
+            - img [ref=e1736]
+        - generic [ref=e1738]:
+          - generic [ref=e1739]:
+            - generic [ref=e1740]: maestro-orch-JV8h95
+            - generic [ref=e1741]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-4a06a5e6 04/06/2026, 21:16:05" [ref=e1743] [cursor=pointer]:
+            - generic [ref=e1744]: UNKNOWN
+            - generic [ref=e1745]:
+              - generic [ref=e1746]: 04-06-26-add-login-flow-4a06a5e6
+              - text: 04/06/2026, 21:16:05
+            - img [ref=e1747]
+        - generic [ref=e1749]:
+          - generic [ref=e1750]:
+            - generic [ref=e1751]: maestro-master-4CSacQ
+            - generic [ref=e1752]: "1"
+          - button "DONE 04-06-26-x-e48d448b 04/06/2026, 21:14:330s$0.00 maestro/x-e48d448b" [ref=e1754] [cursor=pointer]:
+            - generic [ref=e1755]: DONE
+            - generic [ref=e1756]:
+              - generic [ref=e1757]: 04-06-26-x-e48d448b
+              - text: 04/06/2026, 21:14:330s$0.00
+              - generic [ref=e1758]: maestro/x-e48d448b
+            - img [ref=e1759]
+        - generic [ref=e1761]:
+          - generic [ref=e1762]:
+            - generic [ref=e1763]: maestro-parent-6onTVe
+            - generic [ref=e1764]: "1"
+          - button "DONE 04-06-26-x-48c92e19 04/06/2026, 21:14:320s$0.00 maestro/x-48c92e19" [ref=e1766] [cursor=pointer]:
+            - generic [ref=e1767]: DONE
+            - generic [ref=e1768]:
+              - generic [ref=e1769]: 04-06-26-x-48c92e19
+              - text: 04/06/2026, 21:14:320s$0.00
+              - generic [ref=e1770]: maestro/x-48c92e19
+            - img [ref=e1771]
+        - generic [ref=e1773]:
+          - generic [ref=e1774]:
+            - generic [ref=e1775]: maestro-orch-pseznW
+            - generic [ref=e1776]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-ef2af02c 04/06/2026, 21:14:32" [ref=e1778] [cursor=pointer]:
+            - generic [ref=e1779]: UNKNOWN
+            - generic [ref=e1780]:
+              - generic [ref=e1781]: 04-06-26-add-login-flow-ef2af02c
+              - text: 04/06/2026, 21:14:32
+            - img [ref=e1782]
+        - generic [ref=e1784]:
+          - generic [ref=e1785]:
+            - generic [ref=e1786]: maestro-orch-tfzR7v
+            - generic [ref=e1787]: "1"
+          - button "STOPPED 04-06-26-x-5a5a810d 04/06/2026, 21:14:310s$0.00 maestro/x-5a5a810d" [ref=e1789] [cursor=pointer]:
+            - generic [ref=e1790]: STOPPED
+            - generic [ref=e1791]:
+              - generic [ref=e1792]: 04-06-26-x-5a5a810d
+              - text: 04/06/2026, 21:14:310s$0.00
+              - generic [ref=e1793]: maestro/x-5a5a810d
+            - img [ref=e1794]
+        - generic [ref=e1796]:
+          - generic [ref=e1797]:
+            - generic [ref=e1798]: maestro-orch-17pWWm
+            - generic [ref=e1799]: "1"
+          - button "DONE 04-06-26-add-login-flow-dcd29859 04/06/2026, 21:14:300s$0.00 maestro/add-login-flow-dcd29859" [ref=e1801] [cursor=pointer]:
+            - generic [ref=e1802]: DONE
+            - generic [ref=e1803]:
+              - generic [ref=e1804]: 04-06-26-add-login-flow-dcd29859
+              - text: 04/06/2026, 21:14:300s$0.00
+              - generic [ref=e1805]: maestro/add-login-flow-dcd29859
+            - img [ref=e1806]
+        - generic [ref=e1808]:
+          - generic [ref=e1809]:
+            - generic [ref=e1810]: maestro-orch-Fpxc70
+            - generic [ref=e1811]: "1"
+          - button "DONE 04-06-26-whatever-cfad9d5a 04/06/2026, 21:14:300s$0.00 feat/my-thing" [ref=e1813] [cursor=pointer]:
+            - generic [ref=e1814]: DONE
+            - generic [ref=e1815]:
+              - generic [ref=e1816]: 04-06-26-whatever-cfad9d5a
+              - text: 04/06/2026, 21:14:300s$0.00
+              - generic [ref=e1817]: feat/my-thing
+            - img [ref=e1818]
+        - generic [ref=e1820]:
+          - generic [ref=e1821]:
+            - generic [ref=e1822]: maestro-orch-YeWrpt
+            - generic [ref=e1823]: "1"
+          - button "DONE 04-06-26-add-login-flow-33f06f5f 04/06/2026, 21:14:290s$0.00 maestro/add-login-flow-33f06f5f" [ref=e1825] [cursor=pointer]:
+            - generic [ref=e1826]: DONE
+            - generic [ref=e1827]:
+              - generic [ref=e1828]: 04-06-26-add-login-flow-33f06f5f
+              - text: 04/06/2026, 21:14:290s$0.00
+              - generic [ref=e1829]: maestro/add-login-flow-33f06f5f
+            - img [ref=e1830]
+        - generic [ref=e1832]:
+          - generic [ref=e1833]:
+            - generic [ref=e1834]: maestro-master-hGByre
+            - generic [ref=e1835]: "1"
+          - button "UNKNOWN 04-06-26-x-99ac5b87 04/06/2026, 21:13:17" [ref=e1837] [cursor=pointer]:
+            - generic [ref=e1838]: UNKNOWN
+            - generic [ref=e1839]:
+              - generic [ref=e1840]: 04-06-26-x-99ac5b87
+              - text: 04/06/2026, 21:13:17
+            - img [ref=e1841]
+        - generic [ref=e1843]:
+          - generic [ref=e1844]:
+            - generic [ref=e1845]: maestro-parent-XXuIFR
+            - generic [ref=e1846]: "1"
+          - button "DONE 04-06-26-x-7efdf3c4 04/06/2026, 21:13:160s$0.00 maestro/x-7efdf3c4" [ref=e1848] [cursor=pointer]:
+            - generic [ref=e1849]: DONE
+            - generic [ref=e1850]:
+              - generic [ref=e1851]: 04-06-26-x-7efdf3c4
+              - text: 04/06/2026, 21:13:160s$0.00
+              - generic [ref=e1852]: maestro/x-7efdf3c4
+            - img [ref=e1853]
+        - generic [ref=e1855]:
+          - generic [ref=e1856]:
+            - generic [ref=e1857]: maestro-orch-6cVzHI
+            - generic [ref=e1858]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-3038e989 04/06/2026, 21:13:15" [ref=e1860] [cursor=pointer]:
+            - generic [ref=e1861]: UNKNOWN
+            - generic [ref=e1862]:
+              - generic [ref=e1863]: 04-06-26-add-login-flow-3038e989
+              - text: 04/06/2026, 21:13:15
+            - img [ref=e1864]
+        - generic [ref=e1866]:
+          - generic [ref=e1867]:
+            - generic [ref=e1868]: maestro-orch-vJAgoP
+            - generic [ref=e1869]: "1"
+          - button "STOPPED 04-06-26-x-3607a1e9 04/06/2026, 21:13:140s$0.00 maestro/x-3607a1e9" [ref=e1871] [cursor=pointer]:
+            - generic [ref=e1872]: STOPPED
+            - generic [ref=e1873]:
+              - generic [ref=e1874]: 04-06-26-x-3607a1e9
+              - text: 04/06/2026, 21:13:140s$0.00
+              - generic [ref=e1875]: maestro/x-3607a1e9
+            - img [ref=e1876]
+        - generic [ref=e1878]:
+          - generic [ref=e1879]:
+            - generic [ref=e1880]: maestro-orch-xmv5dz
+            - generic [ref=e1881]: "1"
+          - button "DONE 04-06-26-add-login-flow-f0621186 04/06/2026, 21:13:140s$0.00 maestro/add-login-flow-f0621186" [ref=e1883] [cursor=pointer]:
+            - generic [ref=e1884]: DONE
+            - generic [ref=e1885]:
+              - generic [ref=e1886]: 04-06-26-add-login-flow-f0621186
+              - text: 04/06/2026, 21:13:140s$0.00
+              - generic [ref=e1887]: maestro/add-login-flow-f0621186
+            - img [ref=e1888]
+        - generic [ref=e1890]:
+          - generic [ref=e1891]:
+            - generic [ref=e1892]: maestro-orch-0HixGl
+            - generic [ref=e1893]: "1"
+          - button "DONE 04-06-26-whatever-86be6d31 04/06/2026, 21:13:130s$0.00 feat/my-thing" [ref=e1895] [cursor=pointer]:
+            - generic [ref=e1896]: DONE
+            - generic [ref=e1897]:
+              - generic [ref=e1898]: 04-06-26-whatever-86be6d31
+              - text: 04/06/2026, 21:13:130s$0.00
+              - generic [ref=e1899]: feat/my-thing
+            - img [ref=e1900]
+        - generic [ref=e1902]:
+          - generic [ref=e1903]:
+            - generic [ref=e1904]: maestro-orch-wrEHTF
+            - generic [ref=e1905]: "1"
+          - button "DONE 04-06-26-add-login-flow-0400f7e9 04/06/2026, 21:13:121s$0.00 maestro/add-login-flow-0400f7e9" [ref=e1907] [cursor=pointer]:
+            - generic [ref=e1908]: DONE
+            - generic [ref=e1909]:
+              - generic [ref=e1910]: 04-06-26-add-login-flow-0400f7e9
+              - text: 04/06/2026, 21:13:121s$0.00
+              - generic [ref=e1911]: maestro/add-login-flow-0400f7e9
+            - img [ref=e1912]
+        - generic [ref=e1914]:
+          - generic [ref=e1915]:
+            - generic [ref=e1916]: maestro-run-slurBq
+            - generic [ref=e1917]: "1"
+          - button "ERROR demo task 04/06/2026, 20:24:280s$0.00" [ref=e1919] [cursor=pointer]:
+            - generic [ref=e1920]: ERROR
+            - generic [ref=e1921]:
+              - generic [ref=e1922]: demo task
+              - text: 04/06/2026, 20:24:280s$0.00
+            - img [ref=e1923]
+        - generic [ref=e1925]:
+          - generic [ref=e1926]:
+            - generic [ref=e1927]: maestro-run-cmXSrh
+            - generic [ref=e1928]: "1"
+          - button "ERROR demo task 04/06/2026, 20:24:280s$0.00" [ref=e1930] [cursor=pointer]:
+            - generic [ref=e1931]: ERROR
+            - generic [ref=e1932]:
+              - generic [ref=e1933]: demo task
+              - text: 04/06/2026, 20:24:280s$0.00
+            - img [ref=e1934]
+        - generic [ref=e1936]:
+          - generic [ref=e1937]:
+            - generic [ref=e1938]: maestro-master-Z6kyQU
+            - generic [ref=e1939]: "1"
+          - button "DONE 04-06-26-x-06de88fd 04/06/2026, 20:20:150s$0.00 maestro/x-06de88fd" [ref=e1941] [cursor=pointer]:
+            - generic [ref=e1942]: DONE
+            - generic [ref=e1943]:
+              - generic [ref=e1944]: 04-06-26-x-06de88fd
+              - text: 04/06/2026, 20:20:150s$0.00
+              - generic [ref=e1945]: maestro/x-06de88fd
+            - img [ref=e1946]
+        - generic [ref=e1948]:
+          - generic [ref=e1949]:
+            - generic [ref=e1950]: maestro-parent-QRTb58
+            - generic [ref=e1951]: "1"
+          - button "DONE 04-06-26-x-306c2d5c 04/06/2026, 20:20:140s$0.00 maestro/x-306c2d5c" [ref=e1953] [cursor=pointer]:
+            - generic [ref=e1954]: DONE
+            - generic [ref=e1955]:
+              - generic [ref=e1956]: 04-06-26-x-306c2d5c
+              - text: 04/06/2026, 20:20:140s$0.00
+              - generic [ref=e1957]: maestro/x-306c2d5c
+            - img [ref=e1958]
+        - generic [ref=e1960]:
+          - generic [ref=e1961]:
+            - generic [ref=e1962]: maestro-orch-Csflkr
+            - generic [ref=e1963]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-d840f03f 04/06/2026, 20:20:14" [ref=e1965] [cursor=pointer]:
+            - generic [ref=e1966]: UNKNOWN
+            - generic [ref=e1967]:
+              - generic [ref=e1968]: 04-06-26-add-login-flow-d840f03f
+              - text: 04/06/2026, 20:20:14
+            - img [ref=e1969]
+        - generic [ref=e1971]:
+          - generic [ref=e1972]:
+            - generic [ref=e1973]: maestro-orch-DHoPq5
+            - generic [ref=e1974]: "1"
+          - button "STOPPED 04-06-26-x-cdccf019 04/06/2026, 20:20:120s$0.00 maestro/x-cdccf019" [ref=e1976] [cursor=pointer]:
+            - generic [ref=e1977]: STOPPED
+            - generic [ref=e1978]:
+              - generic [ref=e1979]: 04-06-26-x-cdccf019
+              - text: 04/06/2026, 20:20:120s$0.00
+              - generic [ref=e1980]: maestro/x-cdccf019
+            - img [ref=e1981]
+        - generic [ref=e1983]:
+          - generic [ref=e1984]:
+            - generic [ref=e1985]: maestro-dispatch-bGVzYN
+            - generic [ref=e1986]: "1"
+          - button "DONE 04-06-26-demo-task-f0ca83d3 04/06/2026, 20:20:111s$0.00 maestro/demo-task-f0ca83d3" [ref=e1988] [cursor=pointer]:
+            - generic [ref=e1989]: DONE
+            - generic [ref=e1990]:
+              - generic [ref=e1991]: 04-06-26-demo-task-f0ca83d3
+              - text: 04/06/2026, 20:20:111s$0.00
+              - generic [ref=e1992]: maestro/demo-task-f0ca83d3
+            - img [ref=e1993]
+        - generic [ref=e1995]:
+          - generic [ref=e1996]:
+            - generic [ref=e1997]: maestro-orch-bRgJGb
+            - generic [ref=e1998]: "1"
+          - button "DONE 04-06-26-add-login-flow-37386543 04/06/2026, 20:20:111s$0.00 maestro/add-login-flow-37386543" [ref=e2000] [cursor=pointer]:
+            - generic [ref=e2001]: DONE
+            - generic [ref=e2002]:
+              - generic [ref=e2003]: 04-06-26-add-login-flow-37386543
+              - text: 04/06/2026, 20:20:111s$0.00
+              - generic [ref=e2004]: maestro/add-login-flow-37386543
+            - img [ref=e2005]
+        - generic [ref=e2007]:
+          - generic [ref=e2008]:
+            - generic [ref=e2009]: maestro-orch-Imm7Jh
+            - generic [ref=e2010]: "1"
+          - button "DONE 04-06-26-whatever-11fd56f1 04/06/2026, 20:20:101s$0.00 feat/my-thing" [ref=e2012] [cursor=pointer]:
+            - generic [ref=e2013]: DONE
+            - generic [ref=e2014]:
+              - generic [ref=e2015]: 04-06-26-whatever-11fd56f1
+              - text: 04/06/2026, 20:20:101s$0.00
+              - generic [ref=e2016]: feat/my-thing
+            - img [ref=e2017]
+        - generic [ref=e2019]:
+          - generic [ref=e2020]:
+            - generic [ref=e2021]: maestro-timing-0MyUjP
+            - generic [ref=e2022]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-e9020a1d 04/06/2026, 20:20:09" [ref=e2024] [cursor=pointer]:
+            - generic [ref=e2025]: UNKNOWN
+            - generic [ref=e2026]:
+              - generic [ref=e2027]: 04-06-26-demo-task-e9020a1d
+              - text: 04/06/2026, 20:20:09
+            - img [ref=e2028]
+        - generic [ref=e2030]:
+          - generic [ref=e2031]:
+            - generic [ref=e2032]: maestro-orch-nDcyPS
+            - generic [ref=e2033]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-b4cb6cf3 04/06/2026, 20:20:09" [ref=e2035] [cursor=pointer]:
+            - generic [ref=e2036]: UNKNOWN
+            - generic [ref=e2037]:
+              - generic [ref=e2038]: 04-06-26-add-login-flow-b4cb6cf3
+              - text: 04/06/2026, 20:20:09
+            - img [ref=e2039]
+        - generic [ref=e2041]:
+          - generic [ref=e2042]:
+            - generic [ref=e2043]: maestro-cli-bJd6Mj
+            - generic [ref=e2044]: "1"
+          - button "UNKNOWN 04-06-26-demo-065911ef 04/06/2026, 20:20:09" [ref=e2046] [cursor=pointer]:
+            - generic [ref=e2047]: UNKNOWN
+            - generic [ref=e2048]:
+              - generic [ref=e2049]: 04-06-26-demo-065911ef
+              - text: 04/06/2026, 20:20:09
+            - img [ref=e2050]
+        - generic [ref=e2052]:
+          - generic [ref=e2053]:
+            - generic [ref=e2054]: maestro-dispatch-hQAzf0
+            - generic [ref=e2055]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-432a2899 04/06/2026, 20:20:09" [ref=e2057] [cursor=pointer]:
+            - generic [ref=e2058]: UNKNOWN
+            - generic [ref=e2059]:
+              - generic [ref=e2060]: 04-06-26-demo-task-432a2899
+              - text: 04/06/2026, 20:20:09
+            - img [ref=e2061]
+        - generic [ref=e2063]:
+          - generic [ref=e2064]:
+            - generic [ref=e2065]: maestro-clarify-fold-Vf02xp
+            - generic [ref=e2066]: "1"
+          - button "DONE 04-06-26-demo-task-439407b1 04/06/2026, 20:20:071s$0.00 maestro/demo-task-439407b1" [ref=e2068] [cursor=pointer]:
+            - generic [ref=e2069]: DONE
+            - generic [ref=e2070]:
+              - generic [ref=e2071]: 04-06-26-demo-task-439407b1
+              - text: 04/06/2026, 20:20:071s$0.00
+              - generic [ref=e2072]: maestro/demo-task-439407b1
+            - img [ref=e2073]
+        - generic [ref=e2075]:
+          - generic [ref=e2076]:
+            - generic [ref=e2077]: maestro-clarify-vwbzkn
+            - generic [ref=e2078]: "1"
+          - button "DONE 04-06-26-demo-task-1e339a6c 04/06/2026, 20:20:071s$0.00 maestro/demo-task-1e339a6c" [ref=e2080] [cursor=pointer]:
+            - generic [ref=e2081]: DONE
+            - generic [ref=e2082]:
+              - generic [ref=e2083]: 04-06-26-demo-task-1e339a6c
+              - text: 04/06/2026, 20:20:071s$0.00
+              - generic [ref=e2084]: maestro/demo-task-1e339a6c
+            - img [ref=e2085]
+        - generic [ref=e2087]:
+          - generic [ref=e2088]:
+            - generic [ref=e2089]: maestro-run-GSUvZa
+            - generic [ref=e2090]: "1"
+          - button "ERROR demo task 04/06/2026, 20:20:081s$0.00" [ref=e2092] [cursor=pointer]:
+            - generic [ref=e2093]: ERROR
+            - generic [ref=e2094]:
+              - generic [ref=e2095]: demo task
+              - text: 04/06/2026, 20:20:081s$0.00
+            - img [ref=e2096]
+        - generic [ref=e2098]:
+          - generic [ref=e2099]:
+            - generic [ref=e2100]: maestro-run-Ay7Web
+            - generic [ref=e2101]: "1"
+          - button "ERROR demo task 04/06/2026, 20:20:081s$0.00" [ref=e2103] [cursor=pointer]:
+            - generic [ref=e2104]: ERROR
+            - generic [ref=e2105]:
+              - generic [ref=e2106]: demo task
+              - text: 04/06/2026, 20:20:081s$0.00
+            - img [ref=e2107]
+        - generic [ref=e2109]:
+          - generic [ref=e2110]:
+            - generic [ref=e2111]: maestro-master-9XrzKc
+            - generic [ref=e2112]: "1"
+          - button "UNKNOWN 04-06-26-x-11535c9a 04/06/2026, 20:18:47" [ref=e2114] [cursor=pointer]:
+            - generic [ref=e2115]: UNKNOWN
+            - generic [ref=e2116]:
+              - generic [ref=e2117]: 04-06-26-x-11535c9a
+              - text: 04/06/2026, 20:18:47
+            - img [ref=e2118]
+        - generic [ref=e2120]:
+          - generic [ref=e2121]:
+            - generic [ref=e2122]: maestro-parent-dDaXuv
+            - generic [ref=e2123]: "1"
+          - button "DONE 04-06-26-x-ba6bee92 04/06/2026, 20:18:460s$0.00 maestro/x-ba6bee92" [ref=e2125] [cursor=pointer]:
+            - generic [ref=e2126]: DONE
+            - generic [ref=e2127]:
+              - generic [ref=e2128]: 04-06-26-x-ba6bee92
+              - text: 04/06/2026, 20:18:460s$0.00
+              - generic [ref=e2129]: maestro/x-ba6bee92
+            - img [ref=e2130]
+        - generic [ref=e2132]:
+          - generic [ref=e2133]:
+            - generic [ref=e2134]: maestro-orch-c5ETDi
+            - generic [ref=e2135]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-d1e2ad47 04/06/2026, 20:18:45" [ref=e2137] [cursor=pointer]:
+            - generic [ref=e2138]: UNKNOWN
+            - generic [ref=e2139]:
+              - generic [ref=e2140]: 04-06-26-add-login-flow-d1e2ad47
+              - text: 04/06/2026, 20:18:45
+            - img [ref=e2141]
+        - generic [ref=e2143]:
+          - generic [ref=e2144]:
+            - generic [ref=e2145]: maestro-orch-UP23vS
+            - generic [ref=e2146]: "1"
+          - button "STOPPED 04-06-26-x-fd41afa1 04/06/2026, 20:18:440s$0.00 maestro/x-fd41afa1" [ref=e2148] [cursor=pointer]:
+            - generic [ref=e2149]: STOPPED
+            - generic [ref=e2150]:
+              - generic [ref=e2151]: 04-06-26-x-fd41afa1
+              - text: 04/06/2026, 20:18:440s$0.00
+              - generic [ref=e2152]: maestro/x-fd41afa1
+            - img [ref=e2153]
+        - generic [ref=e2155]:
+          - generic [ref=e2156]:
+            - generic [ref=e2157]: maestro-orch-k4c0Ou
+            - generic [ref=e2158]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-09568490 04/06/2026, 20:18:44" [ref=e2160] [cursor=pointer]:
+            - generic [ref=e2161]: UNKNOWN
+            - generic [ref=e2162]:
+              - generic [ref=e2163]: 04-06-26-add-login-flow-09568490
+              - text: 04/06/2026, 20:18:44
+            - img [ref=e2164]
+        - generic [ref=e2166]:
+          - generic [ref=e2167]:
+            - generic [ref=e2168]: maestro-dispatch-RouMwx
+            - generic [ref=e2169]: "1"
+          - button "DONE 04-06-26-demo-task-06ea09ac 04/06/2026, 20:18:431s$0.00 maestro/demo-task-06ea09ac" [ref=e2171] [cursor=pointer]:
+            - generic [ref=e2172]: DONE
+            - generic [ref=e2173]:
+              - generic [ref=e2174]: 04-06-26-demo-task-06ea09ac
+              - text: 04/06/2026, 20:18:431s$0.00
+              - generic [ref=e2175]: maestro/demo-task-06ea09ac
+            - img [ref=e2176]
+        - generic [ref=e2178]:
+          - generic [ref=e2179]:
+            - generic [ref=e2180]: maestro-orch-Dn7Czm
+            - generic [ref=e2181]: "1"
+          - button "DONE 04-06-26-whatever-a6f55d5c 04/06/2026, 20:18:421s$0.00 feat/my-thing" [ref=e2183] [cursor=pointer]:
+            - generic [ref=e2184]: DONE
+            - generic [ref=e2185]:
+              - generic [ref=e2186]: 04-06-26-whatever-a6f55d5c
+              - text: 04/06/2026, 20:18:421s$0.00
+              - generic [ref=e2187]: feat/my-thing
+            - img [ref=e2188]
+        - generic [ref=e2190]:
+          - generic [ref=e2191]:
+            - generic [ref=e2192]: maestro-orch-xy8gBG
+            - generic [ref=e2193]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-07c194f7 04/06/2026, 20:18:41" [ref=e2195] [cursor=pointer]:
+            - generic [ref=e2196]: UNKNOWN
+            - generic [ref=e2197]:
+              - generic [ref=e2198]: 04-06-26-add-login-flow-07c194f7
+              - text: 04/06/2026, 20:18:41
+            - img [ref=e2199]
+        - generic [ref=e2201]:
+          - generic [ref=e2202]:
+            - generic [ref=e2203]: maestro-timing-PGcmcS
+            - generic [ref=e2204]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-936749c5 04/06/2026, 20:18:41" [ref=e2206] [cursor=pointer]:
+            - generic [ref=e2207]: UNKNOWN
+            - generic [ref=e2208]:
+              - generic [ref=e2209]: 04-06-26-demo-task-936749c5
+              - text: 04/06/2026, 20:18:41
+            - img [ref=e2210]
+        - generic [ref=e2212]:
+          - generic [ref=e2213]:
+            - generic [ref=e2214]: maestro-dispatch-bDegJf
+            - generic [ref=e2215]: "1"
+          - button "DONE 04-06-26-demo-task-31d7bb5e 04/06/2026, 20:18:391s$0.00 maestro/demo-task-31d7bb5e" [ref=e2217] [cursor=pointer]:
+            - generic [ref=e2218]: DONE
+            - generic [ref=e2219]:
+              - generic [ref=e2220]: 04-06-26-demo-task-31d7bb5e
+              - text: 04/06/2026, 20:18:391s$0.00
+              - generic [ref=e2221]: maestro/demo-task-31d7bb5e
+            - img [ref=e2222]
+        - generic [ref=e2224]:
+          - generic [ref=e2225]:
+            - generic [ref=e2226]: maestro-cli-1BaWT3
+            - generic [ref=e2227]: "1"
+          - button "DONE 04-06-26-demo-3c6aa214 04/06/2026, 20:18:401s$0.00 feat/cli-plumbed" [ref=e2229] [cursor=pointer]:
+            - generic [ref=e2230]: DONE
+            - generic [ref=e2231]:
+              - generic [ref=e2232]: 04-06-26-demo-3c6aa214
+              - text: 04/06/2026, 20:18:401s$0.00
+              - generic [ref=e2233]: feat/cli-plumbed
+            - img [ref=e2234]
+        - generic [ref=e2236]:
+          - generic [ref=e2237]:
+            - generic [ref=e2238]: maestro-clarify-oJVfOt
+            - generic [ref=e2239]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-e4578c24 04/06/2026, 20:18:40" [ref=e2241] [cursor=pointer]:
+            - generic [ref=e2242]: UNKNOWN
+            - generic [ref=e2243]:
+              - generic [ref=e2244]: 04-06-26-demo-task-e4578c24
+              - text: 04/06/2026, 20:18:40
+            - img [ref=e2245]
+        - generic [ref=e2247]:
+          - generic [ref=e2248]:
+            - generic [ref=e2249]: maestro-clarify-fold-NlhCRj
+            - generic [ref=e2250]: "1"
+          - button "DONE 04-06-26-demo-task-72a4efb9 04/06/2026, 20:18:391s$0.00 maestro/demo-task-72a4efb9" [ref=e2252] [cursor=pointer]:
+            - generic [ref=e2253]: DONE
+            - generic [ref=e2254]:
+              - generic [ref=e2255]: 04-06-26-demo-task-72a4efb9
+              - text: 04/06/2026, 20:18:391s$0.00
+              - generic [ref=e2256]: maestro/demo-task-72a4efb9
+            - img [ref=e2257]
+        - generic [ref=e2259]:
+          - generic [ref=e2260]:
+            - generic [ref=e2261]: maestro-run-n6o2E0
+            - generic [ref=e2262]: "1"
+          - button "ERROR demo task 04/06/2026, 20:18:391s$0.00" [ref=e2264] [cursor=pointer]:
+            - generic [ref=e2265]: ERROR
+            - generic [ref=e2266]:
+              - generic [ref=e2267]: demo task
+              - text: 04/06/2026, 20:18:391s$0.00
+            - img [ref=e2268]
+        - generic [ref=e2270]:
+          - generic [ref=e2271]:
+            - generic [ref=e2272]: maestro-run-LVUxwW
+            - generic [ref=e2273]: "1"
+          - button "ERROR demo task 04/06/2026, 20:18:391s$0.00" [ref=e2275] [cursor=pointer]:
+            - generic [ref=e2276]: ERROR
+            - generic [ref=e2277]:
+              - generic [ref=e2278]: demo task
+              - text: 04/06/2026, 20:18:391s$0.00
+            - img [ref=e2279]
+        - generic [ref=e2281]:
+          - generic [ref=e2282]:
+            - generic [ref=e2283]: maestro-master-mjz2l2
+            - generic [ref=e2284]: "1"
+          - button "UNKNOWN 04-06-26-x-5042ee3e 04/06/2026, 20:16:40" [ref=e2286] [cursor=pointer]:
+            - generic [ref=e2287]: UNKNOWN
+            - generic [ref=e2288]:
+              - generic [ref=e2289]: 04-06-26-x-5042ee3e
+              - text: 04/06/2026, 20:16:40
+            - img [ref=e2290]
+        - generic [ref=e2292]:
+          - generic [ref=e2293]:
+            - generic [ref=e2294]: maestro-parent-yAhzVa
+            - generic [ref=e2295]: "1"
+          - button "DONE 04-06-26-x-bb481fe8 04/06/2026, 20:16:390s$0.00 maestro/x-bb481fe8" [ref=e2297] [cursor=pointer]:
+            - generic [ref=e2298]: DONE
+            - generic [ref=e2299]:
+              - generic [ref=e2300]: 04-06-26-x-bb481fe8
+              - text: 04/06/2026, 20:16:390s$0.00
+              - generic [ref=e2301]: maestro/x-bb481fe8
+            - img [ref=e2302]
+        - generic [ref=e2304]:
+          - generic [ref=e2305]:
+            - generic [ref=e2306]: maestro-orch-4FuraN
+            - generic [ref=e2307]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-9d75c2c9 04/06/2026, 20:16:38" [ref=e2309] [cursor=pointer]:
+            - generic [ref=e2310]: UNKNOWN
+            - generic [ref=e2311]:
+              - generic [ref=e2312]: 04-06-26-add-login-flow-9d75c2c9
+              - text: 04/06/2026, 20:16:38
+            - img [ref=e2313]
+        - generic [ref=e2315]:
+          - generic [ref=e2316]:
+            - generic [ref=e2317]: maestro-orch-FZme3p
+            - generic [ref=e2318]: "1"
+          - button "STOPPED 04-06-26-x-8aed32df 04/06/2026, 20:16:370s$0.00 maestro/x-8aed32df" [ref=e2320] [cursor=pointer]:
+            - generic [ref=e2321]: STOPPED
+            - generic [ref=e2322]:
+              - generic [ref=e2323]: 04-06-26-x-8aed32df
+              - text: 04/06/2026, 20:16:370s$0.00
+              - generic [ref=e2324]: maestro/x-8aed32df
+            - img [ref=e2325]
+        - generic [ref=e2327]:
+          - generic [ref=e2328]:
+            - generic [ref=e2329]: maestro-orch-DEeazQ
+            - generic [ref=e2330]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-397a4d92 04/06/2026, 20:16:37" [ref=e2332] [cursor=pointer]:
+            - generic [ref=e2333]: UNKNOWN
+            - generic [ref=e2334]:
+              - generic [ref=e2335]: 04-06-26-add-login-flow-397a4d92
+              - text: 04/06/2026, 20:16:37
+            - img [ref=e2336]
+        - generic [ref=e2338]:
+          - generic [ref=e2339]:
+            - generic [ref=e2340]: maestro-dispatch-jT6gwQ
+            - generic [ref=e2341]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-d298b3fc 04/06/2026, 20:16:37" [ref=e2343] [cursor=pointer]:
+            - generic [ref=e2344]: UNKNOWN
+            - generic [ref=e2345]:
+              - generic [ref=e2346]: 04-06-26-demo-task-d298b3fc
+              - text: 04/06/2026, 20:16:37
+            - img [ref=e2347]
+        - generic [ref=e2349]:
+          - generic [ref=e2350]:
+            - generic [ref=e2351]: maestro-orch-zy05R8
+            - generic [ref=e2352]: "1"
+          - button "DONE 04-06-26-whatever-3d84ace4 04/06/2026, 20:16:351s$0.00 feat/my-thing" [ref=e2354] [cursor=pointer]:
+            - generic [ref=e2355]: DONE
+            - generic [ref=e2356]:
+              - generic [ref=e2357]: 04-06-26-whatever-3d84ace4
+              - text: 04/06/2026, 20:16:351s$0.00
+              - generic [ref=e2358]: feat/my-thing
+            - img [ref=e2359]
+        - generic [ref=e2361]:
+          - generic [ref=e2362]:
+            - generic [ref=e2363]: maestro-orch-N5K0Tc
+            - generic [ref=e2364]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-9e5914ac 04/06/2026, 20:16:34" [ref=e2366] [cursor=pointer]:
+            - generic [ref=e2367]: UNKNOWN
+            - generic [ref=e2368]:
+              - generic [ref=e2369]: 04-06-26-add-login-flow-9e5914ac
+              - text: 04/06/2026, 20:16:34
+            - img [ref=e2370]
+        - generic [ref=e2372]:
+          - generic [ref=e2373]:
+            - generic [ref=e2374]: maestro-timing-Ue1LNm
+            - generic [ref=e2375]: "1"
+          - button "DONE 04-06-26-demo-task-0d06f597 04/06/2026, 20:16:331s$0.00 maestro/demo-task-0d06f597" [ref=e2377] [cursor=pointer]:
+            - generic [ref=e2378]: DONE
+            - generic [ref=e2379]:
+              - generic [ref=e2380]: 04-06-26-demo-task-0d06f597
+              - text: 04/06/2026, 20:16:331s$0.00
+              - generic [ref=e2381]: maestro/demo-task-0d06f597
+            - img [ref=e2382]
+        - generic [ref=e2384]:
+          - generic [ref=e2385]:
+            - generic [ref=e2386]: maestro-dispatch-OqArDp
+            - generic [ref=e2387]: "1"
+          - button "DONE 04-06-26-demo-task-f506546b 04/06/2026, 20:16:331s$0.00 maestro/demo-task-f506546b" [ref=e2389] [cursor=pointer]:
+            - generic [ref=e2390]: DONE
+            - generic [ref=e2391]:
+              - generic [ref=e2392]: 04-06-26-demo-task-f506546b
+              - text: 04/06/2026, 20:16:331s$0.00
+              - generic [ref=e2393]: maestro/demo-task-f506546b
+            - img [ref=e2394]
+        - generic [ref=e2396]:
+          - generic [ref=e2397]:
+            - generic [ref=e2398]: maestro-cli-JNckER
+            - generic [ref=e2399]: "1"
+          - button "DONE 04-06-26-demo-6a7075db 04/06/2026, 20:16:331s$0.00 feat/cli-plumbed" [ref=e2401] [cursor=pointer]:
+            - generic [ref=e2402]: DONE
+            - generic [ref=e2403]:
+              - generic [ref=e2404]: 04-06-26-demo-6a7075db
+              - text: 04/06/2026, 20:16:331s$0.00
+              - generic [ref=e2405]: feat/cli-plumbed
+            - img [ref=e2406]
+        - generic [ref=e2408]:
+          - generic [ref=e2409]:
+            - generic [ref=e2410]: maestro-clarify-fold-IJXA1O
+            - generic [ref=e2411]: "1"
+          - button "DONE 04-06-26-demo-task-10f5489e 04/06/2026, 20:16:321s$0.00 maestro/demo-task-10f5489e" [ref=e2413] [cursor=pointer]:
+            - generic [ref=e2414]: DONE
+            - generic [ref=e2415]:
+              - generic [ref=e2416]: 04-06-26-demo-task-10f5489e
+              - text: 04/06/2026, 20:16:321s$0.00
+              - generic [ref=e2417]: maestro/demo-task-10f5489e
+            - img [ref=e2418]
+        - generic [ref=e2420]:
+          - generic [ref=e2421]:
+            - generic [ref=e2422]: maestro-clarify-ba1vK7
+            - generic [ref=e2423]: "1"
+          - button "DONE 04-06-26-demo-task-f87a135e 04/06/2026, 20:16:321s$0.00 maestro/demo-task-f87a135e" [ref=e2425] [cursor=pointer]:
+            - generic [ref=e2426]: DONE
+            - generic [ref=e2427]:
+              - generic [ref=e2428]: 04-06-26-demo-task-f87a135e
+              - text: 04/06/2026, 20:16:321s$0.00
+              - generic [ref=e2429]: maestro/demo-task-f87a135e
+            - img [ref=e2430]
+        - generic [ref=e2432]:
+          - generic [ref=e2433]:
+            - generic [ref=e2434]: maestro-run-3ISFSi
+            - generic [ref=e2435]: "1"
+          - button "ERROR demo task 04/06/2026, 20:16:331s$0.00" [ref=e2437] [cursor=pointer]:
+            - generic [ref=e2438]: ERROR
+            - generic [ref=e2439]:
+              - generic [ref=e2440]: demo task
+              - text: 04/06/2026, 20:16:331s$0.00
+            - img [ref=e2441]
+        - generic [ref=e2443]:
+          - generic [ref=e2444]:
+            - generic [ref=e2445]: maestro-run-WXiBxI
+            - generic [ref=e2446]: "1"
+          - button "ERROR demo task 04/06/2026, 20:16:331s$0.00" [ref=e2448] [cursor=pointer]:
+            - generic [ref=e2449]: ERROR
+            - generic [ref=e2450]:
+              - generic [ref=e2451]: demo task
+              - text: 04/06/2026, 20:16:331s$0.00
+            - img [ref=e2452]
+        - generic [ref=e2454]:
+          - generic [ref=e2455]:
+            - generic [ref=e2456]: maestro-master-qEBZPu
+            - generic [ref=e2457]: "1"
+          - button "UNKNOWN 04-06-26-x-975f4224 04/06/2026, 20:14:34" [ref=e2459] [cursor=pointer]:
+            - generic [ref=e2460]: UNKNOWN
+            - generic [ref=e2461]:
+              - generic [ref=e2462]: 04-06-26-x-975f4224
+              - text: 04/06/2026, 20:14:34
+            - img [ref=e2463]
+        - generic [ref=e2465]:
+          - generic [ref=e2466]:
+            - generic [ref=e2467]: maestro-parent-aMCYAf
+            - generic [ref=e2468]: "1"
+          - button "DONE 04-06-26-x-8e300961 04/06/2026, 20:14:330s$0.00 maestro/x-8e300961" [ref=e2470] [cursor=pointer]:
+            - generic [ref=e2471]: DONE
+            - generic [ref=e2472]:
+              - generic [ref=e2473]: 04-06-26-x-8e300961
+              - text: 04/06/2026, 20:14:330s$0.00
+              - generic [ref=e2474]: maestro/x-8e300961
+            - img [ref=e2475]
+        - generic [ref=e2477]:
+          - generic [ref=e2478]:
+            - generic [ref=e2479]: maestro-orch-ceawDV
+            - generic [ref=e2480]: "1"
+          - button "DONE 04-06-26-add-login-flow-e82521e7 04/06/2026, 20:14:320s$0.00 maestro/add-login-flow-e82521e7" [ref=e2482] [cursor=pointer]:
+            - generic [ref=e2483]: DONE
+            - generic [ref=e2484]:
+              - generic [ref=e2485]: 04-06-26-add-login-flow-e82521e7
+              - text: 04/06/2026, 20:14:320s$0.00
+              - generic [ref=e2486]: maestro/add-login-flow-e82521e7
+            - img [ref=e2487]
+        - generic [ref=e2489]:
+          - generic [ref=e2490]:
+            - generic [ref=e2491]: maestro-orch-TE2rFh
+            - generic [ref=e2492]: "1"
+          - button "STOPPED 04-06-26-x-700889aa 04/06/2026, 20:14:310s$0.00 maestro/x-700889aa" [ref=e2494] [cursor=pointer]:
+            - generic [ref=e2495]: STOPPED
+            - generic [ref=e2496]:
+              - generic [ref=e2497]: 04-06-26-x-700889aa
+              - text: 04/06/2026, 20:14:310s$0.00
+              - generic [ref=e2498]: maestro/x-700889aa
+            - img [ref=e2499]
+        - generic [ref=e2501]:
+          - generic [ref=e2502]:
+            - generic [ref=e2503]: maestro-orch-lUily9
+            - generic [ref=e2504]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-202b7905 04/06/2026, 20:14:31" [ref=e2506] [cursor=pointer]:
+            - generic [ref=e2507]: UNKNOWN
+            - generic [ref=e2508]:
+              - generic [ref=e2509]: 04-06-26-add-login-flow-202b7905
+              - text: 04/06/2026, 20:14:31
+            - img [ref=e2510]
+        - generic [ref=e2512]:
+          - generic [ref=e2513]:
+            - generic [ref=e2514]: maestro-dispatch-2wxC4c
+            - generic [ref=e2515]: "1"
+          - button "DONE 04-06-26-demo-task-4bb23aec 04/06/2026, 20:14:301s$0.00 maestro/demo-task-4bb23aec" [ref=e2517] [cursor=pointer]:
+            - generic [ref=e2518]: DONE
+            - generic [ref=e2519]:
+              - generic [ref=e2520]: 04-06-26-demo-task-4bb23aec
+              - text: 04/06/2026, 20:14:301s$0.00
+              - generic [ref=e2521]: maestro/demo-task-4bb23aec
+            - img [ref=e2522]
+        - generic [ref=e2524]:
+          - generic [ref=e2525]:
+            - generic [ref=e2526]: maestro-orch-9NvBgd
+            - generic [ref=e2527]: "1"
+          - button "UNKNOWN 04-06-26-whatever-b68e898a 04/06/2026, 20:14:30" [ref=e2529] [cursor=pointer]:
+            - generic [ref=e2530]: UNKNOWN
+            - generic [ref=e2531]:
+              - generic [ref=e2532]: 04-06-26-whatever-b68e898a
+              - text: 04/06/2026, 20:14:30
+            - img [ref=e2533]
+        - generic [ref=e2535]:
+          - generic [ref=e2536]:
+            - generic [ref=e2537]: maestro-orch-1VNGnB
+            - generic [ref=e2538]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-6e4a61bc 04/06/2026, 20:14:28" [ref=e2540] [cursor=pointer]:
+            - generic [ref=e2541]: UNKNOWN
+            - generic [ref=e2542]:
+              - generic [ref=e2543]: 04-06-26-add-login-flow-6e4a61bc
+              - text: 04/06/2026, 20:14:28
+            - img [ref=e2544]
+        - generic [ref=e2546]:
+          - generic [ref=e2547]:
+            - generic [ref=e2548]: maestro-cli-AcBXd1
+            - generic [ref=e2549]: "1"
+          - button "DONE 04-06-26-demo-6939dda9 04/06/2026, 20:14:271s$0.00 feat/cli-plumbed" [ref=e2551] [cursor=pointer]:
+            - generic [ref=e2552]: DONE
+            - generic [ref=e2553]:
+              - generic [ref=e2554]: 04-06-26-demo-6939dda9
+              - text: 04/06/2026, 20:14:271s$0.00
+              - generic [ref=e2555]: feat/cli-plumbed
+            - img [ref=e2556]
+        - generic [ref=e2558]:
+          - generic [ref=e2559]:
+            - generic [ref=e2560]: maestro-dispatch-jRKDsf
+            - generic [ref=e2561]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-c698d33a 04/06/2026, 20:14:28" [ref=e2563] [cursor=pointer]:
+            - generic [ref=e2564]: UNKNOWN
+            - generic [ref=e2565]:
+              - generic [ref=e2566]: 04-06-26-demo-task-c698d33a
+              - text: 04/06/2026, 20:14:28
+            - img [ref=e2567]
+        - generic [ref=e2569]:
+          - generic [ref=e2570]:
+            - generic [ref=e2571]: maestro-timing-oZuVoZ
+            - generic [ref=e2572]: "1"
+          - button "DONE 04-06-26-demo-task-d0f9a572 04/06/2026, 20:14:271s$0.00 maestro/demo-task-d0f9a572" [ref=e2574] [cursor=pointer]:
+            - generic [ref=e2575]: DONE
+            - generic [ref=e2576]:
+              - generic [ref=e2577]: 04-06-26-demo-task-d0f9a572
+              - text: 04/06/2026, 20:14:271s$0.00
+              - generic [ref=e2578]: maestro/demo-task-d0f9a572
+            - img [ref=e2579]
+        - generic [ref=e2581]:
+          - generic [ref=e2582]:
+            - generic [ref=e2583]: maestro-clarify-fold-nAM92p
+            - generic [ref=e2584]: "1"
+          - button "DONE 04-06-26-demo-task-243523a0 04/06/2026, 20:14:261s$0.00 maestro/demo-task-243523a0" [ref=e2586] [cursor=pointer]:
+            - generic [ref=e2587]: DONE
+            - generic [ref=e2588]:
+              - generic [ref=e2589]: 04-06-26-demo-task-243523a0
+              - text: 04/06/2026, 20:14:261s$0.00
+              - generic [ref=e2590]: maestro/demo-task-243523a0
+            - img [ref=e2591]
+        - generic [ref=e2593]:
+          - generic [ref=e2594]:
+            - generic [ref=e2595]: maestro-clarify-hV7Ibl
+            - generic [ref=e2596]: "1"
+          - button "DONE 04-06-26-demo-task-f5857d2e 04/06/2026, 20:14:261s$0.00 maestro/demo-task-f5857d2e" [ref=e2598] [cursor=pointer]:
+            - generic [ref=e2599]: DONE
+            - generic [ref=e2600]:
+              - generic [ref=e2601]: 04-06-26-demo-task-f5857d2e
+              - text: 04/06/2026, 20:14:261s$0.00
+              - generic [ref=e2602]: maestro/demo-task-f5857d2e
+            - img [ref=e2603]
+        - generic [ref=e2605]:
+          - generic [ref=e2606]:
+            - generic [ref=e2607]: maestro-run-YZor1s
+            - generic [ref=e2608]: "1"
+          - button "ERROR demo task 04/06/2026, 20:14:271s$0.00" [ref=e2610] [cursor=pointer]:
+            - generic [ref=e2611]: ERROR
+            - generic [ref=e2612]:
+              - generic [ref=e2613]: demo task
+              - text: 04/06/2026, 20:14:271s$0.00
+            - img [ref=e2614]
+        - generic [ref=e2616]:
+          - generic [ref=e2617]:
+            - generic [ref=e2618]: maestro-run-NwSr66
+            - generic [ref=e2619]: "1"
+          - button "ERROR demo task 04/06/2026, 20:14:271s$0.00" [ref=e2621] [cursor=pointer]:
+            - generic [ref=e2622]: ERROR
+            - generic [ref=e2623]:
+              - generic [ref=e2624]: demo task
+              - text: 04/06/2026, 20:14:271s$0.00
+            - img [ref=e2625]
+        - generic [ref=e2627]:
+          - generic [ref=e2628]:
+            - generic [ref=e2629]: maestro-dispatch-eLI4Vj
+            - generic [ref=e2630]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-512b4b0e 04/06/2026, 16:15:22" [ref=e2632] [cursor=pointer]:
+            - generic [ref=e2633]: UNKNOWN
+            - generic [ref=e2634]:
+              - generic [ref=e2635]: 04-06-26-demo-task-512b4b0e
+              - text: 04/06/2026, 16:15:22
+            - img [ref=e2636]
+        - generic [ref=e2638]:
+          - generic [ref=e2639]:
+            - generic [ref=e2640]: maestro-dispatch-1DTIFz
+            - generic [ref=e2641]: "1"
+          - button "DONE 04-06-26-demo-task-0efb571c 04/06/2026, 16:15:181s$0.00 maestro/demo-task-0efb571c" [ref=e2643] [cursor=pointer]:
+            - generic [ref=e2644]: DONE
+            - generic [ref=e2645]:
+              - generic [ref=e2646]: 04-06-26-demo-task-0efb571c
+              - text: 04/06/2026, 16:15:181s$0.00
+              - generic [ref=e2647]: maestro/demo-task-0efb571c
+            - img [ref=e2648]
+        - generic [ref=e2650]:
+          - generic [ref=e2651]:
+            - generic [ref=e2652]: maestro-master-WJouba
+            - generic [ref=e2653]: "1"
+          - button "DONE 04-06-26-x-a9f524ce 04/06/2026, 14:38:220s$0.00 maestro/x-a9f524ce" [ref=e2655] [cursor=pointer]:
+            - generic [ref=e2656]: DONE
+            - generic [ref=e2657]:
+              - generic [ref=e2658]: 04-06-26-x-a9f524ce
+              - text: 04/06/2026, 14:38:220s$0.00
+              - generic [ref=e2659]: maestro/x-a9f524ce
+            - img [ref=e2660]
+        - generic [ref=e2662]:
+          - generic [ref=e2663]:
+            - generic [ref=e2664]: maestro-parent-LHi9V2
+            - generic [ref=e2665]: "1"
+          - button "DONE 04-06-26-x-e42f6b6e 04/06/2026, 14:38:201s$0.00 maestro/x-e42f6b6e" [ref=e2667] [cursor=pointer]:
+            - generic [ref=e2668]: DONE
+            - generic [ref=e2669]:
+              - generic [ref=e2670]: 04-06-26-x-e42f6b6e
+              - text: 04/06/2026, 14:38:201s$0.00
+              - generic [ref=e2671]: maestro/x-e42f6b6e
+            - img [ref=e2672]
+        - generic [ref=e2674]:
+          - generic [ref=e2675]:
+            - generic [ref=e2676]: maestro-orch-PEiBSL
+            - generic [ref=e2677]: "1"
+          - button "DONE 04-06-26-add-login-flow-1ff88df7 04/06/2026, 14:38:190s$0.00 maestro/add-login-flow-1ff88df7" [ref=e2679] [cursor=pointer]:
+            - generic [ref=e2680]: DONE
+            - generic [ref=e2681]:
+              - generic [ref=e2682]: 04-06-26-add-login-flow-1ff88df7
+              - text: 04/06/2026, 14:38:190s$0.00
+              - generic [ref=e2683]: maestro/add-login-flow-1ff88df7
+            - img [ref=e2684]
+        - generic [ref=e2686]:
+          - generic [ref=e2687]:
+            - generic [ref=e2688]: maestro-orch-LITnXy
+            - generic [ref=e2689]: "1"
+          - button "STOPPED 04-06-26-x-33bc0c16 04/06/2026, 14:38:190s$0.00 maestro/x-33bc0c16" [ref=e2691] [cursor=pointer]:
+            - generic [ref=e2692]: STOPPED
+            - generic [ref=e2693]:
+              - generic [ref=e2694]: 04-06-26-x-33bc0c16
+              - text: 04/06/2026, 14:38:190s$0.00
+              - generic [ref=e2695]: maestro/x-33bc0c16
+            - img [ref=e2696]
+        - generic [ref=e2698]:
+          - generic [ref=e2699]:
+            - generic [ref=e2700]: maestro-orch-U0p5qq
+            - generic [ref=e2701]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-a343d713 04/06/2026, 14:38:18" [ref=e2703] [cursor=pointer]:
+            - generic [ref=e2704]: UNKNOWN
+            - generic [ref=e2705]:
+              - generic [ref=e2706]: 04-06-26-add-login-flow-a343d713
+              - text: 04/06/2026, 14:38:18
+            - img [ref=e2707]
+        - generic [ref=e2709]:
+          - generic [ref=e2710]:
+            - generic [ref=e2711]: maestro-dispatch-wjZDVQ
+            - generic [ref=e2712]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-d10e4687 04/06/2026, 14:38:17" [ref=e2714] [cursor=pointer]:
+            - generic [ref=e2715]: UNKNOWN
+            - generic [ref=e2716]:
+              - generic [ref=e2717]: 04-06-26-demo-task-d10e4687
+              - text: 04/06/2026, 14:38:17
+            - img [ref=e2718]
+        - generic [ref=e2720]:
+          - generic [ref=e2721]:
+            - generic [ref=e2722]: maestro-orch-AJ6YCs
+            - generic [ref=e2723]: "1"
+          - button "DONE 04-06-26-whatever-1ae1cd0c 04/06/2026, 14:38:170s$0.00 feat/my-thing" [ref=e2725] [cursor=pointer]:
+            - generic [ref=e2726]: DONE
+            - generic [ref=e2727]:
+              - generic [ref=e2728]: 04-06-26-whatever-1ae1cd0c
+              - text: 04/06/2026, 14:38:170s$0.00
+              - generic [ref=e2729]: feat/my-thing
+            - img [ref=e2730]
+        - generic [ref=e2732]:
+          - generic [ref=e2733]:
+            - generic [ref=e2734]: maestro-orch-HExgj6
+            - generic [ref=e2735]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-be12884c 04/06/2026, 14:38:16" [ref=e2737] [cursor=pointer]:
+            - generic [ref=e2738]: UNKNOWN
+            - generic [ref=e2739]:
+              - generic [ref=e2740]: 04-06-26-add-login-flow-be12884c
+              - text: 04/06/2026, 14:38:16
+            - img [ref=e2741]
+        - generic [ref=e2743]:
+          - generic [ref=e2744]:
+            - generic [ref=e2745]: maestro-run-eBggVM
+            - generic [ref=e2746]: "1"
+          - button "ERROR demo task 04/06/2026, 14:38:151s$0.00" [ref=e2748] [cursor=pointer]:
+            - generic [ref=e2749]: ERROR
+            - generic [ref=e2750]:
+              - generic [ref=e2751]: demo task
+              - text: 04/06/2026, 14:38:151s$0.00
+            - img [ref=e2752]
+        - generic [ref=e2754]:
+          - generic [ref=e2755]:
+            - generic [ref=e2756]: maestro-run-MjHcrQ
+            - generic [ref=e2757]: "1"
+          - button "ERROR demo task 04/06/2026, 14:38:151s$0.00" [ref=e2759] [cursor=pointer]:
+            - generic [ref=e2760]: ERROR
+            - generic [ref=e2761]:
+              - generic [ref=e2762]: demo task
+              - text: 04/06/2026, 14:38:151s$0.00
+            - img [ref=e2763]
+        - generic [ref=e2765]:
+          - generic [ref=e2766]:
+            - generic [ref=e2767]: maestro-timing-fUsykW
+            - generic [ref=e2768]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-e9782dc3 04/06/2026, 14:38:16" [ref=e2770] [cursor=pointer]:
+            - generic [ref=e2771]: UNKNOWN
+            - generic [ref=e2772]:
+              - generic [ref=e2773]: 04-06-26-demo-task-e9782dc3
+              - text: 04/06/2026, 14:38:16
+            - img [ref=e2774]
+        - generic [ref=e2776]:
+          - generic [ref=e2777]:
+            - generic [ref=e2778]: maestro-dispatch-bWXo7p
+            - generic [ref=e2779]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-0d8e95f0 04/06/2026, 14:38:15" [ref=e2781] [cursor=pointer]:
+            - generic [ref=e2782]: UNKNOWN
+            - generic [ref=e2783]:
+              - generic [ref=e2784]: 04-06-26-demo-task-0d8e95f0
+              - text: 04/06/2026, 14:38:15
+            - img [ref=e2785]
+        - generic [ref=e2787]:
+          - generic [ref=e2788]:
+            - generic [ref=e2789]: maestro-clarify-7oMtJK
+            - generic [ref=e2790]: "1"
+          - button "DONE 04-06-26-demo-task-5ffac1b6 04/06/2026, 14:38:131s$0.00 maestro/demo-task-5ffac1b6" [ref=e2792] [cursor=pointer]:
+            - generic [ref=e2793]: DONE
+            - generic [ref=e2794]:
+              - generic [ref=e2795]: 04-06-26-demo-task-5ffac1b6
+              - text: 04/06/2026, 14:38:131s$0.00
+              - generic [ref=e2796]: maestro/demo-task-5ffac1b6
+            - img [ref=e2797]
+        - generic [ref=e2799]:
+          - generic [ref=e2800]:
+            - generic [ref=e2801]: maestro-clarify-fold-IQiuiQ
+            - generic [ref=e2802]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-8a861d0e 04/06/2026, 14:38:15" [ref=e2804] [cursor=pointer]:
+            - generic [ref=e2805]: UNKNOWN
+            - generic [ref=e2806]:
+              - generic [ref=e2807]: 04-06-26-demo-task-8a861d0e
+              - text: 04/06/2026, 14:38:15
+            - img [ref=e2808]
+        - generic [ref=e2810]:
+          - generic [ref=e2811]:
+            - generic [ref=e2812]: maestro-cli-hTmPpK
+            - generic [ref=e2813]: "1"
+          - button "UNKNOWN 04-06-26-demo-2f832a1d 04/06/2026, 14:38:14" [ref=e2815] [cursor=pointer]:
+            - generic [ref=e2816]: UNKNOWN
+            - generic [ref=e2817]:
+              - generic [ref=e2818]: 04-06-26-demo-2f832a1d
+              - text: 04/06/2026, 14:38:14
+            - img [ref=e2819]
+        - generic [ref=e2821]:
+          - generic [ref=e2822]:
+            - generic [ref=e2823]: maestro-master-qiK3eT
+            - generic [ref=e2824]: "1"
+          - button "UNKNOWN 04-06-26-x-014e8bf6 04/06/2026, 14:36:40" [ref=e2826] [cursor=pointer]:
+            - generic [ref=e2827]: UNKNOWN
+            - generic [ref=e2828]:
+              - generic [ref=e2829]: 04-06-26-x-014e8bf6
+              - text: 04/06/2026, 14:36:40
+            - img [ref=e2830]
+        - generic [ref=e2832]:
+          - generic [ref=e2833]:
+            - generic [ref=e2834]: maestro-parent-Z0JqXX
+            - generic [ref=e2835]: "1"
+          - button "DONE 04-06-26-x-44ff8cb1 04/06/2026, 14:36:380s$0.00 maestro/x-44ff8cb1" [ref=e2837] [cursor=pointer]:
+            - generic [ref=e2838]: DONE
+            - generic [ref=e2839]:
+              - generic [ref=e2840]: 04-06-26-x-44ff8cb1
+              - text: 04/06/2026, 14:36:380s$0.00
+              - generic [ref=e2841]: maestro/x-44ff8cb1
+            - img [ref=e2842]
+        - generic [ref=e2844]:
+          - generic [ref=e2845]:
+            - generic [ref=e2846]: maestro-orch-9ZAcrr
+            - generic [ref=e2847]: "1"
+          - button "DONE 04-06-26-add-login-flow-b07ede1c 04/06/2026, 14:36:380s$0.00 maestro/add-login-flow-b07ede1c" [ref=e2849] [cursor=pointer]:
+            - generic [ref=e2850]: DONE
+            - generic [ref=e2851]:
+              - generic [ref=e2852]: 04-06-26-add-login-flow-b07ede1c
+              - text: 04/06/2026, 14:36:380s$0.00
+              - generic [ref=e2853]: maestro/add-login-flow-b07ede1c
+            - img [ref=e2854]
+        - generic [ref=e2856]:
+          - generic [ref=e2857]:
+            - generic [ref=e2858]: maestro-orch-jGTc42
+            - generic [ref=e2859]: "1"
+          - button "STOPPED 04-06-26-x-d46bdd79 04/06/2026, 14:36:370s$0.00 maestro/x-d46bdd79" [ref=e2861] [cursor=pointer]:
+            - generic [ref=e2862]: STOPPED
+            - generic [ref=e2863]:
+              - generic [ref=e2864]: 04-06-26-x-d46bdd79
+              - text: 04/06/2026, 14:36:370s$0.00
+              - generic [ref=e2865]: maestro/x-d46bdd79
+            - img [ref=e2866]
+        - generic [ref=e2868]:
+          - generic [ref=e2869]:
+            - generic [ref=e2870]: maestro-orch-mAkhtd
+            - generic [ref=e2871]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-da39e0e0 04/06/2026, 14:36:37" [ref=e2873] [cursor=pointer]:
+            - generic [ref=e2874]: UNKNOWN
+            - generic [ref=e2875]:
+              - generic [ref=e2876]: 04-06-26-add-login-flow-da39e0e0
+              - text: 04/06/2026, 14:36:37
+            - img [ref=e2877]
+        - generic [ref=e2879]:
+          - generic [ref=e2880]:
+            - generic [ref=e2881]: maestro-dispatch-byuAwJ
+            - generic [ref=e2882]: "1"
+          - button "DONE 04-06-26-demo-task-bef527fb 04/06/2026, 14:36:361s$0.00 maestro/demo-task-bef527fb" [ref=e2884] [cursor=pointer]:
+            - generic [ref=e2885]: DONE
+            - generic [ref=e2886]:
+              - generic [ref=e2887]: 04-06-26-demo-task-bef527fb
+              - text: 04/06/2026, 14:36:361s$0.00
+              - generic [ref=e2888]: maestro/demo-task-bef527fb
+            - img [ref=e2889]
+        - generic [ref=e2891]:
+          - generic [ref=e2892]:
+            - generic [ref=e2893]: maestro-orch-on7e7y
+            - generic [ref=e2894]: "1"
+          - button "UNKNOWN 04-06-26-whatever-ac6ffb04 04/06/2026, 14:36:36" [ref=e2896] [cursor=pointer]:
+            - generic [ref=e2897]: UNKNOWN
+            - generic [ref=e2898]:
+              - generic [ref=e2899]: 04-06-26-whatever-ac6ffb04
+              - text: 04/06/2026, 14:36:36
+            - img [ref=e2900]
+        - generic [ref=e2902]:
+          - generic [ref=e2903]:
+            - generic [ref=e2904]: maestro-orch-fB9hlZ
+            - generic [ref=e2905]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-6243be7a 04/06/2026, 14:36:34" [ref=e2907] [cursor=pointer]:
+            - generic [ref=e2908]: UNKNOWN
+            - generic [ref=e2909]:
+              - generic [ref=e2910]: 04-06-26-add-login-flow-6243be7a
+              - text: 04/06/2026, 14:36:34
+            - img [ref=e2911]
+        - generic [ref=e2913]:
+          - generic [ref=e2914]:
+            - generic [ref=e2915]: maestro-timing-UB4hpL
+            - generic [ref=e2916]: "1"
+          - button "DONE 04-06-26-demo-task-9e5798e0 04/06/2026, 14:36:321s$0.00 maestro/demo-task-9e5798e0" [ref=e2918] [cursor=pointer]:
+            - generic [ref=e2919]: DONE
+            - generic [ref=e2920]:
+              - generic [ref=e2921]: 04-06-26-demo-task-9e5798e0
+              - text: 04/06/2026, 14:36:321s$0.00
+              - generic [ref=e2922]: maestro/demo-task-9e5798e0
+            - img [ref=e2923]
+        - generic [ref=e2925]:
+          - generic [ref=e2926]:
+            - generic [ref=e2927]: maestro-cli-hcF2Q2
+            - generic [ref=e2928]: "1"
+          - button "UNKNOWN 04-06-26-demo-6fe32f9c 04/06/2026, 14:36:33" [ref=e2930] [cursor=pointer]:
+            - generic [ref=e2931]: UNKNOWN
+            - generic [ref=e2932]:
+              - generic [ref=e2933]: 04-06-26-demo-6fe32f9c
+              - text: 04/06/2026, 14:36:33
+            - img [ref=e2934]
+        - generic [ref=e2936]:
+          - generic [ref=e2937]:
+            - generic [ref=e2938]: maestro-clarify-OAoTMv
+            - generic [ref=e2939]: "1"
+          - button "DONE 04-06-26-demo-task-a8532d17 04/06/2026, 14:36:321s$0.00 maestro/demo-task-a8532d17" [ref=e2941] [cursor=pointer]:
+            - generic [ref=e2942]: DONE
+            - generic [ref=e2943]:
+              - generic [ref=e2944]: 04-06-26-demo-task-a8532d17
+              - text: 04/06/2026, 14:36:321s$0.00
+              - generic [ref=e2945]: maestro/demo-task-a8532d17
+            - img [ref=e2946]
+        - generic [ref=e2948]:
+          - generic [ref=e2949]:
+            - generic [ref=e2950]: maestro-dispatch-5p2qrV
+            - generic [ref=e2951]: "1"
+          - button "DONE 04-06-26-demo-task-831c70c2 04/06/2026, 14:36:321s$0.00 maestro/demo-task-831c70c2" [ref=e2953] [cursor=pointer]:
+            - generic [ref=e2954]: DONE
+            - generic [ref=e2955]:
+              - generic [ref=e2956]: 04-06-26-demo-task-831c70c2
+              - text: 04/06/2026, 14:36:321s$0.00
+              - generic [ref=e2957]: maestro/demo-task-831c70c2
+            - img [ref=e2958]
+        - generic [ref=e2960]:
+          - generic [ref=e2961]:
+            - generic [ref=e2962]: maestro-clarify-fold-qqi9Ol
+            - generic [ref=e2963]: "1"
+          - button "DONE 04-06-26-demo-task-8b221297 04/06/2026, 14:36:321s$0.00 maestro/demo-task-8b221297" [ref=e2965] [cursor=pointer]:
+            - generic [ref=e2966]: DONE
+            - generic [ref=e2967]:
+              - generic [ref=e2968]: 04-06-26-demo-task-8b221297
+              - text: 04/06/2026, 14:36:321s$0.00
+              - generic [ref=e2969]: maestro/demo-task-8b221297
+            - img [ref=e2970]
+        - generic [ref=e2972]:
+          - generic [ref=e2973]:
+            - generic [ref=e2974]: maestro-run-ne8J5N
+            - generic [ref=e2975]: "1"
+          - button "ERROR demo task 04/06/2026, 14:36:321s$0.00" [ref=e2977] [cursor=pointer]:
+            - generic [ref=e2978]: ERROR
+            - generic [ref=e2979]:
+              - generic [ref=e2980]: demo task
+              - text: 04/06/2026, 14:36:321s$0.00
+            - img [ref=e2981]
+        - generic [ref=e2983]:
+          - generic [ref=e2984]:
+            - generic [ref=e2985]: maestro-run-Wigb1L
+            - generic [ref=e2986]: "1"
+          - button "ERROR demo task 04/06/2026, 14:36:321s$0.00" [ref=e2988] [cursor=pointer]:
+            - generic [ref=e2989]: ERROR
+            - generic [ref=e2990]:
+              - generic [ref=e2991]: demo task
+              - text: 04/06/2026, 14:36:321s$0.00
+            - img [ref=e2992]
+        - generic [ref=e2994]:
+          - generic [ref=e2995]:
+            - generic [ref=e2996]: maestro-master-gcfmr5
+            - generic [ref=e2997]: "1"
+          - button "DONE 04-06-26-x-afaf243f 04/06/2026, 14:32:510s$0.00 maestro/x-afaf243f" [ref=e2999] [cursor=pointer]:
+            - generic [ref=e3000]: DONE
+            - generic [ref=e3001]:
+              - generic [ref=e3002]: 04-06-26-x-afaf243f
+              - text: 04/06/2026, 14:32:510s$0.00
+              - generic [ref=e3003]: maestro/x-afaf243f
+            - img [ref=e3004]
+        - generic [ref=e3006]:
+          - generic [ref=e3007]:
+            - generic [ref=e3008]: maestro-parent-Qi55Og
+            - generic [ref=e3009]: "1"
+          - button "DONE 04-06-26-x-2aeaa002 04/06/2026, 14:32:500s$0.00 maestro/x-2aeaa002" [ref=e3011] [cursor=pointer]:
+            - generic [ref=e3012]: DONE
+            - generic [ref=e3013]:
+              - generic [ref=e3014]: 04-06-26-x-2aeaa002
+              - text: 04/06/2026, 14:32:500s$0.00
+              - generic [ref=e3015]: maestro/x-2aeaa002
+            - img [ref=e3016]
+        - generic [ref=e3018]:
+          - generic [ref=e3019]:
+            - generic [ref=e3020]: maestro-orch-r8yQDf
+            - generic [ref=e3021]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-992a5551 04/06/2026, 14:32:50" [ref=e3023] [cursor=pointer]:
+            - generic [ref=e3024]: UNKNOWN
+            - generic [ref=e3025]:
+              - generic [ref=e3026]: 04-06-26-add-login-flow-992a5551
+              - text: 04/06/2026, 14:32:50
+            - img [ref=e3027]
+        - generic [ref=e3029]:
+          - generic [ref=e3030]:
+            - generic [ref=e3031]: maestro-orch-TT4Lxy
+            - generic [ref=e3032]: "1"
+          - button "STOPPED 04-06-26-x-0cbfa6de 04/06/2026, 14:32:490s$0.00 maestro/x-0cbfa6de" [ref=e3034] [cursor=pointer]:
+            - generic [ref=e3035]: STOPPED
+            - generic [ref=e3036]:
+              - generic [ref=e3037]: 04-06-26-x-0cbfa6de
+              - text: 04/06/2026, 14:32:490s$0.00
+              - generic [ref=e3038]: maestro/x-0cbfa6de
+            - img [ref=e3039]
+        - generic [ref=e3041]:
+          - generic [ref=e3042]:
+            - generic [ref=e3043]: maestro-orch-u2tt9U
+            - generic [ref=e3044]: "1"
+          - button "DONE 04-06-26-add-login-flow-d4fe1840 04/06/2026, 14:32:480s$0.00 maestro/add-login-flow-d4fe1840" [ref=e3046] [cursor=pointer]:
+            - generic [ref=e3047]: DONE
+            - generic [ref=e3048]:
+              - generic [ref=e3049]: 04-06-26-add-login-flow-d4fe1840
+              - text: 04/06/2026, 14:32:480s$0.00
+              - generic [ref=e3050]: maestro/add-login-flow-d4fe1840
+            - img [ref=e3051]
+        - generic [ref=e3053]:
+          - generic [ref=e3054]:
+            - generic [ref=e3055]: maestro-dispatch-HBtvw0
+            - generic [ref=e3056]: "1"
+          - button "DONE 04-06-26-demo-task-80aa7405 04/06/2026, 14:32:471s$0.00 maestro/demo-task-80aa7405" [ref=e3058] [cursor=pointer]:
+            - generic [ref=e3059]: DONE
+            - generic [ref=e3060]:
+              - generic [ref=e3061]: 04-06-26-demo-task-80aa7405
+              - text: 04/06/2026, 14:32:471s$0.00
+              - generic [ref=e3062]: maestro/demo-task-80aa7405
+            - img [ref=e3063]
+        - generic [ref=e3065]:
+          - generic [ref=e3066]:
+            - generic [ref=e3067]: maestro-orch-c1MlUG
+            - generic [ref=e3068]: "1"
+          - button "UNKNOWN 04-06-26-whatever-158e6573 04/06/2026, 14:32:47" [ref=e3070] [cursor=pointer]:
+            - generic [ref=e3071]: UNKNOWN
+            - generic [ref=e3072]:
+              - generic [ref=e3073]: 04-06-26-whatever-158e6573
+              - text: 04/06/2026, 14:32:47
+            - img [ref=e3074]
+        - generic [ref=e3076]:
+          - generic [ref=e3077]:
+            - generic [ref=e3078]: maestro-cli-JOV6fj
+            - generic [ref=e3079]: "1"
+          - button "RUNNING 04-06-26-demo-2e35c557 04/06/2026, 14:32:451s$0.00 feat/cli-plumbed" [ref=e3081] [cursor=pointer]:
+            - generic [ref=e3082]: RUNNING
+            - generic [ref=e3083]:
+              - generic [ref=e3084]: 04-06-26-demo-2e35c557
+              - text: 04/06/2026, 14:32:451s$0.00
+              - generic [ref=e3085]: feat/cli-plumbed
+            - img [ref=e3086]
+        - generic [ref=e3088]:
+          - generic [ref=e3089]:
+            - generic [ref=e3090]: maestro-orch-0UaMCT
+            - generic [ref=e3091]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-7ca0e7e2 04/06/2026, 14:32:46" [ref=e3093] [cursor=pointer]:
+            - generic [ref=e3094]: UNKNOWN
+            - generic [ref=e3095]:
+              - generic [ref=e3096]: 04-06-26-add-login-flow-7ca0e7e2
+              - text: 04/06/2026, 14:32:46
+            - img [ref=e3097]
+        - generic [ref=e3099]:
+          - generic [ref=e3100]:
+            - generic [ref=e3101]: maestro-timing-g8iUo4
+            - generic [ref=e3102]: "1"
+          - button "DONE 04-06-26-demo-task-ae224ea2 04/06/2026, 14:32:451s$0.00 maestro/demo-task-ae224ea2" [ref=e3104] [cursor=pointer]:
+            - generic [ref=e3105]: DONE
+            - generic [ref=e3106]:
+              - generic [ref=e3107]: 04-06-26-demo-task-ae224ea2
+              - text: 04/06/2026, 14:32:451s$0.00
+              - generic [ref=e3108]: maestro/demo-task-ae224ea2
+            - img [ref=e3109]
+        - generic [ref=e3111]:
+          - generic [ref=e3112]:
+            - generic [ref=e3113]: maestro-dispatch-dRMBoq
+            - generic [ref=e3114]: "1"
+          - button "DONE 04-06-26-demo-task-e02aef1a 04/06/2026, 14:32:441s$0.00 maestro/demo-task-e02aef1a" [ref=e3116] [cursor=pointer]:
+            - generic [ref=e3117]: DONE
+            - generic [ref=e3118]:
+              - generic [ref=e3119]: 04-06-26-demo-task-e02aef1a
+              - text: 04/06/2026, 14:32:441s$0.00
+              - generic [ref=e3120]: maestro/demo-task-e02aef1a
+            - img [ref=e3121]
+        - generic [ref=e3123]:
+          - generic [ref=e3124]:
+            - generic [ref=e3125]: maestro-clarify-fold-XRmwxp
+            - generic [ref=e3126]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-d5ae5c14 04/06/2026, 14:32:45" [ref=e3128] [cursor=pointer]:
+            - generic [ref=e3129]: UNKNOWN
+            - generic [ref=e3130]:
+              - generic [ref=e3131]: 04-06-26-demo-task-d5ae5c14
+              - text: 04/06/2026, 14:32:45
+            - img [ref=e3132]
+        - generic [ref=e3134]:
+          - generic [ref=e3135]:
+            - generic [ref=e3136]: maestro-clarify-UBZyHv
+            - generic [ref=e3137]: "1"
+          - button "DONE 04-06-26-demo-task-d7947641 04/06/2026, 14:32:441s$0.00 maestro/demo-task-d7947641" [ref=e3139] [cursor=pointer]:
+            - generic [ref=e3140]: DONE
+            - generic [ref=e3141]:
+              - generic [ref=e3142]: 04-06-26-demo-task-d7947641
+              - text: 04/06/2026, 14:32:441s$0.00
+              - generic [ref=e3143]: maestro/demo-task-d7947641
+            - img [ref=e3144]
+        - generic [ref=e3146]:
+          - generic [ref=e3147]:
+            - generic [ref=e3148]: maestro-run-x0deWm
+            - generic [ref=e3149]: "1"
+          - button "ERROR demo task 04/06/2026, 14:32:441s$0.00" [ref=e3151] [cursor=pointer]:
+            - generic [ref=e3152]: ERROR
+            - generic [ref=e3153]:
+              - generic [ref=e3154]: demo task
+              - text: 04/06/2026, 14:32:441s$0.00
+            - img [ref=e3155]
+        - generic [ref=e3157]:
+          - generic [ref=e3158]:
+            - generic [ref=e3159]: maestro-run-YrmFaP
+            - generic [ref=e3160]: "1"
+          - button "ERROR demo task 04/06/2026, 14:32:441s$0.00" [ref=e3162] [cursor=pointer]:
+            - generic [ref=e3163]: ERROR
+            - generic [ref=e3164]:
+              - generic [ref=e3165]: demo task
+              - text: 04/06/2026, 14:32:441s$0.00
+            - img [ref=e3166]
+        - generic [ref=e3168]:
+          - generic [ref=e3169]:
+            - generic [ref=e3170]: maestro-master-oDNPzU
+            - generic [ref=e3171]: "1"
+          - button "DONE 04-06-26-x-35e48897 04/06/2026, 14:31:270s$0.00 maestro/x-35e48897" [ref=e3173] [cursor=pointer]:
+            - generic [ref=e3174]: DONE
+            - generic [ref=e3175]:
+              - generic [ref=e3176]: 04-06-26-x-35e48897
+              - text: 04/06/2026, 14:31:270s$0.00
+              - generic [ref=e3177]: maestro/x-35e48897
+            - img [ref=e3178]
+        - generic [ref=e3180]:
+          - generic [ref=e3181]:
+            - generic [ref=e3182]: maestro-parent-9F818e
+            - generic [ref=e3183]: "1"
+          - button "UNKNOWN 04-06-26-x-fa80ebc9 04/06/2026, 14:31:26" [ref=e3185] [cursor=pointer]:
+            - generic [ref=e3186]: UNKNOWN
+            - generic [ref=e3187]:
+              - generic [ref=e3188]: 04-06-26-x-fa80ebc9
+              - text: 04/06/2026, 14:31:26
+            - img [ref=e3189]
+        - generic [ref=e3191]:
+          - generic [ref=e3192]:
+            - generic [ref=e3193]: maestro-orch-mwe8Uo
+            - generic [ref=e3194]: "1"
+          - button "DONE 04-06-26-add-login-flow-53b63129 04/06/2026, 14:31:250s$0.00 maestro/add-login-flow-53b63129" [ref=e3196] [cursor=pointer]:
+            - generic [ref=e3197]: DONE
+            - generic [ref=e3198]:
+              - generic [ref=e3199]: 04-06-26-add-login-flow-53b63129
+              - text: 04/06/2026, 14:31:250s$0.00
+              - generic [ref=e3200]: maestro/add-login-flow-53b63129
+            - img [ref=e3201]
+        - generic [ref=e3203]:
+          - generic [ref=e3204]:
+            - generic [ref=e3205]: maestro-orch-BsIOjR
+            - generic [ref=e3206]: "1"
+          - button "STOPPED 04-06-26-x-6e9cf9e0 04/06/2026, 14:31:240s$0.00 maestro/x-6e9cf9e0" [ref=e3208] [cursor=pointer]:
+            - generic [ref=e3209]: STOPPED
+            - generic [ref=e3210]:
+              - generic [ref=e3211]: 04-06-26-x-6e9cf9e0
+              - text: 04/06/2026, 14:31:240s$0.00
+              - generic [ref=e3212]: maestro/x-6e9cf9e0
+            - img [ref=e3213]
+        - generic [ref=e3215]:
+          - generic [ref=e3216]:
+            - generic [ref=e3217]: maestro-orch-zLgwRZ
+            - generic [ref=e3218]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-c6ec12d2 04/06/2026, 14:31:24" [ref=e3220] [cursor=pointer]:
+            - generic [ref=e3221]: UNKNOWN
+            - generic [ref=e3222]:
+              - generic [ref=e3223]: 04-06-26-add-login-flow-c6ec12d2
+              - text: 04/06/2026, 14:31:24
+            - img [ref=e3224]
+        - generic [ref=e3226]:
+          - generic [ref=e3227]:
+            - generic [ref=e3228]: maestro-dispatch-VtY4oU
+            - generic [ref=e3229]: "1"
+          - button "DONE 04-06-26-demo-task-b8a174ed 04/06/2026, 14:31:231s$0.00 maestro/demo-task-b8a174ed" [ref=e3231] [cursor=pointer]:
+            - generic [ref=e3232]: DONE
+            - generic [ref=e3233]:
+              - generic [ref=e3234]: 04-06-26-demo-task-b8a174ed
+              - text: 04/06/2026, 14:31:231s$0.00
+              - generic [ref=e3235]: maestro/demo-task-b8a174ed
+            - img [ref=e3236]
+        - generic [ref=e3238]:
+          - generic [ref=e3239]:
+            - generic [ref=e3240]: maestro-orch-OoPeiL
+            - generic [ref=e3241]: "1"
+          - button "UNKNOWN 04-06-26-whatever-5c7ce3e5 04/06/2026, 14:31:23" [ref=e3243] [cursor=pointer]:
+            - generic [ref=e3244]: UNKNOWN
+            - generic [ref=e3245]:
+              - generic [ref=e3246]: 04-06-26-whatever-5c7ce3e5
+              - text: 04/06/2026, 14:31:23
+            - img [ref=e3247]
+        - generic [ref=e3249]:
+          - generic [ref=e3250]:
+            - generic [ref=e3251]: maestro-orch-ijqbWz
+            - generic [ref=e3252]: "1"
+          - button "DONE 04-06-26-add-login-flow-eb3809ce 04/06/2026, 14:31:201s$0.00 maestro/add-login-flow-eb3809ce" [ref=e3254] [cursor=pointer]:
+            - generic [ref=e3255]: DONE
+            - generic [ref=e3256]:
+              - generic [ref=e3257]: 04-06-26-add-login-flow-eb3809ce
+              - text: 04/06/2026, 14:31:201s$0.00
+              - generic [ref=e3258]: maestro/add-login-flow-eb3809ce
+            - img [ref=e3259]
+        - generic [ref=e3261]:
+          - generic [ref=e3262]:
+            - generic [ref=e3263]: maestro-dispatch-tUQNUY
+            - generic [ref=e3264]: "1"
+          - button "DONE 04-06-26-demo-task-5f796df6 04/06/2026, 14:31:201s$0.00 maestro/demo-task-5f796df6" [ref=e3266] [cursor=pointer]:
+            - generic [ref=e3267]: DONE
+            - generic [ref=e3268]:
+              - generic [ref=e3269]: 04-06-26-demo-task-5f796df6
+              - text: 04/06/2026, 14:31:201s$0.00
+              - generic [ref=e3270]: maestro/demo-task-5f796df6
+            - img [ref=e3271]
+        - generic [ref=e3273]:
+          - generic [ref=e3274]:
+            - generic [ref=e3275]: maestro-timing-nMCuD1
+            - generic [ref=e3276]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-0f009047 04/06/2026, 14:31:21" [ref=e3278] [cursor=pointer]:
+            - generic [ref=e3279]: UNKNOWN
+            - generic [ref=e3280]:
+              - generic [ref=e3281]: 04-06-26-demo-task-0f009047
+              - text: 04/06/2026, 14:31:21
+            - img [ref=e3282]
+        - generic [ref=e3284]:
+          - generic [ref=e3285]:
+            - generic [ref=e3286]: maestro-cli-opt3CD
+            - generic [ref=e3287]: "1"
+          - button "DONE 04-06-26-demo-04c0725f 04/06/2026, 14:31:201s$0.00 feat/cli-plumbed" [ref=e3289] [cursor=pointer]:
+            - generic [ref=e3290]: DONE
+            - generic [ref=e3291]:
+              - generic [ref=e3292]: 04-06-26-demo-04c0725f
+              - text: 04/06/2026, 14:31:201s$0.00
+              - generic [ref=e3293]: feat/cli-plumbed
+            - img [ref=e3294]
+        - generic [ref=e3296]:
+          - generic [ref=e3297]:
+            - generic [ref=e3298]: maestro-clarify-fold-HwDScG
+            - generic [ref=e3299]: "1"
+          - button "DONE 04-06-26-demo-task-d008bcd7 04/06/2026, 14:31:191s$0.00 maestro/demo-task-d008bcd7" [ref=e3301] [cursor=pointer]:
+            - generic [ref=e3302]: DONE
+            - generic [ref=e3303]:
+              - generic [ref=e3304]: 04-06-26-demo-task-d008bcd7
+              - text: 04/06/2026, 14:31:191s$0.00
+              - generic [ref=e3305]: maestro/demo-task-d008bcd7
+            - img [ref=e3306]
+        - generic [ref=e3308]:
+          - generic [ref=e3309]:
+            - generic [ref=e3310]: maestro-clarify-ie23Ia
+            - generic [ref=e3311]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-a5adae5b 04/06/2026, 14:31:21" [ref=e3313] [cursor=pointer]:
+            - generic [ref=e3314]: UNKNOWN
+            - generic [ref=e3315]:
+              - generic [ref=e3316]: 04-06-26-demo-task-a5adae5b
+              - text: 04/06/2026, 14:31:21
+            - img [ref=e3317]
+        - generic [ref=e3319]:
+          - generic [ref=e3320]:
+            - generic [ref=e3321]: maestro-run-Vea0RI
+            - generic [ref=e3322]: "1"
+          - button "ERROR demo task 04/06/2026, 14:31:201s$0.00" [ref=e3324] [cursor=pointer]:
+            - generic [ref=e3325]: ERROR
+            - generic [ref=e3326]:
+              - generic [ref=e3327]: demo task
+              - text: 04/06/2026, 14:31:201s$0.00
+            - img [ref=e3328]
+        - generic [ref=e3330]:
+          - generic [ref=e3331]:
+            - generic [ref=e3332]: maestro-run-OanP06
+            - generic [ref=e3333]: "1"
+          - button "ERROR demo task 04/06/2026, 14:31:201s$0.00" [ref=e3335] [cursor=pointer]:
+            - generic [ref=e3336]: ERROR
+            - generic [ref=e3337]:
+              - generic [ref=e3338]: demo task
+              - text: 04/06/2026, 14:31:201s$0.00
+            - img [ref=e3339]
+        - generic [ref=e3341]:
+          - generic [ref=e3342]:
+            - generic [ref=e3343]: maestro-master-dDBcm8
+            - generic [ref=e3344]: "1"
+          - button "DONE 04-06-26-x-88c03d89 04/06/2026, 14:27:130s$0.00 maestro/x-88c03d89" [ref=e3346] [cursor=pointer]:
+            - generic [ref=e3347]: DONE
+            - generic [ref=e3348]:
+              - generic [ref=e3349]: 04-06-26-x-88c03d89
+              - text: 04/06/2026, 14:27:130s$0.00
+              - generic [ref=e3350]: maestro/x-88c03d89
+            - img [ref=e3351]
+        - generic [ref=e3353]:
+          - generic [ref=e3354]:
+            - generic [ref=e3355]: maestro-parent-oSu1ZF
+            - generic [ref=e3356]: "1"
+          - button "DONE 04-06-26-x-b667dbee 04/06/2026, 14:27:121s$0.00 maestro/x-b667dbee" [ref=e3358] [cursor=pointer]:
+            - generic [ref=e3359]: DONE
+            - generic [ref=e3360]:
+              - generic [ref=e3361]: 04-06-26-x-b667dbee
+              - text: 04/06/2026, 14:27:121s$0.00
+              - generic [ref=e3362]: maestro/x-b667dbee
+            - img [ref=e3363]
+        - generic [ref=e3365]:
+          - generic [ref=e3366]:
+            - generic [ref=e3367]: maestro-orch-ypt0ax
+            - generic [ref=e3368]: "1"
+          - button "DONE 04-06-26-add-login-flow-507f468d 04/06/2026, 14:27:110s$0.00 maestro/add-login-flow-507f468d" [ref=e3370] [cursor=pointer]:
+            - generic [ref=e3371]: DONE
+            - generic [ref=e3372]:
+              - generic [ref=e3373]: 04-06-26-add-login-flow-507f468d
+              - text: 04/06/2026, 14:27:110s$0.00
+              - generic [ref=e3374]: maestro/add-login-flow-507f468d
+            - img [ref=e3375]
+        - generic [ref=e3377]:
+          - generic [ref=e3378]:
+            - generic [ref=e3379]: maestro-orch-7V557x
+            - generic [ref=e3380]: "1"
+          - button "STOPPED 04-06-26-x-0d541d06 04/06/2026, 14:27:100s$0.00 maestro/x-0d541d06" [ref=e3382] [cursor=pointer]:
+            - generic [ref=e3383]: STOPPED
+            - generic [ref=e3384]:
+              - generic [ref=e3385]: 04-06-26-x-0d541d06
+              - text: 04/06/2026, 14:27:100s$0.00
+              - generic [ref=e3386]: maestro/x-0d541d06
+            - img [ref=e3387]
+        - generic [ref=e3389]:
+          - generic [ref=e3390]:
+            - generic [ref=e3391]: maestro-orch-a7GF1U
+            - generic [ref=e3392]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-20fdf9dd 04/06/2026, 14:27:10" [ref=e3394] [cursor=pointer]:
+            - generic [ref=e3395]: UNKNOWN
+            - generic [ref=e3396]:
+              - generic [ref=e3397]: 04-06-26-add-login-flow-20fdf9dd
+              - text: 04/06/2026, 14:27:10
+            - img [ref=e3398]
+        - generic [ref=e3400]:
+          - generic [ref=e3401]:
+            - generic [ref=e3402]: maestro-dispatch-JhJSpl
+            - generic [ref=e3403]: "1"
+          - button "DONE 04-06-26-demo-task-01c508d1 04/06/2026, 14:27:081s$0.00 maestro/demo-task-01c508d1" [ref=e3405] [cursor=pointer]:
+            - generic [ref=e3406]: DONE
+            - generic [ref=e3407]:
+              - generic [ref=e3408]: 04-06-26-demo-task-01c508d1
+              - text: 04/06/2026, 14:27:081s$0.00
+              - generic [ref=e3409]: maestro/demo-task-01c508d1
+            - img [ref=e3410]
+        - generic [ref=e3412]:
+          - generic [ref=e3413]:
+            - generic [ref=e3414]: maestro-orch-6UWbbs
+            - generic [ref=e3415]: "1"
+          - button "UNKNOWN 04-06-26-whatever-ca5b5041 04/06/2026, 14:27:08" [ref=e3417] [cursor=pointer]:
+            - generic [ref=e3418]: UNKNOWN
+            - generic [ref=e3419]:
+              - generic [ref=e3420]: 04-06-26-whatever-ca5b5041
+              - text: 04/06/2026, 14:27:08
+            - img [ref=e3421]
+        - generic [ref=e3423]:
+          - generic [ref=e3424]:
+            - generic [ref=e3425]: maestro-timing-vH06bG
+            - generic [ref=e3426]: "1"
+          - button "DONE 04-06-26-demo-task-b98a3287 04/06/2026, 14:27:051s$0.00 maestro/demo-task-b98a3287" [ref=e3428] [cursor=pointer]:
+            - generic [ref=e3429]: DONE
+            - generic [ref=e3430]:
+              - generic [ref=e3431]: 04-06-26-demo-task-b98a3287
+              - text: 04/06/2026, 14:27:051s$0.00
+              - generic [ref=e3432]: maestro/demo-task-b98a3287
+            - img [ref=e3433]
+        - generic [ref=e3435]:
+          - generic [ref=e3436]:
+            - generic [ref=e3437]: maestro-orch-coyj0V
+            - generic [ref=e3438]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-a5fcc03a 04/06/2026, 14:27:07" [ref=e3440] [cursor=pointer]:
+            - generic [ref=e3441]: UNKNOWN
+            - generic [ref=e3442]:
+              - generic [ref=e3443]: 04-06-26-add-login-flow-a5fcc03a
+              - text: 04/06/2026, 14:27:07
+            - img [ref=e3444]
+        - generic [ref=e3446]:
+          - generic [ref=e3447]:
+            - generic [ref=e3448]: maestro-cli-lz1L0e
+            - generic [ref=e3449]: "1"
+          - button "DONE 04-06-26-demo-fb2437c9 04/06/2026, 14:27:051s$0.00 feat/cli-plumbed" [ref=e3451] [cursor=pointer]:
+            - generic [ref=e3452]: DONE
+            - generic [ref=e3453]:
+              - generic [ref=e3454]: 04-06-26-demo-fb2437c9
+              - text: 04/06/2026, 14:27:051s$0.00
+              - generic [ref=e3455]: feat/cli-plumbed
+            - img [ref=e3456]
+        - generic [ref=e3458]:
+          - generic [ref=e3459]:
+            - generic [ref=e3460]: maestro-clarify-vKveam
+            - generic [ref=e3461]: "1"
+          - button "DONE 04-06-26-demo-task-83575a26 04/06/2026, 14:27:042s$0.00 maestro/demo-task-83575a26" [ref=e3463] [cursor=pointer]:
+            - generic [ref=e3464]: DONE
+            - generic [ref=e3465]:
+              - generic [ref=e3466]: 04-06-26-demo-task-83575a26
+              - text: 04/06/2026, 14:27:042s$0.00
+              - generic [ref=e3467]: maestro/demo-task-83575a26
+            - img [ref=e3468]
+        - generic [ref=e3470]:
+          - generic [ref=e3471]:
+            - generic [ref=e3472]: maestro-dispatch-GCjW95
+            - generic [ref=e3473]: "1"
+          - button "DONE 04-06-26-demo-task-9447e0ff 04/06/2026, 14:27:051s$0.00 maestro/demo-task-9447e0ff" [ref=e3475] [cursor=pointer]:
+            - generic [ref=e3476]: DONE
+            - generic [ref=e3477]:
+              - generic [ref=e3478]: 04-06-26-demo-task-9447e0ff
+              - text: 04/06/2026, 14:27:051s$0.00
+              - generic [ref=e3479]: maestro/demo-task-9447e0ff
+            - img [ref=e3480]
+        - generic [ref=e3482]:
+          - generic [ref=e3483]:
+            - generic [ref=e3484]: maestro-clarify-fold-EM4LZD
+            - generic [ref=e3485]: "1"
+          - button "DONE 04-06-26-demo-task-f87c4be5 04/06/2026, 14:27:042s$0.00 maestro/demo-task-f87c4be5" [ref=e3487] [cursor=pointer]:
+            - generic [ref=e3488]: DONE
+            - generic [ref=e3489]:
+              - generic [ref=e3490]: 04-06-26-demo-task-f87c4be5
+              - text: 04/06/2026, 14:27:042s$0.00
+              - generic [ref=e3491]: maestro/demo-task-f87c4be5
+            - img [ref=e3492]
+        - generic [ref=e3494]:
+          - generic [ref=e3495]:
+            - generic [ref=e3496]: maestro-run-EEFLRc
+            - generic [ref=e3497]: "1"
+          - button "ERROR demo task 04/06/2026, 14:27:051s$0.00" [ref=e3499] [cursor=pointer]:
+            - generic [ref=e3500]: ERROR
+            - generic [ref=e3501]:
+              - generic [ref=e3502]: demo task
+              - text: 04/06/2026, 14:27:051s$0.00
+            - img [ref=e3503]
+        - generic [ref=e3505]:
+          - generic [ref=e3506]:
+            - generic [ref=e3507]: maestro-run-Wg2N6N
+            - generic [ref=e3508]: "1"
+          - button "ERROR demo task 04/06/2026, 14:27:051s$0.00" [ref=e3510] [cursor=pointer]:
+            - generic [ref=e3511]: ERROR
+            - generic [ref=e3512]:
+              - generic [ref=e3513]: demo task
+              - text: 04/06/2026, 14:27:051s$0.00
+            - img [ref=e3514]
+        - generic [ref=e3516]:
+          - generic [ref=e3517]:
+            - generic [ref=e3518]: maestro-master-JRRVBl
+            - generic [ref=e3519]: "1"
+          - button "DONE 04-06-26-x-aed10d54 04/06/2026, 14:25:140s$0.00 maestro/x-aed10d54" [ref=e3521] [cursor=pointer]:
+            - generic [ref=e3522]: DONE
+            - generic [ref=e3523]:
+              - generic [ref=e3524]: 04-06-26-x-aed10d54
+              - text: 04/06/2026, 14:25:140s$0.00
+              - generic [ref=e3525]: maestro/x-aed10d54
+            - img [ref=e3526]
+        - generic [ref=e3528]:
+          - generic [ref=e3529]:
+            - generic [ref=e3530]: maestro-parent-WFIi0I
+            - generic [ref=e3531]: "1"
+          - button "DONE 04-06-26-x-15a3e4a8 04/06/2026, 14:25:130s$0.00 maestro/x-15a3e4a8" [ref=e3533] [cursor=pointer]:
+            - generic [ref=e3534]: DONE
+            - generic [ref=e3535]:
+              - generic [ref=e3536]: 04-06-26-x-15a3e4a8
+              - text: 04/06/2026, 14:25:130s$0.00
+              - generic [ref=e3537]: maestro/x-15a3e4a8
+            - img [ref=e3538]
+        - generic [ref=e3540]:
+          - generic [ref=e3541]:
+            - generic [ref=e3542]: maestro-orch-RupwjP
+            - generic [ref=e3543]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-dcd77b9b 04/06/2026, 14:25:13" [ref=e3545] [cursor=pointer]:
+            - generic [ref=e3546]: UNKNOWN
+            - generic [ref=e3547]:
+              - generic [ref=e3548]: 04-06-26-add-login-flow-dcd77b9b
+              - text: 04/06/2026, 14:25:13
+            - img [ref=e3549]
+        - generic [ref=e3551]:
+          - generic [ref=e3552]:
+            - generic [ref=e3553]: maestro-orch-sgZaYu
+            - generic [ref=e3554]: "1"
+          - button "STOPPED 04-06-26-x-ecc7a23e 04/06/2026, 14:25:120s$0.00 maestro/x-ecc7a23e" [ref=e3556] [cursor=pointer]:
+            - generic [ref=e3557]: STOPPED
+            - generic [ref=e3558]:
+              - generic [ref=e3559]: 04-06-26-x-ecc7a23e
+              - text: 04/06/2026, 14:25:120s$0.00
+              - generic [ref=e3560]: maestro/x-ecc7a23e
+            - img [ref=e3561]
+        - generic [ref=e3563]:
+          - generic [ref=e3564]:
+            - generic [ref=e3565]: maestro-orch-6ZIwwW
+            - generic [ref=e3566]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-6b7fff50 04/06/2026, 14:25:12" [ref=e3568] [cursor=pointer]:
+            - generic [ref=e3569]: UNKNOWN
+            - generic [ref=e3570]:
+              - generic [ref=e3571]: 04-06-26-add-login-flow-6b7fff50
+              - text: 04/06/2026, 14:25:12
+            - img [ref=e3572]
+        - generic [ref=e3574]:
+          - generic [ref=e3575]:
+            - generic [ref=e3576]: maestro-dispatch-SM6LXc
+            - generic [ref=e3577]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-456f72dd 04/06/2026, 14:25:11" [ref=e3579] [cursor=pointer]:
+            - generic [ref=e3580]: UNKNOWN
+            - generic [ref=e3581]:
+              - generic [ref=e3582]: 04-06-26-demo-task-456f72dd
+              - text: 04/06/2026, 14:25:11
+            - img [ref=e3583]
+        - generic [ref=e3585]:
+          - generic [ref=e3586]:
+            - generic [ref=e3587]: maestro-orch-ZzhG60
+            - generic [ref=e3588]: "1"
+          - button "DONE 04-06-26-whatever-95e3a557 04/06/2026, 14:25:091s$0.00 feat/my-thing" [ref=e3590] [cursor=pointer]:
+            - generic [ref=e3591]: DONE
+            - generic [ref=e3592]:
+              - generic [ref=e3593]: 04-06-26-whatever-95e3a557
+              - text: 04/06/2026, 14:25:091s$0.00
+              - generic [ref=e3594]: feat/my-thing
+            - img [ref=e3595]
+        - generic [ref=e3597]:
+          - generic [ref=e3598]:
+            - generic [ref=e3599]: maestro-orch-jOVjSC
+            - generic [ref=e3600]: "1"
+          - button "DONE 04-06-26-add-login-flow-2f25f896 04/06/2026, 14:25:081s$0.00 maestro/add-login-flow-2f25f896" [ref=e3602] [cursor=pointer]:
+            - generic [ref=e3603]: DONE
+            - generic [ref=e3604]:
+              - generic [ref=e3605]: 04-06-26-add-login-flow-2f25f896
+              - text: 04/06/2026, 14:25:081s$0.00
+              - generic [ref=e3606]: maestro/add-login-flow-2f25f896
+            - img [ref=e3607]
+        - generic [ref=e3609]:
+          - generic [ref=e3610]:
+            - generic [ref=e3611]: maestro-timing-UXnnef
+            - generic [ref=e3612]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-bf468194 04/06/2026, 14:25:08" [ref=e3614] [cursor=pointer]:
+            - generic [ref=e3615]: UNKNOWN
+            - generic [ref=e3616]:
+              - generic [ref=e3617]: 04-06-26-demo-task-bf468194
+              - text: 04/06/2026, 14:25:08
+            - img [ref=e3618]
+        - generic [ref=e3620]:
+          - generic [ref=e3621]:
+            - generic [ref=e3622]: maestro-clarify-fold-knCEzN
+            - generic [ref=e3623]: "1"
+          - button "DONE 04-06-26-demo-task-f320ccc2 04/06/2026, 14:25:071s$0.00 maestro/demo-task-f320ccc2" [ref=e3625] [cursor=pointer]:
+            - generic [ref=e3626]: DONE
+            - generic [ref=e3627]:
+              - generic [ref=e3628]: 04-06-26-demo-task-f320ccc2
+              - text: 04/06/2026, 14:25:071s$0.00
+              - generic [ref=e3629]: maestro/demo-task-f320ccc2
+            - img [ref=e3630]
+        - generic [ref=e3632]:
+          - generic [ref=e3633]:
+            - generic [ref=e3634]: maestro-cli-JVx7uO
+            - generic [ref=e3635]: "1"
+          - button "UNKNOWN 04-06-26-demo-bb05e8ec 04/06/2026, 14:25:08" [ref=e3637] [cursor=pointer]:
+            - generic [ref=e3638]: UNKNOWN
+            - generic [ref=e3639]:
+              - generic [ref=e3640]: 04-06-26-demo-bb05e8ec
+              - text: 04/06/2026, 14:25:08
+            - img [ref=e3641]
+        - generic [ref=e3643]:
+          - generic [ref=e3644]:
+            - generic [ref=e3645]: maestro-clarify-9V2gVk
+            - generic [ref=e3646]: "1"
+          - button "DONE 04-06-26-demo-task-463c3d85 04/06/2026, 14:25:071s$0.00 maestro/demo-task-463c3d85" [ref=e3648] [cursor=pointer]:
+            - generic [ref=e3649]: DONE
+            - generic [ref=e3650]:
+              - generic [ref=e3651]: 04-06-26-demo-task-463c3d85
+              - text: 04/06/2026, 14:25:071s$0.00
+              - generic [ref=e3652]: maestro/demo-task-463c3d85
+            - img [ref=e3653]
+        - generic [ref=e3655]:
+          - generic [ref=e3656]:
+            - generic [ref=e3657]: maestro-dispatch-UlGQaR
+            - generic [ref=e3658]: "1"
+          - button "DONE 04-06-26-demo-task-8504f51d 04/06/2026, 14:25:071s$0.00 maestro/demo-task-8504f51d" [ref=e3660] [cursor=pointer]:
+            - generic [ref=e3661]: DONE
+            - generic [ref=e3662]:
+              - generic [ref=e3663]: 04-06-26-demo-task-8504f51d
+              - text: 04/06/2026, 14:25:071s$0.00
+              - generic [ref=e3664]: maestro/demo-task-8504f51d
+            - img [ref=e3665]
+        - generic [ref=e3667]:
+          - generic [ref=e3668]:
+            - generic [ref=e3669]: maestro-run-2kA6k9
+            - generic [ref=e3670]: "1"
+          - button "ERROR demo task 04/06/2026, 14:25:071s$0.00" [ref=e3672] [cursor=pointer]:
+            - generic [ref=e3673]: ERROR
+            - generic [ref=e3674]:
+              - generic [ref=e3675]: demo task
+              - text: 04/06/2026, 14:25:071s$0.00
+            - img [ref=e3676]
+        - generic [ref=e3678]:
+          - generic [ref=e3679]:
+            - generic [ref=e3680]: maestro-run-UdJKRD
+            - generic [ref=e3681]: "1"
+          - button "ERROR demo task 04/06/2026, 14:25:071s$0.00" [ref=e3683] [cursor=pointer]:
+            - generic [ref=e3684]: ERROR
+            - generic [ref=e3685]:
+              - generic [ref=e3686]: demo task
+              - text: 04/06/2026, 14:25:071s$0.00
+            - img [ref=e3687]
+        - generic [ref=e3689]:
+          - generic [ref=e3690]:
+            - generic [ref=e3691]: maestro-master-TClmZR
+            - generic [ref=e3692]: "1"
+          - button "UNKNOWN 04-06-26-x-63769056 04/06/2026, 14:19:40" [ref=e3694] [cursor=pointer]:
+            - generic [ref=e3695]: UNKNOWN
+            - generic [ref=e3696]:
+              - generic [ref=e3697]: 04-06-26-x-63769056
+              - text: 04/06/2026, 14:19:40
+            - img [ref=e3698]
+        - generic [ref=e3700]:
+          - generic [ref=e3701]:
+            - generic [ref=e3702]: maestro-parent-wZiuQX
+            - generic [ref=e3703]: "1"
+          - button "DONE 04-06-26-x-5baf6b95 04/06/2026, 14:19:391s$0.00 maestro/x-5baf6b95" [ref=e3705] [cursor=pointer]:
+            - generic [ref=e3706]: DONE
+            - generic [ref=e3707]:
+              - generic [ref=e3708]: 04-06-26-x-5baf6b95
+              - text: 04/06/2026, 14:19:391s$0.00
+              - generic [ref=e3709]: maestro/x-5baf6b95
+            - img [ref=e3710]
+        - generic [ref=e3712]:
+          - generic [ref=e3713]:
+            - generic [ref=e3714]: maestro-orch-OPugWX
+            - generic [ref=e3715]: "1"
+          - button "DONE 04-06-26-add-login-flow-bc2eeb2b 04/06/2026, 14:19:380s$0.00 maestro/add-login-flow-bc2eeb2b" [ref=e3717] [cursor=pointer]:
+            - generic [ref=e3718]: DONE
+            - generic [ref=e3719]:
+              - generic [ref=e3720]: 04-06-26-add-login-flow-bc2eeb2b
+              - text: 04/06/2026, 14:19:380s$0.00
+              - generic [ref=e3721]: maestro/add-login-flow-bc2eeb2b
+            - img [ref=e3722]
+        - generic [ref=e3724]:
+          - generic [ref=e3725]:
+            - generic [ref=e3726]: maestro-orch-fQ2zpN
+            - generic [ref=e3727]: "1"
+          - button "STOPPED 04-06-26-x-7cd37a20 04/06/2026, 14:19:370s$0.00 maestro/x-7cd37a20" [ref=e3729] [cursor=pointer]:
+            - generic [ref=e3730]: STOPPED
+            - generic [ref=e3731]:
+              - generic [ref=e3732]: 04-06-26-x-7cd37a20
+              - text: 04/06/2026, 14:19:370s$0.00
+              - generic [ref=e3733]: maestro/x-7cd37a20
+            - img [ref=e3734]
+        - generic [ref=e3736]:
+          - generic [ref=e3737]:
+            - generic [ref=e3738]: maestro-orch-bWq81D
+            - generic [ref=e3739]: "1"
+          - button "DONE 04-06-26-add-login-flow-50f48f40 04/06/2026, 14:19:361s$0.00 maestro/add-login-flow-50f48f40" [ref=e3741] [cursor=pointer]:
+            - generic [ref=e3742]: DONE
+            - generic [ref=e3743]:
+              - generic [ref=e3744]: 04-06-26-add-login-flow-50f48f40
+              - text: 04/06/2026, 14:19:361s$0.00
+              - generic [ref=e3745]: maestro/add-login-flow-50f48f40
+            - img [ref=e3746]
+        - generic [ref=e3748]:
+          - generic [ref=e3749]:
+            - generic [ref=e3750]: maestro-dispatch-oujhNg
+            - generic [ref=e3751]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-a7cb7cf3 04/06/2026, 14:19:37" [ref=e3753] [cursor=pointer]:
+            - generic [ref=e3754]: UNKNOWN
+            - generic [ref=e3755]:
+              - generic [ref=e3756]: 04-06-26-demo-task-a7cb7cf3
+              - text: 04/06/2026, 14:19:37
+            - img [ref=e3757]
+        - generic [ref=e3759]:
+          - generic [ref=e3760]:
+            - generic [ref=e3761]: maestro-orch-OSSpMq
+            - generic [ref=e3762]: "1"
+          - button "DONE 04-06-26-whatever-48056051 04/06/2026, 14:19:341s$0.00 feat/my-thing" [ref=e3764] [cursor=pointer]:
+            - generic [ref=e3765]: DONE
+            - generic [ref=e3766]:
+              - generic [ref=e3767]: 04-06-26-whatever-48056051
+              - text: 04/06/2026, 14:19:341s$0.00
+              - generic [ref=e3768]: feat/my-thing
+            - img [ref=e3769]
+        - generic [ref=e3771]:
+          - generic [ref=e3772]:
+            - generic [ref=e3773]: maestro-orch-uZxK7P
+            - generic [ref=e3774]: "1"
+          - button "DONE 04-06-26-add-login-flow-e05d9bff 04/06/2026, 14:19:331s$0.00 maestro/add-login-flow-e05d9bff" [ref=e3776] [cursor=pointer]:
+            - generic [ref=e3777]: DONE
+            - generic [ref=e3778]:
+              - generic [ref=e3779]: 04-06-26-add-login-flow-e05d9bff
+              - text: 04/06/2026, 14:19:331s$0.00
+              - generic [ref=e3780]: maestro/add-login-flow-e05d9bff
+            - img [ref=e3781]
+        - generic [ref=e3783]:
+          - generic [ref=e3784]:
+            - generic [ref=e3785]: maestro-timing-3UYmb3
+            - generic [ref=e3786]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-9422c547 04/06/2026, 14:19:34" [ref=e3788] [cursor=pointer]:
+            - generic [ref=e3789]: UNKNOWN
+            - generic [ref=e3790]:
+              - generic [ref=e3791]: 04-06-26-demo-task-9422c547
+              - text: 04/06/2026, 14:19:34
+            - img [ref=e3792]
+        - generic [ref=e3794]:
+          - generic [ref=e3795]:
+            - generic [ref=e3796]: maestro-dispatch-moFe4R
+            - generic [ref=e3797]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-a0e627ff 04/06/2026, 14:19:34" [ref=e3799] [cursor=pointer]:
+            - generic [ref=e3800]: UNKNOWN
+            - generic [ref=e3801]:
+              - generic [ref=e3802]: 04-06-26-demo-task-a0e627ff
+              - text: 04/06/2026, 14:19:34
+            - img [ref=e3803]
+        - generic [ref=e3805]:
+          - generic [ref=e3806]:
+            - generic [ref=e3807]: maestro-cli-Tef0K8
+            - generic [ref=e3808]: "1"
+          - button "DONE 04-06-26-demo-cc1e50a3 04/06/2026, 14:19:331s$0.00 feat/cli-plumbed" [ref=e3810] [cursor=pointer]:
+            - generic [ref=e3811]: DONE
+            - generic [ref=e3812]:
+              - generic [ref=e3813]: 04-06-26-demo-cc1e50a3
+              - text: 04/06/2026, 14:19:331s$0.00
+              - generic [ref=e3814]: feat/cli-plumbed
+            - img [ref=e3815]
+        - generic [ref=e3817]:
+          - generic [ref=e3818]:
+            - generic [ref=e3819]: maestro-clarify-gfxZLK
+            - generic [ref=e3820]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-8c94b97a 04/06/2026, 14:19:33" [ref=e3822] [cursor=pointer]:
+            - generic [ref=e3823]: UNKNOWN
+            - generic [ref=e3824]:
+              - generic [ref=e3825]: 04-06-26-demo-task-8c94b97a
+              - text: 04/06/2026, 14:19:33
+            - img [ref=e3826]
+        - generic [ref=e3828]:
+          - generic [ref=e3829]:
+            - generic [ref=e3830]: maestro-clarify-fold-Z15hTc
+            - generic [ref=e3831]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-6d3f3ffa 04/06/2026, 14:19:33" [ref=e3833] [cursor=pointer]:
+            - generic [ref=e3834]: UNKNOWN
+            - generic [ref=e3835]:
+              - generic [ref=e3836]: 04-06-26-demo-task-6d3f3ffa
+              - text: 04/06/2026, 14:19:33
+            - img [ref=e3837]
+        - generic [ref=e3839]:
+          - generic [ref=e3840]:
+            - generic [ref=e3841]: maestro-run-dzClru
+            - generic [ref=e3842]: "1"
+          - button "ERROR demo task 04/06/2026, 14:19:321s$0.00" [ref=e3844] [cursor=pointer]:
+            - generic [ref=e3845]: ERROR
+            - generic [ref=e3846]:
+              - generic [ref=e3847]: demo task
+              - text: 04/06/2026, 14:19:321s$0.00
+            - img [ref=e3848]
+        - generic [ref=e3850]:
+          - generic [ref=e3851]:
+            - generic [ref=e3852]: maestro-master-XxlWHH
+            - generic [ref=e3853]: "1"
+          - button "DONE 04-06-26-x-0c00739a 04/06/2026, 14:17:550s$0.00 maestro/x-0c00739a" [ref=e3855] [cursor=pointer]:
+            - generic [ref=e3856]: DONE
+            - generic [ref=e3857]:
+              - generic [ref=e3858]: 04-06-26-x-0c00739a
+              - text: 04/06/2026, 14:17:550s$0.00
+              - generic [ref=e3859]: maestro/x-0c00739a
+            - img [ref=e3860]
+        - generic [ref=e3862]:
+          - generic [ref=e3863]:
+            - generic [ref=e3864]: maestro-parent-J0nmau
+            - generic [ref=e3865]: "1"
+          - button "DONE 04-06-26-x-cd9dbd33 04/06/2026, 14:17:531s$0.00 maestro/x-cd9dbd33" [ref=e3867] [cursor=pointer]:
+            - generic [ref=e3868]: DONE
+            - generic [ref=e3869]:
+              - generic [ref=e3870]: 04-06-26-x-cd9dbd33
+              - text: 04/06/2026, 14:17:531s$0.00
+              - generic [ref=e3871]: maestro/x-cd9dbd33
+            - img [ref=e3872]
+        - generic [ref=e3874]:
+          - generic [ref=e3875]:
+            - generic [ref=e3876]: maestro-orch-wc528I
+            - generic [ref=e3877]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-8fbef7e8 04/06/2026, 14:17:53" [ref=e3879] [cursor=pointer]:
+            - generic [ref=e3880]: UNKNOWN
+            - generic [ref=e3881]:
+              - generic [ref=e3882]: 04-06-26-add-login-flow-8fbef7e8
+              - text: 04/06/2026, 14:17:53
+            - img [ref=e3883]
+        - generic [ref=e3885]:
+          - generic [ref=e3886]:
+            - generic [ref=e3887]: maestro-orch-H92Cjm
+            - generic [ref=e3888]: "1"
+          - button "STOPPED 04-06-26-x-f086ce2c 04/06/2026, 14:17:521s$0.00 maestro/x-f086ce2c" [ref=e3890] [cursor=pointer]:
+            - generic [ref=e3891]: STOPPED
+            - generic [ref=e3892]:
+              - generic [ref=e3893]: 04-06-26-x-f086ce2c
+              - text: 04/06/2026, 14:17:521s$0.00
+              - generic [ref=e3894]: maestro/x-f086ce2c
+            - img [ref=e3895]
+        - generic [ref=e3897]:
+          - generic [ref=e3898]:
+            - generic [ref=e3899]: maestro-orch-BohPm0
+            - generic [ref=e3900]: "1"
+          - button "DONE 04-06-26-add-login-flow-59a5d9bb 04/06/2026, 14:17:501s$0.00 maestro/add-login-flow-59a5d9bb" [ref=e3902] [cursor=pointer]:
+            - generic [ref=e3903]: DONE
+            - generic [ref=e3904]:
+              - generic [ref=e3905]: 04-06-26-add-login-flow-59a5d9bb
+              - text: 04/06/2026, 14:17:501s$0.00
+              - generic [ref=e3906]: maestro/add-login-flow-59a5d9bb
+            - img [ref=e3907]
+        - generic [ref=e3909]:
+          - generic [ref=e3910]:
+            - generic [ref=e3911]: maestro-dispatch-5JFOg4
+            - generic [ref=e3912]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-89cfe640 04/06/2026, 14:17:51" [ref=e3914] [cursor=pointer]:
+            - generic [ref=e3915]: UNKNOWN
+            - generic [ref=e3916]:
+              - generic [ref=e3917]: 04-06-26-demo-task-89cfe640
+              - text: 04/06/2026, 14:17:51
+            - img [ref=e3918]
+        - generic [ref=e3920]:
+          - generic [ref=e3921]:
+            - generic [ref=e3922]: maestro-orch-HiqkGY
+            - generic [ref=e3923]: "1"
+          - button "DONE 04-06-26-whatever-2ca94831 04/06/2026, 14:17:481s$0.00 feat/my-thing" [ref=e3925] [cursor=pointer]:
+            - generic [ref=e3926]: DONE
+            - generic [ref=e3927]:
+              - generic [ref=e3928]: 04-06-26-whatever-2ca94831
+              - text: 04/06/2026, 14:17:481s$0.00
+              - generic [ref=e3929]: feat/my-thing
+            - img [ref=e3930]
+        - generic [ref=e3932]:
+          - generic [ref=e3933]:
+            - generic [ref=e3934]: maestro-orch-m09e7Z
+            - generic [ref=e3935]: "1"
+          - button "DONE 04-06-26-add-login-flow-81737150 04/06/2026, 14:17:461s$0.00 maestro/add-login-flow-81737150" [ref=e3937] [cursor=pointer]:
+            - generic [ref=e3938]: DONE
+            - generic [ref=e3939]:
+              - generic [ref=e3940]: 04-06-26-add-login-flow-81737150
+              - text: 04/06/2026, 14:17:461s$0.00
+              - generic [ref=e3941]: maestro/add-login-flow-81737150
+            - img [ref=e3942]
+        - generic [ref=e3944]:
+          - generic [ref=e3945]:
+            - generic [ref=e3946]: maestro-timing-6wSrVG
+            - generic [ref=e3947]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-7bb21060 04/06/2026, 14:17:47" [ref=e3949] [cursor=pointer]:
+            - generic [ref=e3950]: UNKNOWN
+            - generic [ref=e3951]:
+              - generic [ref=e3952]: 04-06-26-demo-task-7bb21060
+              - text: 04/06/2026, 14:17:47
+            - img [ref=e3953]
+        - generic [ref=e3955]:
+          - generic [ref=e3956]:
+            - generic [ref=e3957]: maestro-cli-I6jYdK
+            - generic [ref=e3958]: "1"
+          - button "UNKNOWN 04-06-26-demo-1088ba43 04/06/2026, 14:17:47" [ref=e3960] [cursor=pointer]:
+            - generic [ref=e3961]: UNKNOWN
+            - generic [ref=e3962]:
+              - generic [ref=e3963]: 04-06-26-demo-1088ba43
+              - text: 04/06/2026, 14:17:47
+            - img [ref=e3964]
+        - generic [ref=e3966]:
+          - generic [ref=e3967]:
+            - generic [ref=e3968]: maestro-clarify-y33Tts
+            - generic [ref=e3969]: "1"
+          - button "DONE 04-06-26-demo-task-b591da93 04/06/2026, 14:17:451s$0.00 maestro/demo-task-b591da93" [ref=e3971] [cursor=pointer]:
+            - generic [ref=e3972]: DONE
+            - generic [ref=e3973]:
+              - generic [ref=e3974]: 04-06-26-demo-task-b591da93
+              - text: 04/06/2026, 14:17:451s$0.00
+              - generic [ref=e3975]: maestro/demo-task-b591da93
+            - img [ref=e3976]
+        - generic [ref=e3978]:
+          - generic [ref=e3979]:
+            - generic [ref=e3980]: maestro-clarify-fold-yTzwL0
+            - generic [ref=e3981]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-f06f3d91 04/06/2026, 14:17:47" [ref=e3983] [cursor=pointer]:
+            - generic [ref=e3984]: UNKNOWN
+            - generic [ref=e3985]:
+              - generic [ref=e3986]: 04-06-26-demo-task-f06f3d91
+              - text: 04/06/2026, 14:17:47
+            - img [ref=e3987]
+        - generic [ref=e3989]:
+          - generic [ref=e3990]:
+            - generic [ref=e3991]: maestro-dispatch-8ZiOy3
+            - generic [ref=e3992]: "1"
+          - button "DONE 04-06-26-demo-task-d5439497 04/06/2026, 14:17:451s$0.00 maestro/demo-task-d5439497" [ref=e3994] [cursor=pointer]:
+            - generic [ref=e3995]: DONE
+            - generic [ref=e3996]:
+              - generic [ref=e3997]: 04-06-26-demo-task-d5439497
+              - text: 04/06/2026, 14:17:451s$0.00
+              - generic [ref=e3998]: maestro/demo-task-d5439497
+            - img [ref=e3999]
+        - generic [ref=e4001]:
+          - generic [ref=e4002]:
+            - generic [ref=e4003]: maestro-run-VuCkcd
+            - generic [ref=e4004]: "1"
+          - button "ERROR demo task 04/06/2026, 14:17:451s$0.00" [ref=e4006] [cursor=pointer]:
+            - generic [ref=e4007]: ERROR
+            - generic [ref=e4008]:
+              - generic [ref=e4009]: demo task
+              - text: 04/06/2026, 14:17:451s$0.00
+            - img [ref=e4010]
+        - generic [ref=e4012]:
+          - generic [ref=e4013]:
+            - generic [ref=e4014]: maestro-run-ZFREGc
+            - generic [ref=e4015]: "1"
+          - button "ERROR demo task 04/06/2026, 14:17:451s$0.00" [ref=e4017] [cursor=pointer]:
+            - generic [ref=e4018]: ERROR
+            - generic [ref=e4019]:
+              - generic [ref=e4020]: demo task
+              - text: 04/06/2026, 14:17:451s$0.00
+            - img [ref=e4021]
+        - generic [ref=e4023]:
+          - generic [ref=e4024]:
+            - generic [ref=e4025]: maestro-master-178Q2t
+            - generic [ref=e4026]: "1"
+          - button "UNKNOWN 04-06-26-x-42ee772c 04/06/2026, 14:17:38" [ref=e4028] [cursor=pointer]:
+            - generic [ref=e4029]: UNKNOWN
+            - generic [ref=e4030]:
+              - generic [ref=e4031]: 04-06-26-x-42ee772c
+              - text: 04/06/2026, 14:17:38
+            - img [ref=e4032]
+        - generic [ref=e4034]:
+          - generic [ref=e4035]:
+            - generic [ref=e4036]: maestro-parent-YshFBA
+            - generic [ref=e4037]: "1"
+          - button "UNKNOWN 04-06-26-x-f55b846a 04/06/2026, 14:17:37" [ref=e4039] [cursor=pointer]:
+            - generic [ref=e4040]: UNKNOWN
+            - generic [ref=e4041]:
+              - generic [ref=e4042]: 04-06-26-x-f55b846a
+              - text: 04/06/2026, 14:17:37
+            - img [ref=e4043]
+        - generic [ref=e4045]:
+          - generic [ref=e4046]:
+            - generic [ref=e4047]: maestro-orch-qfSJdy
+            - generic [ref=e4048]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-9327aaac 04/06/2026, 14:17:36" [ref=e4050] [cursor=pointer]:
+            - generic [ref=e4051]: UNKNOWN
+            - generic [ref=e4052]:
+              - generic [ref=e4053]: 04-06-26-add-login-flow-9327aaac
+              - text: 04/06/2026, 14:17:36
+            - img [ref=e4054]
+        - generic [ref=e4056]:
+          - generic [ref=e4057]:
+            - generic [ref=e4058]: maestro-orch-7J9dG2
+            - generic [ref=e4059]: "1"
+          - button "STOPPED 04-06-26-x-0f4dc7ba 04/06/2026, 14:17:350s$0.00 maestro/x-0f4dc7ba" [ref=e4061] [cursor=pointer]:
+            - generic [ref=e4062]: STOPPED
+            - generic [ref=e4063]:
+              - generic [ref=e4064]: 04-06-26-x-0f4dc7ba
+              - text: 04/06/2026, 14:17:350s$0.00
+              - generic [ref=e4065]: maestro/x-0f4dc7ba
+            - img [ref=e4066]
+        - generic [ref=e4068]:
+          - generic [ref=e4069]:
+            - generic [ref=e4070]: maestro-orch-FgHmRx
+            - generic [ref=e4071]: "1"
+          - button "DONE 04-06-26-add-login-flow-105c0241 04/06/2026, 14:17:341s$0.00 maestro/add-login-flow-105c0241" [ref=e4073] [cursor=pointer]:
+            - generic [ref=e4074]: DONE
+            - generic [ref=e4075]:
+              - generic [ref=e4076]: 04-06-26-add-login-flow-105c0241
+              - text: 04/06/2026, 14:17:341s$0.00
+              - generic [ref=e4077]: maestro/add-login-flow-105c0241
+            - img [ref=e4078]
+        - generic [ref=e4080]:
+          - generic [ref=e4081]:
+            - generic [ref=e4082]: maestro-dispatch-k5qinD
+            - generic [ref=e4083]: "1"
+          - button "DONE 04-06-26-demo-task-a83e5f9f 04/06/2026, 14:17:331s$0.00 maestro/demo-task-a83e5f9f" [ref=e4085] [cursor=pointer]:
+            - generic [ref=e4086]: DONE
+            - generic [ref=e4087]:
+              - generic [ref=e4088]: 04-06-26-demo-task-a83e5f9f
+              - text: 04/06/2026, 14:17:331s$0.00
+              - generic [ref=e4089]: maestro/demo-task-a83e5f9f
+            - img [ref=e4090]
+        - generic [ref=e4092]:
+          - generic [ref=e4093]:
+            - generic [ref=e4094]: maestro-orch-8NCzWz
+            - generic [ref=e4095]: "1"
+          - button "DONE 04-06-26-whatever-c7036a24 04/06/2026, 14:17:321s$0.00 feat/my-thing" [ref=e4097] [cursor=pointer]:
+            - generic [ref=e4098]: DONE
+            - generic [ref=e4099]:
+              - generic [ref=e4100]: 04-06-26-whatever-c7036a24
+              - text: 04/06/2026, 14:17:321s$0.00
+              - generic [ref=e4101]: feat/my-thing
+            - img [ref=e4102]
+        - generic [ref=e4104]:
+          - generic [ref=e4105]:
+            - generic [ref=e4106]: maestro-orch-nRq0Y5
+            - generic [ref=e4107]: "1"
+          - button "DONE 04-06-26-add-login-flow-b8f12272 04/06/2026, 14:17:301s$0.00 maestro/add-login-flow-b8f12272" [ref=e4109] [cursor=pointer]:
+            - generic [ref=e4110]: DONE
+            - generic [ref=e4111]:
+              - generic [ref=e4112]: 04-06-26-add-login-flow-b8f12272
+              - text: 04/06/2026, 14:17:301s$0.00
+              - generic [ref=e4113]: maestro/add-login-flow-b8f12272
+            - img [ref=e4114]
+        - generic [ref=e4116]:
+          - generic [ref=e4117]:
+            - generic [ref=e4118]: maestro-dispatch-w7Qj4k
+            - generic [ref=e4119]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-a4a92f18 04/06/2026, 14:17:31" [ref=e4121] [cursor=pointer]:
+            - generic [ref=e4122]: UNKNOWN
+            - generic [ref=e4123]:
+              - generic [ref=e4124]: 04-06-26-demo-task-a4a92f18
+              - text: 04/06/2026, 14:17:31
+            - img [ref=e4125]
+        - generic [ref=e4127]:
+          - generic [ref=e4128]:
+            - generic [ref=e4129]: maestro-timing-UAin0O
+            - generic [ref=e4130]: "1"
+          - button "DONE 04-06-26-demo-task-5f0097a3 04/06/2026, 14:17:291s$0.00 maestro/demo-task-5f0097a3" [ref=e4132] [cursor=pointer]:
+            - generic [ref=e4133]: DONE
+            - generic [ref=e4134]:
+              - generic [ref=e4135]: 04-06-26-demo-task-5f0097a3
+              - text: 04/06/2026, 14:17:291s$0.00
+              - generic [ref=e4136]: maestro/demo-task-5f0097a3
+            - img [ref=e4137]
+        - generic [ref=e4139]:
+          - generic [ref=e4140]:
+            - generic [ref=e4141]: maestro-cli-sxNwuX
+            - generic [ref=e4142]: "1"
+          - button "DONE 04-06-26-demo-4b938a7a 04/06/2026, 14:17:301s$0.00 feat/cli-plumbed" [ref=e4144] [cursor=pointer]:
+            - generic [ref=e4145]: DONE
+            - generic [ref=e4146]:
+              - generic [ref=e4147]: 04-06-26-demo-4b938a7a
+              - text: 04/06/2026, 14:17:301s$0.00
+              - generic [ref=e4148]: feat/cli-plumbed
+            - img [ref=e4149]
+        - generic [ref=e4151]:
+          - generic [ref=e4152]:
+            - generic [ref=e4153]: maestro-clarify-fold-n2c9Rm
+            - generic [ref=e4154]: "1"
+          - button "DONE 04-06-26-demo-task-7f4be777 04/06/2026, 14:17:291s$0.00 maestro/demo-task-7f4be777" [ref=e4156] [cursor=pointer]:
+            - generic [ref=e4157]: DONE
+            - generic [ref=e4158]:
+              - generic [ref=e4159]: 04-06-26-demo-task-7f4be777
+              - text: 04/06/2026, 14:17:291s$0.00
+              - generic [ref=e4160]: maestro/demo-task-7f4be777
+            - img [ref=e4161]
+        - generic [ref=e4163]:
+          - generic [ref=e4164]:
+            - generic [ref=e4165]: maestro-clarify-QzHxPN
+            - generic [ref=e4166]: "1"
+          - button "DONE 04-06-26-demo-task-aeaf9d48 04/06/2026, 14:17:291s$0.00 maestro/demo-task-aeaf9d48" [ref=e4168] [cursor=pointer]:
+            - generic [ref=e4169]: DONE
+            - generic [ref=e4170]:
+              - generic [ref=e4171]: 04-06-26-demo-task-aeaf9d48
+              - text: 04/06/2026, 14:17:291s$0.00
+              - generic [ref=e4172]: maestro/demo-task-aeaf9d48
+            - img [ref=e4173]
+        - generic [ref=e4175]:
+          - generic [ref=e4176]:
+            - generic [ref=e4177]: maestro-run-3LaAdT
+            - generic [ref=e4178]: "1"
+          - button "ERROR demo task 04/06/2026, 14:17:291s$0.00" [ref=e4180] [cursor=pointer]:
+            - generic [ref=e4181]: ERROR
+            - generic [ref=e4182]:
+              - generic [ref=e4183]: demo task
+              - text: 04/06/2026, 14:17:291s$0.00
+            - img [ref=e4184]
+        - generic [ref=e4186]:
+          - generic [ref=e4187]:
+            - generic [ref=e4188]: maestro-run-xiKEoL
+            - generic [ref=e4189]: "1"
+          - button "ERROR demo task 04/06/2026, 14:17:291s$0.00" [ref=e4191] [cursor=pointer]:
+            - generic [ref=e4192]: ERROR
+            - generic [ref=e4193]:
+              - generic [ref=e4194]: demo task
+              - text: 04/06/2026, 14:17:291s$0.00
+            - img [ref=e4195]
+        - generic [ref=e4197]:
+          - generic [ref=e4198]:
+            - generic [ref=e4199]: maestro-master-Q4MfPC
+            - generic [ref=e4200]: "1"
+          - button "UNKNOWN 04-06-26-x-707bd716 04/06/2026, 14:17:21" [ref=e4202] [cursor=pointer]:
+            - generic [ref=e4203]: UNKNOWN
+            - generic [ref=e4204]:
+              - generic [ref=e4205]: 04-06-26-x-707bd716
+              - text: 04/06/2026, 14:17:21
+            - img [ref=e4206]
+        - generic [ref=e4208]:
+          - generic [ref=e4209]:
+            - generic [ref=e4210]: maestro-parent-rlbf9g
+            - generic [ref=e4211]: "1"
+          - button "UNKNOWN 04-06-26-x-d8e591dc 04/06/2026, 14:17:20" [ref=e4213] [cursor=pointer]:
+            - generic [ref=e4214]: UNKNOWN
+            - generic [ref=e4215]:
+              - generic [ref=e4216]: 04-06-26-x-d8e591dc
+              - text: 04/06/2026, 14:17:20
+            - img [ref=e4217]
+        - generic [ref=e4219]:
+          - generic [ref=e4220]:
+            - generic [ref=e4221]: maestro-orch-MhFwdh
+            - generic [ref=e4222]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-56b918ae 04/06/2026, 14:17:19" [ref=e4224] [cursor=pointer]:
+            - generic [ref=e4225]: UNKNOWN
+            - generic [ref=e4226]:
+              - generic [ref=e4227]: 04-06-26-add-login-flow-56b918ae
+              - text: 04/06/2026, 14:17:19
+            - img [ref=e4228]
+        - generic [ref=e4230]:
+          - generic [ref=e4231]:
+            - generic [ref=e4232]: maestro-orch-cgMc7m
+            - generic [ref=e4233]: "1"
+          - button "STOPPED 04-06-26-x-15c6afbc 04/06/2026, 14:17:180s$0.00 maestro/x-15c6afbc" [ref=e4235] [cursor=pointer]:
+            - generic [ref=e4236]: STOPPED
+            - generic [ref=e4237]:
+              - generic [ref=e4238]: 04-06-26-x-15c6afbc
+              - text: 04/06/2026, 14:17:180s$0.00
+              - generic [ref=e4239]: maestro/x-15c6afbc
+            - img [ref=e4240]
+        - generic [ref=e4242]:
+          - generic [ref=e4243]:
+            - generic [ref=e4244]: maestro-orch-Ktf3dS
+            - generic [ref=e4245]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-2f324269 04/06/2026, 14:17:17" [ref=e4247] [cursor=pointer]:
+            - generic [ref=e4248]: UNKNOWN
+            - generic [ref=e4249]:
+              - generic [ref=e4250]: 04-06-26-add-login-flow-2f324269
+              - text: 04/06/2026, 14:17:17
+            - img [ref=e4251]
+        - generic [ref=e4253]:
+          - generic [ref=e4254]:
+            - generic [ref=e4255]: maestro-dispatch-TkbcWk
+            - generic [ref=e4256]: "1"
+          - button "DONE 04-06-26-demo-task-00e4656a 04/06/2026, 14:17:161s$0.00 maestro/demo-task-00e4656a" [ref=e4258] [cursor=pointer]:
+            - generic [ref=e4259]: DONE
+            - generic [ref=e4260]:
+              - generic [ref=e4261]: 04-06-26-demo-task-00e4656a
+              - text: 04/06/2026, 14:17:161s$0.00
+              - generic [ref=e4262]: maestro/demo-task-00e4656a
+            - img [ref=e4263]
+        - generic [ref=e4265]:
+          - generic [ref=e4266]:
+            - generic [ref=e4267]: maestro-orch-GHgvKn
+            - generic [ref=e4268]: "1"
+          - button "UNKNOWN 04-06-26-whatever-3a2dc233 04/06/2026, 14:17:16" [ref=e4270] [cursor=pointer]:
+            - generic [ref=e4271]: UNKNOWN
+            - generic [ref=e4272]:
+              - generic [ref=e4273]: 04-06-26-whatever-3a2dc233
+              - text: 04/06/2026, 14:17:16
+            - img [ref=e4274]
+        - generic [ref=e4276]:
+          - generic [ref=e4277]:
+            - generic [ref=e4278]: maestro-orch-UoZkb9
+            - generic [ref=e4279]: "1"
+          - button "DONE 04-06-26-add-login-flow-43162334 04/06/2026, 14:17:131s$0.00 maestro/add-login-flow-43162334" [ref=e4281] [cursor=pointer]:
+            - generic [ref=e4282]: DONE
+            - generic [ref=e4283]:
+              - generic [ref=e4284]: 04-06-26-add-login-flow-43162334
+              - text: 04/06/2026, 14:17:131s$0.00
+              - generic [ref=e4285]: maestro/add-login-flow-43162334
+            - img [ref=e4286]
+        - generic [ref=e4288]:
+          - generic [ref=e4289]:
+            - generic [ref=e4290]: maestro-clarify-lMviUJ
+            - generic [ref=e4291]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-d3b7ec76 04/06/2026, 14:17:14" [ref=e4293] [cursor=pointer]:
+            - generic [ref=e4294]: UNKNOWN
+            - generic [ref=e4295]:
+              - generic [ref=e4296]: 04-06-26-demo-task-d3b7ec76
+              - text: 04/06/2026, 14:17:14
+            - img [ref=e4297]
+        - generic [ref=e4299]:
+          - generic [ref=e4300]:
+            - generic [ref=e4301]: maestro-cli-rEtGsy
+            - generic [ref=e4302]: "1"
+          - button "DONE 04-06-26-demo-ff8d0ae1 04/06/2026, 14:17:121s$0.00 feat/cli-plumbed" [ref=e4304] [cursor=pointer]:
+            - generic [ref=e4305]: DONE
+            - generic [ref=e4306]:
+              - generic [ref=e4307]: 04-06-26-demo-ff8d0ae1
+              - text: 04/06/2026, 14:17:121s$0.00
+              - generic [ref=e4308]: feat/cli-plumbed
+            - img [ref=e4309]
+        - generic [ref=e4311]:
+          - generic [ref=e4312]:
+            - generic [ref=e4313]: maestro-clarify-fold-43RjKG
+            - generic [ref=e4314]: "1"
+          - button "DONE 04-06-26-demo-task-a4ef7d72 04/06/2026, 14:17:122s$0.00 maestro/demo-task-a4ef7d72" [ref=e4316] [cursor=pointer]:
+            - generic [ref=e4317]: DONE
+            - generic [ref=e4318]:
+              - generic [ref=e4319]: 04-06-26-demo-task-a4ef7d72
+              - text: 04/06/2026, 14:17:122s$0.00
+              - generic [ref=e4320]: maestro/demo-task-a4ef7d72
+            - img [ref=e4321]
+        - generic [ref=e4323]:
+          - generic [ref=e4324]:
+            - generic [ref=e4325]: maestro-timing-nKiYHV
+            - generic [ref=e4326]: "1"
+          - button "DONE 04-06-26-demo-task-961f746e 04/06/2026, 14:17:121s$0.00 maestro/demo-task-961f746e" [ref=e4328] [cursor=pointer]:
+            - generic [ref=e4329]: DONE
+            - generic [ref=e4330]:
+              - generic [ref=e4331]: 04-06-26-demo-task-961f746e
+              - text: 04/06/2026, 14:17:121s$0.00
+              - generic [ref=e4332]: maestro/demo-task-961f746e
+            - img [ref=e4333]
+        - generic [ref=e4335]:
+          - generic [ref=e4336]:
+            - generic [ref=e4337]: maestro-dispatch-crDtGX
+            - generic [ref=e4338]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-7da7bdb0 04/06/2026, 14:17:14" [ref=e4340] [cursor=pointer]:
+            - generic [ref=e4341]: UNKNOWN
+            - generic [ref=e4342]:
+              - generic [ref=e4343]: 04-06-26-demo-task-7da7bdb0
+              - text: 04/06/2026, 14:17:14
+            - img [ref=e4344]
+        - generic [ref=e4346]:
+          - generic [ref=e4347]:
+            - generic [ref=e4348]: maestro-run-b1ay3C
+            - generic [ref=e4349]: "1"
+          - button "ERROR demo task 04/06/2026, 14:17:121s$0.00" [ref=e4351] [cursor=pointer]:
+            - generic [ref=e4352]: ERROR
+            - generic [ref=e4353]:
+              - generic [ref=e4354]: demo task
+              - text: 04/06/2026, 14:17:121s$0.00
+            - img [ref=e4355]
+        - generic [ref=e4357]:
+          - generic [ref=e4358]:
+            - generic [ref=e4359]: maestro-run-0oyzL7
+            - generic [ref=e4360]: "1"
+          - button "ERROR demo task 04/06/2026, 14:17:121s$0.00" [ref=e4362] [cursor=pointer]:
+            - generic [ref=e4363]: ERROR
+            - generic [ref=e4364]:
+              - generic [ref=e4365]: demo task
+              - text: 04/06/2026, 14:17:121s$0.00
+            - img [ref=e4366]
+        - generic [ref=e4368]:
+          - generic [ref=e4369]:
+            - generic [ref=e4370]: maestro-master-Nrw6BK
+            - generic [ref=e4371]: "1"
+          - button "UNKNOWN 04-06-26-x-3ed4c297 04/06/2026, 14:14:32" [ref=e4373] [cursor=pointer]:
+            - generic [ref=e4374]: UNKNOWN
+            - generic [ref=e4375]:
+              - generic [ref=e4376]: 04-06-26-x-3ed4c297
+              - text: 04/06/2026, 14:14:32
+            - img [ref=e4377]
+        - generic [ref=e4379]:
+          - generic [ref=e4380]:
+            - generic [ref=e4381]: maestro-parent-Mbv0Mx
+            - generic [ref=e4382]: "1"
+          - button "UNKNOWN 04-06-26-x-e900a5db 04/06/2026, 14:14:31" [ref=e4384] [cursor=pointer]:
+            - generic [ref=e4385]: UNKNOWN
+            - generic [ref=e4386]:
+              - generic [ref=e4387]: 04-06-26-x-e900a5db
+              - text: 04/06/2026, 14:14:31
+            - img [ref=e4388]
+        - generic [ref=e4390]:
+          - generic [ref=e4391]:
+            - generic [ref=e4392]: maestro-orch-2uW5Do
+            - generic [ref=e4393]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-1701738d 04/06/2026, 14:14:30" [ref=e4395] [cursor=pointer]:
+            - generic [ref=e4396]: UNKNOWN
+            - generic [ref=e4397]:
+              - generic [ref=e4398]: 04-06-26-add-login-flow-1701738d
+              - text: 04/06/2026, 14:14:30
+            - img [ref=e4399]
+        - generic [ref=e4401]:
+          - generic [ref=e4402]:
+            - generic [ref=e4403]: maestro-orch-q4mltM
+            - generic [ref=e4404]: "1"
+          - button "STOPPED 04-06-26-x-6a30cce6 04/06/2026, 14:14:290s$0.00 maestro/x-6a30cce6" [ref=e4406] [cursor=pointer]:
+            - generic [ref=e4407]: STOPPED
+            - generic [ref=e4408]:
+              - generic [ref=e4409]: 04-06-26-x-6a30cce6
+              - text: 04/06/2026, 14:14:290s$0.00
+              - generic [ref=e4410]: maestro/x-6a30cce6
+            - img [ref=e4411]
+        - generic [ref=e4413]:
+          - generic [ref=e4414]:
+            - generic [ref=e4415]: maestro-orch-BLF3UG
+            - generic [ref=e4416]: "1"
+          - button "DONE 04-06-26-add-login-flow-822309c7 04/06/2026, 14:14:281s$0.00 maestro/add-login-flow-822309c7" [ref=e4418] [cursor=pointer]:
+            - generic [ref=e4419]: DONE
+            - generic [ref=e4420]:
+              - generic [ref=e4421]: 04-06-26-add-login-flow-822309c7
+              - text: 04/06/2026, 14:14:281s$0.00
+              - generic [ref=e4422]: maestro/add-login-flow-822309c7
+            - img [ref=e4423]
+        - generic [ref=e4425]:
+          - generic [ref=e4426]:
+            - generic [ref=e4427]: maestro-dispatch-tCr7g9
+            - generic [ref=e4428]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-cdac55f1 04/06/2026, 14:14:29" [ref=e4430] [cursor=pointer]:
+            - generic [ref=e4431]: UNKNOWN
+            - generic [ref=e4432]:
+              - generic [ref=e4433]: 04-06-26-demo-task-cdac55f1
+              - text: 04/06/2026, 14:14:29
+            - img [ref=e4434]
+        - generic [ref=e4436]:
+          - generic [ref=e4437]:
+            - generic [ref=e4438]: maestro-orch-A8floq
+            - generic [ref=e4439]: "1"
+          - button "UNKNOWN 04-06-26-whatever-063ab1e5 04/06/2026, 14:14:28" [ref=e4441] [cursor=pointer]:
+            - generic [ref=e4442]: UNKNOWN
+            - generic [ref=e4443]:
+              - generic [ref=e4444]: 04-06-26-whatever-063ab1e5
+              - text: 04/06/2026, 14:14:28
+            - img [ref=e4445]
+        - generic [ref=e4447]:
+          - generic [ref=e4448]:
+            - generic [ref=e4449]: maestro-cli-NWil0i
+            - generic [ref=e4450]: "1"
+          - button "DONE 04-06-26-demo-b9db5e21 04/06/2026, 14:14:241s$0.00 feat/cli-plumbed" [ref=e4452] [cursor=pointer]:
+            - generic [ref=e4453]: DONE
+            - generic [ref=e4454]:
+              - generic [ref=e4455]: 04-06-26-demo-b9db5e21
+              - text: 04/06/2026, 14:14:241s$0.00
+              - generic [ref=e4456]: feat/cli-plumbed
+            - img [ref=e4457]
+        - generic [ref=e4459]:
+          - generic [ref=e4460]:
+            - generic [ref=e4461]: maestro-orch-vOz7U9
+            - generic [ref=e4462]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-d59b2e70 04/06/2026, 14:14:26" [ref=e4464] [cursor=pointer]:
+            - generic [ref=e4465]: UNKNOWN
+            - generic [ref=e4466]:
+              - generic [ref=e4467]: 04-06-26-add-login-flow-d59b2e70
+              - text: 04/06/2026, 14:14:26
+            - img [ref=e4468]
+        - generic [ref=e4470]:
+          - generic [ref=e4471]:
+            - generic [ref=e4472]: maestro-clarify-UO5ENd
+            - generic [ref=e4473]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-e1f258a8 04/06/2026, 14:14:25" [ref=e4475] [cursor=pointer]:
+            - generic [ref=e4476]: UNKNOWN
+            - generic [ref=e4477]:
+              - generic [ref=e4478]: 04-06-26-demo-task-e1f258a8
+              - text: 04/06/2026, 14:14:25
+            - img [ref=e4479]
+        - generic [ref=e4481]:
+          - generic [ref=e4482]:
+            - generic [ref=e4483]: maestro-timing-MHkUXz
+            - generic [ref=e4484]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-ca273133 04/06/2026, 14:14:25" [ref=e4486] [cursor=pointer]:
+            - generic [ref=e4487]: UNKNOWN
+            - generic [ref=e4488]:
+              - generic [ref=e4489]: 04-06-26-demo-task-ca273133
+              - text: 04/06/2026, 14:14:25
+            - img [ref=e4490]
+        - generic [ref=e4492]:
+          - generic [ref=e4493]:
+            - generic [ref=e4494]: maestro-dispatch-FS2zyP
+            - generic [ref=e4495]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-e4d08045 04/06/2026, 14:14:25" [ref=e4497] [cursor=pointer]:
+            - generic [ref=e4498]: UNKNOWN
+            - generic [ref=e4499]:
+              - generic [ref=e4500]: 04-06-26-demo-task-e4d08045
+              - text: 04/06/2026, 14:14:25
+            - img [ref=e4501]
+        - generic [ref=e4503]:
+          - generic [ref=e4504]:
+            - generic [ref=e4505]: maestro-clarify-fold-PCO5rx
+            - generic [ref=e4506]: "1"
+          - button "DONE 04-06-26-demo-task-d22e281a 04/06/2026, 14:14:232s$0.00 maestro/demo-task-d22e281a" [ref=e4508] [cursor=pointer]:
+            - generic [ref=e4509]: DONE
+            - generic [ref=e4510]:
+              - generic [ref=e4511]: 04-06-26-demo-task-d22e281a
+              - text: 04/06/2026, 14:14:232s$0.00
+              - generic [ref=e4512]: maestro/demo-task-d22e281a
+            - img [ref=e4513]
+        - generic [ref=e4515]:
+          - generic [ref=e4516]:
+            - generic [ref=e4517]: maestro-run-neSd2C
+            - generic [ref=e4518]: "1"
+          - button "ERROR demo task 04/06/2026, 14:14:241s$0.00" [ref=e4520] [cursor=pointer]:
+            - generic [ref=e4521]: ERROR
+            - generic [ref=e4522]:
+              - generic [ref=e4523]: demo task
+              - text: 04/06/2026, 14:14:241s$0.00
+            - img [ref=e4524]
+        - generic [ref=e4526]:
+          - generic [ref=e4527]:
+            - generic [ref=e4528]: maestro-run-wboUxy
+            - generic [ref=e4529]: "1"
+          - button "ERROR demo task 04/06/2026, 14:14:241s$0.00" [ref=e4531] [cursor=pointer]:
+            - generic [ref=e4532]: ERROR
+            - generic [ref=e4533]:
+              - generic [ref=e4534]: demo task
+              - text: 04/06/2026, 14:14:241s$0.00
+            - img [ref=e4535]
+        - generic [ref=e4537]:
+          - generic [ref=e4538]:
+            - generic [ref=e4539]: maestro-master-gEKtQU
+            - generic [ref=e4540]: "1"
+          - button "UNKNOWN 04-06-26-x-fd5e7b01 04/06/2026, 14:13:09" [ref=e4542] [cursor=pointer]:
+            - generic [ref=e4543]: UNKNOWN
+            - generic [ref=e4544]:
+              - generic [ref=e4545]: 04-06-26-x-fd5e7b01
+              - text: 04/06/2026, 14:13:09
+            - img [ref=e4546]
+        - generic [ref=e4548]:
+          - generic [ref=e4549]:
+            - generic [ref=e4550]: maestro-parent-EPVhgl
+            - generic [ref=e4551]: "1"
+          - button "UNKNOWN 04-06-26-x-a5eed7bb 04/06/2026, 14:13:08" [ref=e4553] [cursor=pointer]:
+            - generic [ref=e4554]: UNKNOWN
+            - generic [ref=e4555]:
+              - generic [ref=e4556]: 04-06-26-x-a5eed7bb
+              - text: 04/06/2026, 14:13:08
+            - img [ref=e4557]
+        - generic [ref=e4559]:
+          - generic [ref=e4560]:
+            - generic [ref=e4561]: maestro-orch-PGUP8M
+            - generic [ref=e4562]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-80557253 04/06/2026, 14:13:07" [ref=e4564] [cursor=pointer]:
+            - generic [ref=e4565]: UNKNOWN
+            - generic [ref=e4566]:
+              - generic [ref=e4567]: 04-06-26-add-login-flow-80557253
+              - text: 04/06/2026, 14:13:07
+            - img [ref=e4568]
+        - generic [ref=e4570]:
+          - generic [ref=e4571]:
+            - generic [ref=e4572]: maestro-orch-gTr7gO
+            - generic [ref=e4573]: "1"
+          - button "STOPPED 04-06-26-x-b6234bd6 04/06/2026, 14:13:060s$0.00 maestro/x-b6234bd6" [ref=e4575] [cursor=pointer]:
+            - generic [ref=e4576]: STOPPED
+            - generic [ref=e4577]:
+              - generic [ref=e4578]: 04-06-26-x-b6234bd6
+              - text: 04/06/2026, 14:13:060s$0.00
+              - generic [ref=e4579]: maestro/x-b6234bd6
+            - img [ref=e4580]
+        - generic [ref=e4582]:
+          - generic [ref=e4583]:
+            - generic [ref=e4584]: maestro-orch-DXkb8D
+            - generic [ref=e4585]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-57c3ff9f 04/06/2026, 14:13:05" [ref=e4587] [cursor=pointer]:
+            - generic [ref=e4588]: UNKNOWN
+            - generic [ref=e4589]:
+              - generic [ref=e4590]: 04-06-26-add-login-flow-57c3ff9f
+              - text: 04/06/2026, 14:13:05
+            - img [ref=e4591]
+        - generic [ref=e4593]:
+          - generic [ref=e4594]:
+            - generic [ref=e4595]: maestro-dispatch-rP4oX6
+            - generic [ref=e4596]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-be071bd3 04/06/2026, 14:13:05" [ref=e4598] [cursor=pointer]:
+            - generic [ref=e4599]: UNKNOWN
+            - generic [ref=e4600]:
+              - generic [ref=e4601]: 04-06-26-demo-task-be071bd3
+              - text: 04/06/2026, 14:13:05
+            - img [ref=e4602]
+        - generic [ref=e4604]:
+          - generic [ref=e4605]:
+            - generic [ref=e4606]: maestro-orch-bMcicF
+            - generic [ref=e4607]: "1"
+          - button "DONE 04-06-26-whatever-4acd9854 04/06/2026, 14:13:031s$0.00 feat/my-thing" [ref=e4609] [cursor=pointer]:
+            - generic [ref=e4610]: DONE
+            - generic [ref=e4611]:
+              - generic [ref=e4612]: 04-06-26-whatever-4acd9854
+              - text: 04/06/2026, 14:13:031s$0.00
+              - generic [ref=e4613]: feat/my-thing
+            - img [ref=e4614]
+        - generic [ref=e4616]:
+          - generic [ref=e4617]:
+            - generic [ref=e4618]: maestro-orch-LEd1lW
+            - generic [ref=e4619]: "1"
+          - button "DONE 04-06-26-add-login-flow-d2164e27 04/06/2026, 14:13:001s$0.00 maestro/add-login-flow-d2164e27" [ref=e4621] [cursor=pointer]:
+            - generic [ref=e4622]: DONE
+            - generic [ref=e4623]:
+              - generic [ref=e4624]: 04-06-26-add-login-flow-d2164e27
+              - text: 04/06/2026, 14:13:001s$0.00
+              - generic [ref=e4625]: maestro/add-login-flow-d2164e27
+            - img [ref=e4626]
+        - generic [ref=e4628]:
+          - generic [ref=e4629]:
+            - generic [ref=e4630]: maestro-timing-zanVf5
+            - generic [ref=e4631]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-c371229d 04/06/2026, 14:13:02" [ref=e4633] [cursor=pointer]:
+            - generic [ref=e4634]: UNKNOWN
+            - generic [ref=e4635]:
+              - generic [ref=e4636]: 04-06-26-demo-task-c371229d
+              - text: 04/06/2026, 14:13:02
+            - img [ref=e4637]
+        - generic [ref=e4639]:
+          - generic [ref=e4640]:
+            - generic [ref=e4641]: maestro-cli-M1583w
+            - generic [ref=e4642]: "1"
+          - button "DONE 04-06-26-demo-493b176f 04/06/2026, 14:13:001s$0.00 feat/cli-plumbed" [ref=e4644] [cursor=pointer]:
+            - generic [ref=e4645]: DONE
+            - generic [ref=e4646]:
+              - generic [ref=e4647]: 04-06-26-demo-493b176f
+              - text: 04/06/2026, 14:13:001s$0.00
+              - generic [ref=e4648]: feat/cli-plumbed
+            - img [ref=e4649]
+        - generic [ref=e4651]:
+          - generic [ref=e4652]:
+            - generic [ref=e4653]: maestro-clarify-DeHRvf
+            - generic [ref=e4654]: "1"
+          - button "DONE 04-06-26-demo-task-c8a95f5a 04/06/2026, 14:12:592s$0.00 maestro/demo-task-c8a95f5a" [ref=e4656] [cursor=pointer]:
+            - generic [ref=e4657]: DONE
+            - generic [ref=e4658]:
+              - generic [ref=e4659]: 04-06-26-demo-task-c8a95f5a
+              - text: 04/06/2026, 14:12:592s$0.00
+              - generic [ref=e4660]: maestro/demo-task-c8a95f5a
+            - img [ref=e4661]
+        - generic [ref=e4663]:
+          - generic [ref=e4664]:
+            - generic [ref=e4665]: maestro-clarify-fold-4TcVmC
+            - generic [ref=e4666]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-8f64c220 04/06/2026, 14:13:01" [ref=e4668] [cursor=pointer]:
+            - generic [ref=e4669]: UNKNOWN
+            - generic [ref=e4670]:
+              - generic [ref=e4671]: 04-06-26-demo-task-8f64c220
+              - text: 04/06/2026, 14:13:01
+            - img [ref=e4672]
+        - generic [ref=e4674]:
+          - generic [ref=e4675]:
+            - generic [ref=e4676]: maestro-dispatch-vp8Pk1
+            - generic [ref=e4677]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-a7e358a1 04/06/2026, 14:13:01" [ref=e4679] [cursor=pointer]:
+            - generic [ref=e4680]: UNKNOWN
+            - generic [ref=e4681]:
+              - generic [ref=e4682]: 04-06-26-demo-task-a7e358a1
+              - text: 04/06/2026, 14:13:01
+            - img [ref=e4683]
+        - generic [ref=e4685]:
+          - generic [ref=e4686]:
+            - generic [ref=e4687]: maestro-run-xRThnj
+            - generic [ref=e4688]: "1"
+          - button "ERROR demo task 04/06/2026, 14:13:001s$0.00" [ref=e4690] [cursor=pointer]:
+            - generic [ref=e4691]: ERROR
+            - generic [ref=e4692]:
+              - generic [ref=e4693]: demo task
+              - text: 04/06/2026, 14:13:001s$0.00
+            - img [ref=e4694]
+        - generic [ref=e4696]:
+          - generic [ref=e4697]:
+            - generic [ref=e4698]: maestro-master-T6J7Rm
+            - generic [ref=e4699]: "1"
+          - button "DONE 04-06-26-x-b14ac629 04/06/2026, 14:11:130s$0.00 maestro/x-b14ac629" [ref=e4701] [cursor=pointer]:
+            - generic [ref=e4702]: DONE
+            - generic [ref=e4703]:
+              - generic [ref=e4704]: 04-06-26-x-b14ac629
+              - text: 04/06/2026, 14:11:130s$0.00
+              - generic [ref=e4705]: maestro/x-b14ac629
+            - img [ref=e4706]
+        - generic [ref=e4708]:
+          - generic [ref=e4709]:
+            - generic [ref=e4710]: maestro-parent-UTeyxm
+            - generic [ref=e4711]: "1"
+          - button "UNKNOWN 04-06-26-x-e9e57475 04/06/2026, 14:11:13" [ref=e4713] [cursor=pointer]:
+            - generic [ref=e4714]: UNKNOWN
+            - generic [ref=e4715]:
+              - generic [ref=e4716]: 04-06-26-x-e9e57475
+              - text: 04/06/2026, 14:11:13
+            - img [ref=e4717]
+        - generic [ref=e4719]:
+          - generic [ref=e4720]:
+            - generic [ref=e4721]: maestro-orch-mpm4v0
+            - generic [ref=e4722]: "1"
+          - button "DONE 04-06-26-add-login-flow-f2ce744d 04/06/2026, 14:11:110s$0.00 maestro/add-login-flow-f2ce744d" [ref=e4724] [cursor=pointer]:
+            - generic [ref=e4725]: DONE
+            - generic [ref=e4726]:
+              - generic [ref=e4727]: 04-06-26-add-login-flow-f2ce744d
+              - text: 04/06/2026, 14:11:110s$0.00
+              - generic [ref=e4728]: maestro/add-login-flow-f2ce744d
+            - img [ref=e4729]
+        - generic [ref=e4731]:
+          - generic [ref=e4732]:
+            - generic [ref=e4733]: maestro-orch-lnrRYv
+            - generic [ref=e4734]: "1"
+          - button "STOPPED 04-06-26-x-19755ee6 04/06/2026, 14:11:110s$0.00 maestro/x-19755ee6" [ref=e4736] [cursor=pointer]:
+            - generic [ref=e4737]: STOPPED
+            - generic [ref=e4738]:
+              - generic [ref=e4739]: 04-06-26-x-19755ee6
+              - text: 04/06/2026, 14:11:110s$0.00
+              - generic [ref=e4740]: maestro/x-19755ee6
+            - img [ref=e4741]
+        - generic [ref=e4743]:
+          - generic [ref=e4744]:
+            - generic [ref=e4745]: maestro-orch-uADvCV
+            - generic [ref=e4746]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-05573f3a 04/06/2026, 14:11:11" [ref=e4748] [cursor=pointer]:
+            - generic [ref=e4749]: UNKNOWN
+            - generic [ref=e4750]:
+              - generic [ref=e4751]: 04-06-26-add-login-flow-05573f3a
+              - text: 04/06/2026, 14:11:11
+            - img [ref=e4752]
+        - generic [ref=e4754]:
+          - generic [ref=e4755]:
+            - generic [ref=e4756]: maestro-dispatch-9nknoe
+            - generic [ref=e4757]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-a718337e 04/06/2026, 14:11:10" [ref=e4759] [cursor=pointer]:
+            - generic [ref=e4760]: UNKNOWN
+            - generic [ref=e4761]:
+              - generic [ref=e4762]: 04-06-26-demo-task-a718337e
+              - text: 04/06/2026, 14:11:10
+            - img [ref=e4763]
+        - generic [ref=e4765]:
+          - generic [ref=e4766]:
+            - generic [ref=e4767]: maestro-orch-8zjO7D
+            - generic [ref=e4768]: "1"
+          - button "DONE 04-06-26-whatever-9df63de6 04/06/2026, 14:11:081s$0.00 feat/my-thing" [ref=e4770] [cursor=pointer]:
+            - generic [ref=e4771]: DONE
+            - generic [ref=e4772]:
+              - generic [ref=e4773]: 04-06-26-whatever-9df63de6
+              - text: 04/06/2026, 14:11:081s$0.00
+              - generic [ref=e4774]: feat/my-thing
+            - img [ref=e4775]
+        - generic [ref=e4777]:
+          - generic [ref=e4778]:
+            - generic [ref=e4779]: maestro-orch-QJtUGt
+            - generic [ref=e4780]: "1"
+          - button "DONE 04-06-26-add-login-flow-26f94fb7 04/06/2026, 14:11:071s$0.00 maestro/add-login-flow-26f94fb7" [ref=e4782] [cursor=pointer]:
+            - generic [ref=e4783]: DONE
+            - generic [ref=e4784]:
+              - generic [ref=e4785]: 04-06-26-add-login-flow-26f94fb7
+              - text: 04/06/2026, 14:11:071s$0.00
+              - generic [ref=e4786]: maestro/add-login-flow-26f94fb7
+            - img [ref=e4787]
+        - generic [ref=e4789]:
+          - generic [ref=e4790]:
+            - generic [ref=e4791]: maestro-timing-dHuOnJ
+            - generic [ref=e4792]: "1"
+          - button "DONE 04-06-26-demo-task-b73bdbe7 04/06/2026, 14:11:061s$0.00 maestro/demo-task-b73bdbe7" [ref=e4794] [cursor=pointer]:
+            - generic [ref=e4795]: DONE
+            - generic [ref=e4796]:
+              - generic [ref=e4797]: 04-06-26-demo-task-b73bdbe7
+              - text: 04/06/2026, 14:11:061s$0.00
+              - generic [ref=e4798]: maestro/demo-task-b73bdbe7
+            - img [ref=e4799]
+        - generic [ref=e4801]:
+          - generic [ref=e4802]:
+            - generic [ref=e4803]: maestro-cli-D96fdc
+            - generic [ref=e4804]: "1"
+          - button "DONE 04-06-26-demo-09287ad0 04/06/2026, 14:11:071s$0.00 feat/cli-plumbed" [ref=e4806] [cursor=pointer]:
+            - generic [ref=e4807]: DONE
+            - generic [ref=e4808]:
+              - generic [ref=e4809]: 04-06-26-demo-09287ad0
+              - text: 04/06/2026, 14:11:071s$0.00
+              - generic [ref=e4810]: feat/cli-plumbed
+            - img [ref=e4811]
+        - generic [ref=e4813]:
+          - generic [ref=e4814]:
+            - generic [ref=e4815]: maestro-dispatch-ZEJbG3
+            - generic [ref=e4816]: "1"
+          - button "DONE 04-06-26-demo-task-3dba1251 04/06/2026, 14:11:061s$0.00 maestro/demo-task-3dba1251" [ref=e4818] [cursor=pointer]:
+            - generic [ref=e4819]: DONE
+            - generic [ref=e4820]:
+              - generic [ref=e4821]: 04-06-26-demo-task-3dba1251
+              - text: 04/06/2026, 14:11:061s$0.00
+              - generic [ref=e4822]: maestro/demo-task-3dba1251
+            - img [ref=e4823]
+        - generic [ref=e4825]:
+          - generic [ref=e4826]:
+            - generic [ref=e4827]: maestro-clarify-0u1J22
+            - generic [ref=e4828]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-dcaeff63 04/06/2026, 14:11:07" [ref=e4830] [cursor=pointer]:
+            - generic [ref=e4831]: UNKNOWN
+            - generic [ref=e4832]:
+              - generic [ref=e4833]: 04-06-26-demo-task-dcaeff63
+              - text: 04/06/2026, 14:11:07
+            - img [ref=e4834]
+        - generic [ref=e4836]:
+          - generic [ref=e4837]:
+            - generic [ref=e4838]: maestro-clarify-fold-QGDMnG
+            - generic [ref=e4839]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-59dc0840 04/06/2026, 14:11:07" [ref=e4841] [cursor=pointer]:
+            - generic [ref=e4842]: UNKNOWN
+            - generic [ref=e4843]:
+              - generic [ref=e4844]: 04-06-26-demo-task-59dc0840
+              - text: 04/06/2026, 14:11:07
+            - img [ref=e4845]
+        - generic [ref=e4847]:
+          - generic [ref=e4848]:
+            - generic [ref=e4849]: maestro-run-FRleUh
+            - generic [ref=e4850]: "1"
+          - button "ERROR demo task 04/06/2026, 14:11:061s$0.00" [ref=e4852] [cursor=pointer]:
+            - generic [ref=e4853]: ERROR
+            - generic [ref=e4854]:
+              - generic [ref=e4855]: demo task
+              - text: 04/06/2026, 14:11:061s$0.00
+            - img [ref=e4856]
+        - generic [ref=e4858]:
+          - generic [ref=e4859]:
+            - generic [ref=e4860]: maestro-run-Jk1lXe
+            - generic [ref=e4861]: "1"
+          - button "ERROR demo task 04/06/2026, 14:11:061s$0.00" [ref=e4863] [cursor=pointer]:
+            - generic [ref=e4864]: ERROR
+            - generic [ref=e4865]:
+              - generic [ref=e4866]: demo task
+              - text: 04/06/2026, 14:11:061s$0.00
+            - img [ref=e4867]
+        - generic [ref=e4869]:
+          - generic [ref=e4870]:
+            - generic [ref=e4871]: maestro-master-miNIBk
+            - generic [ref=e4872]: "1"
+          - button "DONE 04-06-26-x-411a5427 04/06/2026, 14:10:120s$0.00 maestro/x-411a5427" [ref=e4874] [cursor=pointer]:
+            - generic [ref=e4875]: DONE
+            - generic [ref=e4876]:
+              - generic [ref=e4877]: 04-06-26-x-411a5427
+              - text: 04/06/2026, 14:10:120s$0.00
+              - generic [ref=e4878]: maestro/x-411a5427
+            - img [ref=e4879]
+        - generic [ref=e4881]:
+          - generic [ref=e4882]:
+            - generic [ref=e4883]: maestro-parent-qY8t6o
+            - generic [ref=e4884]: "1"
+          - button "UNKNOWN 04-06-26-x-0c9a0ddc 04/06/2026, 14:10:11" [ref=e4886] [cursor=pointer]:
+            - generic [ref=e4887]: UNKNOWN
+            - generic [ref=e4888]:
+              - generic [ref=e4889]: 04-06-26-x-0c9a0ddc
+              - text: 04/06/2026, 14:10:11
+            - img [ref=e4890]
+        - generic [ref=e4892]:
+          - generic [ref=e4893]:
+            - generic [ref=e4894]: maestro-orch-LFZ22I
+            - generic [ref=e4895]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-beb73543 04/06/2026, 14:10:10" [ref=e4897] [cursor=pointer]:
+            - generic [ref=e4898]: UNKNOWN
+            - generic [ref=e4899]:
+              - generic [ref=e4900]: 04-06-26-add-login-flow-beb73543
+              - text: 04/06/2026, 14:10:10
+            - img [ref=e4901]
+        - generic [ref=e4903]:
+          - generic [ref=e4904]:
+            - generic [ref=e4905]: maestro-orch-chLlq2
+            - generic [ref=e4906]: "1"
+          - button "STOPPED 04-06-26-x-4a668f1a 04/06/2026, 14:10:090s$0.00 maestro/x-4a668f1a" [ref=e4908] [cursor=pointer]:
+            - generic [ref=e4909]: STOPPED
+            - generic [ref=e4910]:
+              - generic [ref=e4911]: 04-06-26-x-4a668f1a
+              - text: 04/06/2026, 14:10:090s$0.00
+              - generic [ref=e4912]: maestro/x-4a668f1a
+            - img [ref=e4913]
+        - generic [ref=e4915]:
+          - generic [ref=e4916]:
+            - generic [ref=e4917]: maestro-orch-qwCRK0
+            - generic [ref=e4918]: "1"
+          - button "DONE 04-06-26-add-login-flow-d4e559c6 04/06/2026, 14:10:091s$0.00 maestro/add-login-flow-d4e559c6" [ref=e4920] [cursor=pointer]:
+            - generic [ref=e4921]: DONE
+            - generic [ref=e4922]:
+              - generic [ref=e4923]: 04-06-26-add-login-flow-d4e559c6
+              - text: 04/06/2026, 14:10:091s$0.00
+              - generic [ref=e4924]: maestro/add-login-flow-d4e559c6
+            - img [ref=e4925]
+        - generic [ref=e4927]:
+          - generic [ref=e4928]:
+            - generic [ref=e4929]: maestro-dispatch-d6Imvd
+            - generic [ref=e4930]: "1"
+          - button "DONE 04-06-26-demo-task-6d194797 04/06/2026, 14:10:081s$0.00 maestro/demo-task-6d194797" [ref=e4932] [cursor=pointer]:
+            - generic [ref=e4933]: DONE
+            - generic [ref=e4934]:
+              - generic [ref=e4935]: 04-06-26-demo-task-6d194797
+              - text: 04/06/2026, 14:10:081s$0.00
+              - generic [ref=e4936]: maestro/demo-task-6d194797
+            - img [ref=e4937]
+        - generic [ref=e4939]:
+          - generic [ref=e4940]:
+            - generic [ref=e4941]: maestro-orch-LBOzGN
+            - generic [ref=e4942]: "1"
+          - button "DONE 04-06-26-whatever-4899a2f6 04/06/2026, 14:10:071s$0.00 feat/my-thing" [ref=e4944] [cursor=pointer]:
+            - generic [ref=e4945]: DONE
+            - generic [ref=e4946]:
+              - generic [ref=e4947]: 04-06-26-whatever-4899a2f6
+              - text: 04/06/2026, 14:10:071s$0.00
+              - generic [ref=e4948]: feat/my-thing
+            - img [ref=e4949]
+        - generic [ref=e4951]:
+          - generic [ref=e4952]:
+            - generic [ref=e4953]: maestro-orch-eNjH11
+            - generic [ref=e4954]: "1"
+          - button "DONE 04-06-26-add-login-flow-1e6da7e8 04/06/2026, 14:10:051s$0.00 maestro/add-login-flow-1e6da7e8" [ref=e4956] [cursor=pointer]:
+            - generic [ref=e4957]: DONE
+            - generic [ref=e4958]:
+              - generic [ref=e4959]: 04-06-26-add-login-flow-1e6da7e8
+              - text: 04/06/2026, 14:10:051s$0.00
+              - generic [ref=e4960]: maestro/add-login-flow-1e6da7e8
+            - img [ref=e4961]
+        - generic [ref=e4963]:
+          - generic [ref=e4964]:
+            - generic [ref=e4965]: maestro-dispatch-oh0XbR
+            - generic [ref=e4966]: "1"
+          - button "DONE 04-06-26-demo-task-43fea320 04/06/2026, 14:10:051s$0.00 maestro/demo-task-43fea320" [ref=e4968] [cursor=pointer]:
+            - generic [ref=e4969]: DONE
+            - generic [ref=e4970]:
+              - generic [ref=e4971]: 04-06-26-demo-task-43fea320
+              - text: 04/06/2026, 14:10:051s$0.00
+              - generic [ref=e4972]: maestro/demo-task-43fea320
+            - img [ref=e4973]
+        - generic [ref=e4975]:
+          - generic [ref=e4976]:
+            - generic [ref=e4977]: maestro-timing-xdmtEY
+            - generic [ref=e4978]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-59d5164a 04/06/2026, 14:10:06" [ref=e4980] [cursor=pointer]:
+            - generic [ref=e4981]: UNKNOWN
+            - generic [ref=e4982]:
+              - generic [ref=e4983]: 04-06-26-demo-task-59d5164a
+              - text: 04/06/2026, 14:10:06
+            - img [ref=e4984]
+        - generic [ref=e4986]:
+          - generic [ref=e4987]:
+            - generic [ref=e4988]: maestro-cli-lSd0Fx
+            - generic [ref=e4989]: "1"
+          - button "DONE 04-06-26-demo-aaec63f4 04/06/2026, 14:10:051s$0.00 feat/cli-plumbed" [ref=e4991] [cursor=pointer]:
+            - generic [ref=e4992]: DONE
+            - generic [ref=e4993]:
+              - generic [ref=e4994]: 04-06-26-demo-aaec63f4
+              - text: 04/06/2026, 14:10:051s$0.00
+              - generic [ref=e4995]: feat/cli-plumbed
+            - img [ref=e4996]
+        - generic [ref=e4998]:
+          - generic [ref=e4999]:
+            - generic [ref=e5000]: maestro-clarify-fold-mZxJRi
+            - generic [ref=e5001]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-8eb9b832 04/06/2026, 14:10:06" [ref=e5003] [cursor=pointer]:
+            - generic [ref=e5004]: UNKNOWN
+            - generic [ref=e5005]:
+              - generic [ref=e5006]: 04-06-26-demo-task-8eb9b832
+              - text: 04/06/2026, 14:10:06
+            - img [ref=e5007]
+        - generic [ref=e5009]:
+          - generic [ref=e5010]:
+            - generic [ref=e5011]: maestro-clarify-eXTLEt
+            - generic [ref=e5012]: "1"
+          - button "DONE 04-06-26-demo-task-6a3c6ef4 04/06/2026, 14:10:041s$0.00 maestro/demo-task-6a3c6ef4" [ref=e5014] [cursor=pointer]:
+            - generic [ref=e5015]: DONE
+            - generic [ref=e5016]:
+              - generic [ref=e5017]: 04-06-26-demo-task-6a3c6ef4
+              - text: 04/06/2026, 14:10:041s$0.00
+              - generic [ref=e5018]: maestro/demo-task-6a3c6ef4
+            - img [ref=e5019]
+        - generic [ref=e5021]:
+          - generic [ref=e5022]:
+            - generic [ref=e5023]: maestro-run-rprDEm
+            - generic [ref=e5024]: "1"
+          - button "ERROR demo task 04/06/2026, 14:10:051s$0.00" [ref=e5026] [cursor=pointer]:
+            - generic [ref=e5027]: ERROR
+            - generic [ref=e5028]:
+              - generic [ref=e5029]: demo task
+              - text: 04/06/2026, 14:10:051s$0.00
+            - img [ref=e5030]
+        - generic [ref=e5032]:
+          - generic [ref=e5033]:
+            - generic [ref=e5034]: maestro-run-gjuuy7
+            - generic [ref=e5035]: "1"
+          - button "ERROR demo task 04/06/2026, 14:10:051s$0.00" [ref=e5037] [cursor=pointer]:
+            - generic [ref=e5038]: ERROR
+            - generic [ref=e5039]:
+              - generic [ref=e5040]: demo task
+              - text: 04/06/2026, 14:10:051s$0.00
+            - img [ref=e5041]
+        - generic [ref=e5043]:
+          - generic [ref=e5044]:
+            - generic [ref=e5045]: maestro-master-vkZw4q
+            - generic [ref=e5046]: "1"
+          - button "DONE 04-06-26-x-3b1d0288 04/06/2026, 14:08:510s$0.00 maestro/x-3b1d0288" [ref=e5048] [cursor=pointer]:
+            - generic [ref=e5049]: DONE
+            - generic [ref=e5050]:
+              - generic [ref=e5051]: 04-06-26-x-3b1d0288
+              - text: 04/06/2026, 14:08:510s$0.00
+              - generic [ref=e5052]: maestro/x-3b1d0288
+            - img [ref=e5053]
+        - generic [ref=e5055]:
+          - generic [ref=e5056]:
+            - generic [ref=e5057]: maestro-parent-KDQcCl
+            - generic [ref=e5058]: "1"
+          - button "DONE 04-06-26-x-a0fe0f26 04/06/2026, 14:08:500s$0.00 maestro/x-a0fe0f26" [ref=e5060] [cursor=pointer]:
+            - generic [ref=e5061]: DONE
+            - generic [ref=e5062]:
+              - generic [ref=e5063]: 04-06-26-x-a0fe0f26
+              - text: 04/06/2026, 14:08:500s$0.00
+              - generic [ref=e5064]: maestro/x-a0fe0f26
+            - img [ref=e5065]
+        - generic [ref=e5067]:
+          - generic [ref=e5068]:
+            - generic [ref=e5069]: maestro-orch-B6REAK
+            - generic [ref=e5070]: "1"
+          - button "DONE 04-06-26-add-login-flow-d55c9e54 04/06/2026, 14:08:500s$0.00 maestro/add-login-flow-d55c9e54" [ref=e5072] [cursor=pointer]:
+            - generic [ref=e5073]: DONE
+            - generic [ref=e5074]:
+              - generic [ref=e5075]: 04-06-26-add-login-flow-d55c9e54
+              - text: 04/06/2026, 14:08:500s$0.00
+              - generic [ref=e5076]: maestro/add-login-flow-d55c9e54
+            - img [ref=e5077]
+        - generic [ref=e5079]:
+          - generic [ref=e5080]:
+            - generic [ref=e5081]: maestro-orch-NdMXzI
+            - generic [ref=e5082]: "1"
+          - button "STOPPED 04-06-26-x-230099bb 04/06/2026, 14:08:490s$0.00 maestro/x-230099bb" [ref=e5084] [cursor=pointer]:
+            - generic [ref=e5085]: STOPPED
+            - generic [ref=e5086]:
+              - generic [ref=e5087]: 04-06-26-x-230099bb
+              - text: 04/06/2026, 14:08:490s$0.00
+              - generic [ref=e5088]: maestro/x-230099bb
+            - img [ref=e5089]
+        - generic [ref=e5091]:
+          - generic [ref=e5092]:
+            - generic [ref=e5093]: maestro-dispatch-5g4Mhk
+            - generic [ref=e5094]: "1"
+          - button "DONE 04-06-26-demo-task-cf5a64b2 04/06/2026, 14:08:481s$0.00 maestro/demo-task-cf5a64b2" [ref=e5096] [cursor=pointer]:
+            - generic [ref=e5097]: DONE
+            - generic [ref=e5098]:
+              - generic [ref=e5099]: 04-06-26-demo-task-cf5a64b2
+              - text: 04/06/2026, 14:08:481s$0.00
+              - generic [ref=e5100]: maestro/demo-task-cf5a64b2
+            - img [ref=e5101]
+        - generic [ref=e5103]:
+          - generic [ref=e5104]:
+            - generic [ref=e5105]: maestro-orch-eHWVYN
+            - generic [ref=e5106]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-099e214f 04/06/2026, 14:08:49" [ref=e5108] [cursor=pointer]:
+            - generic [ref=e5109]: UNKNOWN
+            - generic [ref=e5110]:
+              - generic [ref=e5111]: 04-06-26-add-login-flow-099e214f
+              - text: 04/06/2026, 14:08:49
+            - img [ref=e5112]
+        - generic [ref=e5114]:
+          - generic [ref=e5115]:
+            - generic [ref=e5116]: maestro-orch-cUf5u2
+            - generic [ref=e5117]: "1"
+          - button "UNKNOWN 04-06-26-whatever-949786e7 04/06/2026, 14:08:47" [ref=e5119] [cursor=pointer]:
+            - generic [ref=e5120]: UNKNOWN
+            - generic [ref=e5121]:
+              - generic [ref=e5122]: 04-06-26-whatever-949786e7
+              - text: 04/06/2026, 14:08:47
+            - img [ref=e5123]
+        - generic [ref=e5125]:
+          - generic [ref=e5126]:
+            - generic [ref=e5127]: maestro-orch-Rq52Vq
+            - generic [ref=e5128]: "1"
+          - button "DONE 04-06-26-add-login-flow-20e51b8f 04/06/2026, 14:08:451s$0.00 maestro/add-login-flow-20e51b8f" [ref=e5130] [cursor=pointer]:
+            - generic [ref=e5131]: DONE
+            - generic [ref=e5132]:
+              - generic [ref=e5133]: 04-06-26-add-login-flow-20e51b8f
+              - text: 04/06/2026, 14:08:451s$0.00
+              - generic [ref=e5134]: maestro/add-login-flow-20e51b8f
+            - img [ref=e5135]
+        - generic [ref=e5137]:
+          - generic [ref=e5138]:
+            - generic [ref=e5139]: maestro-timing-hd4zxT
+            - generic [ref=e5140]: "1"
+          - button "DONE 04-06-26-demo-task-6da943eb 04/06/2026, 14:08:441s$0.00 maestro/demo-task-6da943eb" [ref=e5142] [cursor=pointer]:
+            - generic [ref=e5143]: DONE
+            - generic [ref=e5144]:
+              - generic [ref=e5145]: 04-06-26-demo-task-6da943eb
+              - text: 04/06/2026, 14:08:441s$0.00
+              - generic [ref=e5146]: maestro/demo-task-6da943eb
+            - img [ref=e5147]
+        - generic [ref=e5149]:
+          - generic [ref=e5150]:
+            - generic [ref=e5151]: maestro-dispatch-DzR9qO
+            - generic [ref=e5152]: "1"
+          - button "DONE 04-06-26-demo-task-ac881d95 04/06/2026, 14:08:441s$0.00 maestro/demo-task-ac881d95" [ref=e5154] [cursor=pointer]:
+            - generic [ref=e5155]: DONE
+            - generic [ref=e5156]:
+              - generic [ref=e5157]: 04-06-26-demo-task-ac881d95
+              - text: 04/06/2026, 14:08:441s$0.00
+              - generic [ref=e5158]: maestro/demo-task-ac881d95
+            - img [ref=e5159]
+        - generic [ref=e5161]:
+          - generic [ref=e5162]:
+            - generic [ref=e5163]: maestro-cli-b8CKbT
+            - generic [ref=e5164]: "1"
+          - button "DONE 04-06-26-demo-505a27db 04/06/2026, 14:08:451s$0.00 feat/cli-plumbed" [ref=e5166] [cursor=pointer]:
+            - generic [ref=e5167]: DONE
+            - generic [ref=e5168]:
+              - generic [ref=e5169]: 04-06-26-demo-505a27db
+              - text: 04/06/2026, 14:08:451s$0.00
+              - generic [ref=e5170]: feat/cli-plumbed
+            - img [ref=e5171]
+        - generic [ref=e5173]:
+          - generic [ref=e5174]:
+            - generic [ref=e5175]: maestro-clarify-hOhtaA
+            - generic [ref=e5176]: "1"
+          - button "DONE 04-06-26-demo-task-0e652b02 04/06/2026, 14:08:441s$0.00 maestro/demo-task-0e652b02" [ref=e5178] [cursor=pointer]:
+            - generic [ref=e5179]: DONE
+            - generic [ref=e5180]:
+              - generic [ref=e5181]: 04-06-26-demo-task-0e652b02
+              - text: 04/06/2026, 14:08:441s$0.00
+              - generic [ref=e5182]: maestro/demo-task-0e652b02
+            - img [ref=e5183]
+        - generic [ref=e5185]:
+          - generic [ref=e5186]:
+            - generic [ref=e5187]: maestro-clarify-fold-c1zjQn
+            - generic [ref=e5188]: "1"
+          - button "DONE 04-06-26-demo-task-b15e22c6 04/06/2026, 14:08:441s$0.00 maestro/demo-task-b15e22c6" [ref=e5190] [cursor=pointer]:
+            - generic [ref=e5191]: DONE
+            - generic [ref=e5192]:
+              - generic [ref=e5193]: 04-06-26-demo-task-b15e22c6
+              - text: 04/06/2026, 14:08:441s$0.00
+              - generic [ref=e5194]: maestro/demo-task-b15e22c6
+            - img [ref=e5195]
+        - generic [ref=e5197]:
+          - generic [ref=e5198]:
+            - generic [ref=e5199]: maestro-run-sJkmnZ
+            - generic [ref=e5200]: "1"
+          - button "ERROR demo task 04/06/2026, 14:08:441s$0.00" [ref=e5202] [cursor=pointer]:
+            - generic [ref=e5203]: ERROR
+            - generic [ref=e5204]:
+              - generic [ref=e5205]: demo task
+              - text: 04/06/2026, 14:08:441s$0.00
+            - img [ref=e5206]
+        - generic [ref=e5208]:
+          - generic [ref=e5209]:
+            - generic [ref=e5210]: maestro-run-cf14sv
+            - generic [ref=e5211]: "1"
+          - button "ERROR demo task 04/06/2026, 14:08:441s$0.00" [ref=e5213] [cursor=pointer]:
+            - generic [ref=e5214]: ERROR
+            - generic [ref=e5215]:
+              - generic [ref=e5216]: demo task
+              - text: 04/06/2026, 14:08:441s$0.00
+            - img [ref=e5217]
+        - generic [ref=e5219]:
+          - generic [ref=e5220]:
+            - generic [ref=e5221]: maestro-master-tINlev
+            - generic [ref=e5222]: "1"
+          - button "DONE 04-06-26-x-438354e1 04/06/2026, 14:06:170s$0.00 maestro/x-438354e1" [ref=e5224] [cursor=pointer]:
+            - generic [ref=e5225]: DONE
+            - generic [ref=e5226]:
+              - generic [ref=e5227]: 04-06-26-x-438354e1
+              - text: 04/06/2026, 14:06:170s$0.00
+              - generic [ref=e5228]: maestro/x-438354e1
+            - img [ref=e5229]
+        - generic [ref=e5231]:
+          - generic [ref=e5232]:
+            - generic [ref=e5233]: maestro-parent-Ieggor
+            - generic [ref=e5234]: "1"
+          - button "DONE 04-06-26-x-f7a12a4c 04/06/2026, 14:06:160s$0.00 maestro/x-f7a12a4c" [ref=e5236] [cursor=pointer]:
+            - generic [ref=e5237]: DONE
+            - generic [ref=e5238]:
+              - generic [ref=e5239]: 04-06-26-x-f7a12a4c
+              - text: 04/06/2026, 14:06:160s$0.00
+              - generic [ref=e5240]: maestro/x-f7a12a4c
+            - img [ref=e5241]
+        - generic [ref=e5243]:
+          - generic [ref=e5244]:
+            - generic [ref=e5245]: maestro-orch-PV1QP0
+            - generic [ref=e5246]: "1"
+          - button "DONE 04-06-26-add-login-flow-b70f13cc 04/06/2026, 14:06:150s$0.00 maestro/add-login-flow-b70f13cc" [ref=e5248] [cursor=pointer]:
+            - generic [ref=e5249]: DONE
+            - generic [ref=e5250]:
+              - generic [ref=e5251]: 04-06-26-add-login-flow-b70f13cc
+              - text: 04/06/2026, 14:06:150s$0.00
+              - generic [ref=e5252]: maestro/add-login-flow-b70f13cc
+            - img [ref=e5253]
+        - generic [ref=e5255]:
+          - generic [ref=e5256]:
+            - generic [ref=e5257]: maestro-orch-aXsakJ
+            - generic [ref=e5258]: "1"
+          - button "STOPPED 04-06-26-x-e8b9aed8 04/06/2026, 14:06:150s$0.00 maestro/x-e8b9aed8" [ref=e5260] [cursor=pointer]:
+            - generic [ref=e5261]: STOPPED
+            - generic [ref=e5262]:
+              - generic [ref=e5263]: 04-06-26-x-e8b9aed8
+              - text: 04/06/2026, 14:06:150s$0.00
+              - generic [ref=e5264]: maestro/x-e8b9aed8
+            - img [ref=e5265]
+        - generic [ref=e5267]:
+          - generic [ref=e5268]:
+            - generic [ref=e5269]: maestro-orch-hBX9T8
+            - generic [ref=e5270]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-2e7f092c 04/06/2026, 14:06:14" [ref=e5272] [cursor=pointer]:
+            - generic [ref=e5273]: UNKNOWN
+            - generic [ref=e5274]:
+              - generic [ref=e5275]: 04-06-26-add-login-flow-2e7f092c
+              - text: 04/06/2026, 14:06:14
+            - img [ref=e5276]
+        - generic [ref=e5278]:
+          - generic [ref=e5279]:
+            - generic [ref=e5280]: maestro-dispatch-JndEwA
+            - generic [ref=e5281]: "1"
+          - button "DONE 04-06-26-demo-task-10d82389 04/06/2026, 14:06:131s$0.00 maestro/demo-task-10d82389" [ref=e5283] [cursor=pointer]:
+            - generic [ref=e5284]: DONE
+            - generic [ref=e5285]:
+              - generic [ref=e5286]: 04-06-26-demo-task-10d82389
+              - text: 04/06/2026, 14:06:131s$0.00
+              - generic [ref=e5287]: maestro/demo-task-10d82389
+            - img [ref=e5288]
+        - generic [ref=e5290]:
+          - generic [ref=e5291]:
+            - generic [ref=e5292]: maestro-orch-q1L6W6
+            - generic [ref=e5293]: "1"
+          - button "UNKNOWN 04-06-26-whatever-bf738ab1 04/06/2026, 14:06:13" [ref=e5295] [cursor=pointer]:
+            - generic [ref=e5296]: UNKNOWN
+            - generic [ref=e5297]:
+              - generic [ref=e5298]: 04-06-26-whatever-bf738ab1
+              - text: 04/06/2026, 14:06:13
+            - img [ref=e5299]
+        - generic [ref=e5301]:
+          - generic [ref=e5302]:
+            - generic [ref=e5303]: maestro-orch-BL4RIg
+            - generic [ref=e5304]: "1"
+          - button "DONE 04-06-26-add-login-flow-4f3a7e76 04/06/2026, 14:06:111s$0.00 maestro/add-login-flow-4f3a7e76" [ref=e5306] [cursor=pointer]:
+            - generic [ref=e5307]: DONE
+            - generic [ref=e5308]:
+              - generic [ref=e5309]: 04-06-26-add-login-flow-4f3a7e76
+              - text: 04/06/2026, 14:06:111s$0.00
+              - generic [ref=e5310]: maestro/add-login-flow-4f3a7e76
+            - img [ref=e5311]
+        - generic [ref=e5313]:
+          - generic [ref=e5314]:
+            - generic [ref=e5315]: maestro-dispatch-6qHaFq
+            - generic [ref=e5316]: "1"
+          - button "DONE 04-06-26-demo-task-3b440358 04/06/2026, 14:06:101s$0.00 maestro/demo-task-3b440358" [ref=e5318] [cursor=pointer]:
+            - generic [ref=e5319]: DONE
+            - generic [ref=e5320]:
+              - generic [ref=e5321]: 04-06-26-demo-task-3b440358
+              - text: 04/06/2026, 14:06:101s$0.00
+              - generic [ref=e5322]: maestro/demo-task-3b440358
+            - img [ref=e5323]
+        - generic [ref=e5325]:
+          - generic [ref=e5326]:
+            - generic [ref=e5327]: maestro-timing-yz7qFj
+            - generic [ref=e5328]: "1"
+          - button "DONE 04-06-26-demo-task-d74aad43 04/06/2026, 14:06:101s$0.00 maestro/demo-task-d74aad43" [ref=e5330] [cursor=pointer]:
+            - generic [ref=e5331]: DONE
+            - generic [ref=e5332]:
+              - generic [ref=e5333]: 04-06-26-demo-task-d74aad43
+              - text: 04/06/2026, 14:06:101s$0.00
+              - generic [ref=e5334]: maestro/demo-task-d74aad43
+            - img [ref=e5335]
+        - generic [ref=e5337]:
+          - generic [ref=e5338]:
+            - generic [ref=e5339]: maestro-cli-8lU1ds
+            - generic [ref=e5340]: "1"
+          - button "DONE 04-06-26-demo-3aa4e649 04/06/2026, 14:06:101s$0.00 feat/cli-plumbed" [ref=e5342] [cursor=pointer]:
+            - generic [ref=e5343]: DONE
+            - generic [ref=e5344]:
+              - generic [ref=e5345]: 04-06-26-demo-3aa4e649
+              - text: 04/06/2026, 14:06:101s$0.00
+              - generic [ref=e5346]: feat/cli-plumbed
+            - img [ref=e5347]
+        - generic [ref=e5349]:
+          - generic [ref=e5350]:
+            - generic [ref=e5351]: maestro-clarify-fold-nzmeqk
+            - generic [ref=e5352]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-fed7e267 04/06/2026, 14:06:11" [ref=e5354] [cursor=pointer]:
+            - generic [ref=e5355]: UNKNOWN
+            - generic [ref=e5356]:
+              - generic [ref=e5357]: 04-06-26-demo-task-fed7e267
+              - text: 04/06/2026, 14:06:11
+            - img [ref=e5358]
+        - generic [ref=e5360]:
+          - generic [ref=e5361]:
+            - generic [ref=e5362]: maestro-clarify-9YakSl
+            - generic [ref=e5363]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-0150987a 04/06/2026, 14:06:11" [ref=e5365] [cursor=pointer]:
+            - generic [ref=e5366]: UNKNOWN
+            - generic [ref=e5367]:
+              - generic [ref=e5368]: 04-06-26-demo-task-0150987a
+              - text: 04/06/2026, 14:06:11
+            - img [ref=e5369]
+        - generic [ref=e5371]:
+          - generic [ref=e5372]:
+            - generic [ref=e5373]: maestro-run-CdfwPO
+            - generic [ref=e5374]: "1"
+          - button "ERROR demo task 04/06/2026, 14:06:101s$0.00" [ref=e5376] [cursor=pointer]:
+            - generic [ref=e5377]: ERROR
+            - generic [ref=e5378]:
+              - generic [ref=e5379]: demo task
+              - text: 04/06/2026, 14:06:101s$0.00
+            - img [ref=e5380]
+        - generic [ref=e5382]:
+          - generic [ref=e5383]:
+            - generic [ref=e5384]: maestro-run-7pJXta
+            - generic [ref=e5385]: "1"
+          - button "ERROR demo task 04/06/2026, 14:06:100s$0.00" [ref=e5387] [cursor=pointer]:
+            - generic [ref=e5388]: ERROR
+            - generic [ref=e5389]:
+              - generic [ref=e5390]: demo task
+              - text: 04/06/2026, 14:06:100s$0.00
+            - img [ref=e5391]
+        - generic [ref=e5393]:
+          - generic [ref=e5394]:
+            - generic [ref=e5395]: maestro-master-DrGurR
+            - generic [ref=e5396]: "1"
+          - button "DONE 04-06-26-x-904aeff2 04/06/2026, 14:04:100s$0.00 maestro/x-904aeff2" [ref=e5398] [cursor=pointer]:
+            - generic [ref=e5399]: DONE
+            - generic [ref=e5400]:
+              - generic [ref=e5401]: 04-06-26-x-904aeff2
+              - text: 04/06/2026, 14:04:100s$0.00
+              - generic [ref=e5402]: maestro/x-904aeff2
+            - img [ref=e5403]
+        - generic [ref=e5405]:
+          - generic [ref=e5406]:
+            - generic [ref=e5407]: maestro-parent-NrKq6C
+            - generic [ref=e5408]: "1"
+          - button "UNKNOWN 04-06-26-x-18dd4e0a 04/06/2026, 14:04:10" [ref=e5410] [cursor=pointer]:
+            - generic [ref=e5411]: UNKNOWN
+            - generic [ref=e5412]:
+              - generic [ref=e5413]: 04-06-26-x-18dd4e0a
+              - text: 04/06/2026, 14:04:10
+            - img [ref=e5414]
+        - generic [ref=e5416]:
+          - generic [ref=e5417]:
+            - generic [ref=e5418]: maestro-orch-qAuk6O
+            - generic [ref=e5419]: "1"
+          - button "DONE 04-06-26-add-login-flow-8e5286cf 04/06/2026, 14:04:080s$0.00 maestro/add-login-flow-8e5286cf" [ref=e5421] [cursor=pointer]:
+            - generic [ref=e5422]: DONE
+            - generic [ref=e5423]:
+              - generic [ref=e5424]: 04-06-26-add-login-flow-8e5286cf
+              - text: 04/06/2026, 14:04:080s$0.00
+              - generic [ref=e5425]: maestro/add-login-flow-8e5286cf
+            - img [ref=e5426]
+        - generic [ref=e5428]:
+          - generic [ref=e5429]:
+            - generic [ref=e5430]: maestro-orch-DDL2Xc
+            - generic [ref=e5431]: "1"
+          - button "STOPPED 04-06-26-x-2037ebba 04/06/2026, 14:04:080s$0.00 maestro/x-2037ebba" [ref=e5433] [cursor=pointer]:
+            - generic [ref=e5434]: STOPPED
+            - generic [ref=e5435]:
+              - generic [ref=e5436]: 04-06-26-x-2037ebba
+              - text: 04/06/2026, 14:04:080s$0.00
+              - generic [ref=e5437]: maestro/x-2037ebba
+            - img [ref=e5438]
+        - generic [ref=e5440]:
+          - generic [ref=e5441]:
+            - generic [ref=e5442]: maestro-orch-rw4oL1
+            - generic [ref=e5443]: "1"
+          - button "DONE 04-06-26-add-login-flow-4f092230 04/06/2026, 14:04:070s$0.00 maestro/add-login-flow-4f092230" [ref=e5445] [cursor=pointer]:
+            - generic [ref=e5446]: DONE
+            - generic [ref=e5447]:
+              - generic [ref=e5448]: 04-06-26-add-login-flow-4f092230
+              - text: 04/06/2026, 14:04:070s$0.00
+              - generic [ref=e5449]: maestro/add-login-flow-4f092230
+            - img [ref=e5450]
+        - generic [ref=e5452]:
+          - generic [ref=e5453]:
+            - generic [ref=e5454]: maestro-dispatch-WgfYkX
+            - generic [ref=e5455]: "1"
+          - button "DONE 04-06-26-demo-task-e6826807 04/06/2026, 14:04:071s$0.00 maestro/demo-task-e6826807" [ref=e5457] [cursor=pointer]:
+            - generic [ref=e5458]: DONE
+            - generic [ref=e5459]:
+              - generic [ref=e5460]: 04-06-26-demo-task-e6826807
+              - text: 04/06/2026, 14:04:071s$0.00
+              - generic [ref=e5461]: maestro/demo-task-e6826807
+            - img [ref=e5462]
+        - generic [ref=e5464]:
+          - generic [ref=e5465]:
+            - generic [ref=e5466]: maestro-orch-de3II0
+            - generic [ref=e5467]: "1"
+          - button "UNKNOWN 04-06-26-whatever-1422e089 04/06/2026, 14:04:07" [ref=e5469] [cursor=pointer]:
+            - generic [ref=e5470]: UNKNOWN
+            - generic [ref=e5471]:
+              - generic [ref=e5472]: 04-06-26-whatever-1422e089
+              - text: 04/06/2026, 14:04:07
+            - img [ref=e5473]
+        - generic [ref=e5475]:
+          - generic [ref=e5476]:
+            - generic [ref=e5477]: maestro-orch-pzHa98
+            - generic [ref=e5478]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-3cb0b4ab 04/06/2026, 14:04:05" [ref=e5480] [cursor=pointer]:
+            - generic [ref=e5481]: UNKNOWN
+            - generic [ref=e5482]:
+              - generic [ref=e5483]: 04-06-26-add-login-flow-3cb0b4ab
+              - text: 04/06/2026, 14:04:05
+            - img [ref=e5484]
+        - generic [ref=e5486]:
+          - generic [ref=e5487]:
+            - generic [ref=e5488]: maestro-dispatch-FXBtrE
+            - generic [ref=e5489]: "1"
+          - button "DONE 04-06-26-demo-task-805263e9 04/06/2026, 14:04:031s$0.00 maestro/demo-task-805263e9" [ref=e5491] [cursor=pointer]:
+            - generic [ref=e5492]: DONE
+            - generic [ref=e5493]:
+              - generic [ref=e5494]: 04-06-26-demo-task-805263e9
+              - text: 04/06/2026, 14:04:031s$0.00
+              - generic [ref=e5495]: maestro/demo-task-805263e9
+            - img [ref=e5496]
+        - generic [ref=e5498]:
+          - generic [ref=e5499]:
+            - generic [ref=e5500]: maestro-timing-BKwoO6
+            - generic [ref=e5501]: "1"
+          - button "DONE 04-06-26-demo-task-5c34f438 04/06/2026, 14:04:041s$0.00 maestro/demo-task-5c34f438" [ref=e5503] [cursor=pointer]:
+            - generic [ref=e5504]: DONE
+            - generic [ref=e5505]:
+              - generic [ref=e5506]: 04-06-26-demo-task-5c34f438
+              - text: 04/06/2026, 14:04:041s$0.00
+              - generic [ref=e5507]: maestro/demo-task-5c34f438
+            - img [ref=e5508]
+        - generic [ref=e5510]:
+          - generic [ref=e5511]:
+            - generic [ref=e5512]: maestro-cli-BqXMN3
+            - generic [ref=e5513]: "1"
+          - button "DONE 04-06-26-demo-e1c87dce 04/06/2026, 14:04:041s$0.00 feat/cli-plumbed" [ref=e5515] [cursor=pointer]:
+            - generic [ref=e5516]: DONE
+            - generic [ref=e5517]:
+              - generic [ref=e5518]: 04-06-26-demo-e1c87dce
+              - text: 04/06/2026, 14:04:041s$0.00
+              - generic [ref=e5519]: feat/cli-plumbed
+            - img [ref=e5520]
+        - generic [ref=e5522]:
+          - generic [ref=e5523]:
+            - generic [ref=e5524]: maestro-clarify-M2GRjT
+            - generic [ref=e5525]: "1"
+          - button "DONE 04-06-26-demo-task-b957de5a 04/06/2026, 14:04:031s$0.00 maestro/demo-task-b957de5a" [ref=e5527] [cursor=pointer]:
+            - generic [ref=e5528]: DONE
+            - generic [ref=e5529]:
+              - generic [ref=e5530]: 04-06-26-demo-task-b957de5a
+              - text: 04/06/2026, 14:04:031s$0.00
+              - generic [ref=e5531]: maestro/demo-task-b957de5a
+            - img [ref=e5532]
+        - generic [ref=e5534]:
+          - generic [ref=e5535]:
+            - generic [ref=e5536]: maestro-clarify-fold-Zo7Tk4
+            - generic [ref=e5537]: "1"
+          - button "DONE 04-06-26-demo-task-1b05a5a4 04/06/2026, 14:04:031s$0.00 maestro/demo-task-1b05a5a4" [ref=e5539] [cursor=pointer]:
+            - generic [ref=e5540]: DONE
+            - generic [ref=e5541]:
+              - generic [ref=e5542]: 04-06-26-demo-task-1b05a5a4
+              - text: 04/06/2026, 14:04:031s$0.00
+              - generic [ref=e5543]: maestro/demo-task-1b05a5a4
+            - img [ref=e5544]
+        - generic [ref=e5546]:
+          - generic [ref=e5547]:
+            - generic [ref=e5548]: maestro-run-yl0Aeu
+            - generic [ref=e5549]: "1"
+          - button "ERROR demo task 04/06/2026, 14:04:031s$0.00" [ref=e5551] [cursor=pointer]:
+            - generic [ref=e5552]: ERROR
+            - generic [ref=e5553]:
+              - generic [ref=e5554]: demo task
+              - text: 04/06/2026, 14:04:031s$0.00
+            - img [ref=e5555]
+        - generic [ref=e5557]:
+          - generic [ref=e5558]:
+            - generic [ref=e5559]: maestro-run-uARVVf
+            - generic [ref=e5560]: "1"
+          - button "ERROR demo task 04/06/2026, 14:04:031s$0.00" [ref=e5562] [cursor=pointer]:
+            - generic [ref=e5563]: ERROR
+            - generic [ref=e5564]:
+              - generic [ref=e5565]: demo task
+              - text: 04/06/2026, 14:04:031s$0.00
+            - img [ref=e5566]
+        - generic [ref=e5568]:
+          - generic [ref=e5569]:
+            - generic [ref=e5570]: maestro-master-xmFHDB
+            - generic [ref=e5571]: "1"
+          - button "DONE 04-06-26-x-2a5ec738 04/06/2026, 14:03:250s$0.00 maestro/x-2a5ec738" [ref=e5573] [cursor=pointer]:
+            - generic [ref=e5574]: DONE
+            - generic [ref=e5575]:
+              - generic [ref=e5576]: 04-06-26-x-2a5ec738
+              - text: 04/06/2026, 14:03:250s$0.00
+              - generic [ref=e5577]: maestro/x-2a5ec738
+            - img [ref=e5578]
+        - generic [ref=e5580]:
+          - generic [ref=e5581]:
+            - generic [ref=e5582]: maestro-parent-IEPVjb
+            - generic [ref=e5583]: "1"
+          - button "DONE 04-06-26-x-721f341e 04/06/2026, 14:03:240s$0.00 maestro/x-721f341e" [ref=e5585] [cursor=pointer]:
+            - generic [ref=e5586]: DONE
+            - generic [ref=e5587]:
+              - generic [ref=e5588]: 04-06-26-x-721f341e
+              - text: 04/06/2026, 14:03:240s$0.00
+              - generic [ref=e5589]: maestro/x-721f341e
+            - img [ref=e5590]
+        - generic [ref=e5592]:
+          - generic [ref=e5593]:
+            - generic [ref=e5594]: maestro-orch-MLdXp2
+            - generic [ref=e5595]: "1"
+          - button "DONE 04-06-26-add-login-flow-86db618d 04/06/2026, 14:03:240s$0.00 maestro/add-login-flow-86db618d" [ref=e5597] [cursor=pointer]:
+            - generic [ref=e5598]: DONE
+            - generic [ref=e5599]:
+              - generic [ref=e5600]: 04-06-26-add-login-flow-86db618d
+              - text: 04/06/2026, 14:03:240s$0.00
+              - generic [ref=e5601]: maestro/add-login-flow-86db618d
+            - img [ref=e5602]
+        - generic [ref=e5604]:
+          - generic [ref=e5605]:
+            - generic [ref=e5606]: maestro-orch-LWK5Kg
+            - generic [ref=e5607]: "1"
+          - button "STOPPED 04-06-26-x-53d3f5cf 04/06/2026, 14:03:230s$0.00 maestro/x-53d3f5cf" [ref=e5609] [cursor=pointer]:
+            - generic [ref=e5610]: STOPPED
+            - generic [ref=e5611]:
+              - generic [ref=e5612]: 04-06-26-x-53d3f5cf
+              - text: 04/06/2026, 14:03:230s$0.00
+              - generic [ref=e5613]: maestro/x-53d3f5cf
+            - img [ref=e5614]
+        - generic [ref=e5616]:
+          - generic [ref=e5617]:
+            - generic [ref=e5618]: maestro-orch-g5T9BD
+            - generic [ref=e5619]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-76732731 04/06/2026, 14:03:23" [ref=e5621] [cursor=pointer]:
+            - generic [ref=e5622]: UNKNOWN
+            - generic [ref=e5623]:
+              - generic [ref=e5624]: 04-06-26-add-login-flow-76732731
+              - text: 04/06/2026, 14:03:23
+            - img [ref=e5625]
+        - generic [ref=e5627]:
+          - generic [ref=e5628]:
+            - generic [ref=e5629]: maestro-dispatch-tobAI3
+            - generic [ref=e5630]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-1384b6c3 04/06/2026, 14:03:23" [ref=e5632] [cursor=pointer]:
+            - generic [ref=e5633]: UNKNOWN
+            - generic [ref=e5634]:
+              - generic [ref=e5635]: 04-06-26-demo-task-1384b6c3
+              - text: 04/06/2026, 14:03:23
+            - img [ref=e5636]
+        - generic [ref=e5638]:
+          - generic [ref=e5639]:
+            - generic [ref=e5640]: maestro-orch-ROWnOr
+            - generic [ref=e5641]: "1"
+          - button "UNKNOWN 04-06-26-whatever-26fd9662 04/06/2026, 14:03:22" [ref=e5643] [cursor=pointer]:
+            - generic [ref=e5644]: UNKNOWN
+            - generic [ref=e5645]:
+              - generic [ref=e5646]: 04-06-26-whatever-26fd9662
+              - text: 04/06/2026, 14:03:22
+            - img [ref=e5647]
+        - generic [ref=e5649]:
+          - generic [ref=e5650]:
+            - generic [ref=e5651]: maestro-orch-at2bGx
+            - generic [ref=e5652]: "1"
+          - button "DONE 04-06-26-add-login-flow-02b516b3 04/06/2026, 14:03:191s$0.00 maestro/add-login-flow-02b516b3" [ref=e5654] [cursor=pointer]:
+            - generic [ref=e5655]: DONE
+            - generic [ref=e5656]:
+              - generic [ref=e5657]: 04-06-26-add-login-flow-02b516b3
+              - text: 04/06/2026, 14:03:191s$0.00
+              - generic [ref=e5658]: maestro/add-login-flow-02b516b3
+            - img [ref=e5659]
+        - generic [ref=e5661]:
+          - generic [ref=e5662]:
+            - generic [ref=e5663]: maestro-timing-BLPCHF
+            - generic [ref=e5664]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-f203ba2c 04/06/2026, 14:03:20" [ref=e5666] [cursor=pointer]:
+            - generic [ref=e5667]: UNKNOWN
+            - generic [ref=e5668]:
+              - generic [ref=e5669]: 04-06-26-demo-task-f203ba2c
+              - text: 04/06/2026, 14:03:20
+            - img [ref=e5670]
+        - generic [ref=e5672]:
+          - generic [ref=e5673]:
+            - generic [ref=e5674]: maestro-dispatch-Liw67h
+            - generic [ref=e5675]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-e5ceb35b 04/06/2026, 14:03:20" [ref=e5677] [cursor=pointer]:
+            - generic [ref=e5678]: UNKNOWN
+            - generic [ref=e5679]:
+              - generic [ref=e5680]: 04-06-26-demo-task-e5ceb35b
+              - text: 04/06/2026, 14:03:20
+            - img [ref=e5681]
+        - generic [ref=e5683]:
+          - generic [ref=e5684]:
+            - generic [ref=e5685]: maestro-cli-d3jEu4
+            - generic [ref=e5686]: "1"
+          - button "DONE 04-06-26-demo-10396586 04/06/2026, 14:03:191s$0.00 feat/cli-plumbed" [ref=e5688] [cursor=pointer]:
+            - generic [ref=e5689]: DONE
+            - generic [ref=e5690]:
+              - generic [ref=e5691]: 04-06-26-demo-10396586
+              - text: 04/06/2026, 14:03:191s$0.00
+              - generic [ref=e5692]: feat/cli-plumbed
+            - img [ref=e5693]
+        - generic [ref=e5695]:
+          - generic [ref=e5696]:
+            - generic [ref=e5697]: maestro-clarify-tsLpBb
+            - generic [ref=e5698]: "1"
+          - button "DONE 04-06-26-demo-task-ae53a0a0 04/06/2026, 14:03:181s$0.00 maestro/demo-task-ae53a0a0" [ref=e5700] [cursor=pointer]:
+            - generic [ref=e5701]: DONE
+            - generic [ref=e5702]:
+              - generic [ref=e5703]: 04-06-26-demo-task-ae53a0a0
+              - text: 04/06/2026, 14:03:181s$0.00
+              - generic [ref=e5704]: maestro/demo-task-ae53a0a0
+            - img [ref=e5705]
+        - generic [ref=e5707]:
+          - generic [ref=e5708]:
+            - generic [ref=e5709]: maestro-clarify-fold-OglTCd
+            - generic [ref=e5710]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-c31c9e68 04/06/2026, 14:03:20" [ref=e5712] [cursor=pointer]:
+            - generic [ref=e5713]: UNKNOWN
+            - generic [ref=e5714]:
+              - generic [ref=e5715]: 04-06-26-demo-task-c31c9e68
+              - text: 04/06/2026, 14:03:20
+            - img [ref=e5716]
+        - generic [ref=e5718]:
+          - generic [ref=e5719]:
+            - generic [ref=e5720]: maestro-run-r7ZmFm
+            - generic [ref=e5721]: "1"
+          - button "ERROR demo task 04/06/2026, 14:03:191s$0.00" [ref=e5723] [cursor=pointer]:
+            - generic [ref=e5724]: ERROR
+            - generic [ref=e5725]:
+              - generic [ref=e5726]: demo task
+              - text: 04/06/2026, 14:03:191s$0.00
+            - img [ref=e5727]
+        - generic [ref=e5729]:
+          - generic [ref=e5730]:
+            - generic [ref=e5731]: maestro-run-6pQgcT
+            - generic [ref=e5732]: "1"
+          - button "ERROR demo task 04/06/2026, 14:03:181s$0.00" [ref=e5734] [cursor=pointer]:
+            - generic [ref=e5735]: ERROR
+            - generic [ref=e5736]:
+              - generic [ref=e5737]: demo task
+              - text: 04/06/2026, 14:03:181s$0.00
+            - img [ref=e5738]
+        - generic [ref=e5740]:
+          - generic [ref=e5741]:
+            - generic [ref=e5742]: maestro-master-4xVMRQ
+            - generic [ref=e5743]: "1"
+          - button "UNKNOWN 04-06-26-x-60433069 04/06/2026, 14:03:09" [ref=e5745] [cursor=pointer]:
+            - generic [ref=e5746]: UNKNOWN
+            - generic [ref=e5747]:
+              - generic [ref=e5748]: 04-06-26-x-60433069
+              - text: 04/06/2026, 14:03:09
+            - img [ref=e5749]
+        - generic [ref=e5751]:
+          - generic [ref=e5752]:
+            - generic [ref=e5753]: maestro-parent-8uDWvh
+            - generic [ref=e5754]: "1"
+          - button "DONE 04-06-26-x-71703b79 04/06/2026, 14:03:081s$0.00 maestro/x-71703b79" [ref=e5756] [cursor=pointer]:
+            - generic [ref=e5757]: DONE
+            - generic [ref=e5758]:
+              - generic [ref=e5759]: 04-06-26-x-71703b79
+              - text: 04/06/2026, 14:03:081s$0.00
+              - generic [ref=e5760]: maestro/x-71703b79
+            - img [ref=e5761]
+        - generic [ref=e5763]:
+          - generic [ref=e5764]:
+            - generic [ref=e5765]: maestro-orch-fXMzwI
+            - generic [ref=e5766]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-12dbfc89 04/06/2026, 14:03:08" [ref=e5768] [cursor=pointer]:
+            - generic [ref=e5769]: UNKNOWN
+            - generic [ref=e5770]:
+              - generic [ref=e5771]: 04-06-26-add-login-flow-12dbfc89
+              - text: 04/06/2026, 14:03:08
+            - img [ref=e5772]
+        - generic [ref=e5774]:
+          - generic [ref=e5775]:
+            - generic [ref=e5776]: maestro-orch-fA248T
+            - generic [ref=e5777]: "1"
+          - button "STOPPED 04-06-26-x-e5fa4201 04/06/2026, 14:03:060s$0.00 maestro/x-e5fa4201" [ref=e5779] [cursor=pointer]:
+            - generic [ref=e5780]: STOPPED
+            - generic [ref=e5781]:
+              - generic [ref=e5782]: 04-06-26-x-e5fa4201
+              - text: 04/06/2026, 14:03:060s$0.00
+              - generic [ref=e5783]: maestro/x-e5fa4201
+            - img [ref=e5784]
+        - generic [ref=e5786]:
+          - generic [ref=e5787]:
+            - generic [ref=e5788]: maestro-orch-k1zDJL
+            - generic [ref=e5789]: "1"
+          - button "UNKNOWN 04-06-26-add-login-flow-314f8a1a 04/06/2026, 14:03:06" [ref=e5791] [cursor=pointer]:
+            - generic [ref=e5792]: UNKNOWN
+            - generic [ref=e5793]:
+              - generic [ref=e5794]: 04-06-26-add-login-flow-314f8a1a
+              - text: 04/06/2026, 14:03:06
+            - img [ref=e5795]
+        - generic [ref=e5797]:
+          - generic [ref=e5798]:
+            - generic [ref=e5799]: maestro-dispatch-Ke2NGL
+            - generic [ref=e5800]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-eb8a7da4 04/06/2026, 14:03:06" [ref=e5802] [cursor=pointer]:
+            - generic [ref=e5803]: UNKNOWN
+            - generic [ref=e5804]:
+              - generic [ref=e5805]: 04-06-26-demo-task-eb8a7da4
+              - text: 04/06/2026, 14:03:06
+            - img [ref=e5806]
+        - generic [ref=e5808]:
+          - generic [ref=e5809]:
+            - generic [ref=e5810]: maestro-orch-Q0qYIo
+            - generic [ref=e5811]: "1"
+          - button "UNKNOWN 04-06-26-whatever-7761d2c0 04/06/2026, 14:03:05" [ref=e5813] [cursor=pointer]:
+            - generic [ref=e5814]: UNKNOWN
+            - generic [ref=e5815]:
+              - generic [ref=e5816]: 04-06-26-whatever-7761d2c0
+              - text: 04/06/2026, 14:03:05
+            - img [ref=e5817]
+        - generic [ref=e5819]:
+          - generic [ref=e5820]:
+            - generic [ref=e5821]: maestro-orch-GNog5p
+            - generic [ref=e5822]: "1"
+          - button "DONE 04-06-26-add-login-flow-91094dfe 04/06/2026, 14:03:041s$0.00 maestro/add-login-flow-91094dfe" [ref=e5824] [cursor=pointer]:
+            - generic [ref=e5825]: DONE
+            - generic [ref=e5826]:
+              - generic [ref=e5827]: 04-06-26-add-login-flow-91094dfe
+              - text: 04/06/2026, 14:03:041s$0.00
+              - generic [ref=e5828]: maestro/add-login-flow-91094dfe
+            - img [ref=e5829]
+        - generic [ref=e5831]:
+          - generic [ref=e5832]:
+            - generic [ref=e5833]: maestro-timing-cFk7Ea
+            - generic [ref=e5834]: "1"
+          - button "DONE 04-06-26-demo-task-5e711b75 04/06/2026, 14:03:031s$0.00 maestro/demo-task-5e711b75" [ref=e5836] [cursor=pointer]:
+            - generic [ref=e5837]: DONE
+            - generic [ref=e5838]:
+              - generic [ref=e5839]: 04-06-26-demo-task-5e711b75
+              - text: 04/06/2026, 14:03:031s$0.00
+              - generic [ref=e5840]: maestro/demo-task-5e711b75
+            - img [ref=e5841]
+        - generic [ref=e5843]:
+          - generic [ref=e5844]:
+            - generic [ref=e5845]: maestro-run-GapCZr
+            - generic [ref=e5846]: "1"
+          - button "ERROR demo task 04/06/2026, 14:03:031s$0.00" [ref=e5848] [cursor=pointer]:
+            - generic [ref=e5849]: ERROR
+            - generic [ref=e5850]:
+              - generic [ref=e5851]: demo task
+              - text: 04/06/2026, 14:03:031s$0.00
+            - img [ref=e5852]
+        - generic [ref=e5854]:
+          - generic [ref=e5855]:
+            - generic [ref=e5856]: maestro-run-n8H418
+            - generic [ref=e5857]: "1"
+          - button "ERROR demo task 04/06/2026, 14:03:031s$0.00" [ref=e5859] [cursor=pointer]:
+            - generic [ref=e5860]: ERROR
+            - generic [ref=e5861]:
+              - generic [ref=e5862]: demo task
+              - text: 04/06/2026, 14:03:031s$0.00
+            - img [ref=e5863]
+        - generic [ref=e5865]:
+          - generic [ref=e5866]:
+            - generic [ref=e5867]: maestro-dispatch-Inpoct
+            - generic [ref=e5868]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-748e8ce4 04/06/2026, 14:03:04" [ref=e5870] [cursor=pointer]:
+            - generic [ref=e5871]: UNKNOWN
+            - generic [ref=e5872]:
+              - generic [ref=e5873]: 04-06-26-demo-task-748e8ce4
+              - text: 04/06/2026, 14:03:04
+            - img [ref=e5874]
+        - generic [ref=e5876]:
+          - generic [ref=e5877]:
+            - generic [ref=e5878]: maestro-clarify-fold-T0XlPS
+            - generic [ref=e5879]: "1"
+          - button "UNKNOWN 04-06-26-demo-task-9948c6ce 04/06/2026, 14:03:04" [ref=e5881] [cursor=pointer]:
+            - generic [ref=e5882]: UNKNOWN
+            - generic [ref=e5883]:
+              - generic [ref=e5884]: 04-06-26-demo-task-9948c6ce
+              - text: 04/06/2026, 14:03:04
+            - img [ref=e5885]
+        - generic [ref=e5887]:
+          - generic [ref=e5888]:
+            - generic [ref=e5889]: maestro-clarify-lBTNJ1
+            - generic [ref=e5890]: "1"
+          - button "DONE 04-06-26-demo-task-6fa89707 04/06/2026, 14:03:021s$0.00 maestro/demo-task-6fa89707" [ref=e5892] [cursor=pointer]:
+            - generic [ref=e5893]: DONE
+            - generic [ref=e5894]:
+              - generic [ref=e5895]: 04-06-26-demo-task-6fa89707
+              - text: 04/06/2026, 14:03:021s$0.00
+              - generic [ref=e5896]: maestro/demo-task-6fa89707
+            - img [ref=e5897]
+        - generic [ref=e5899]:
+          - generic [ref=e5900]:
+            - generic [ref=e5901]: maestro-cli-KTgJWW
+            - generic [ref=e5902]: "1"
+          - button "UNKNOWN 04-06-26-demo-5251804f 04/06/2026, 14:03:03" [ref=e5904] [cursor=pointer]:
+            - generic [ref=e5905]: UNKNOWN
+            - generic [ref=e5906]:
+              - generic [ref=e5907]: 04-06-26-demo-5251804f
+              - text: 04/06/2026, 14:03:03
+            - img [ref=e5908]
