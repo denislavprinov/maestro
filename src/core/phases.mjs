@@ -89,6 +89,78 @@ export function fanOutDirective(fanOut) {
   );
 }
 
+/**
+ * The `## Workspace Context` preamble injected into EVERY agent on a workspace run,
+ * after the toolInstruction and before the role body. Pure + exported. Returns ''
+ * when there is no workspace (or no description), so single-project system prompts
+ * are byte-identical. The frozen description is hard-capped (default 2000 chars,
+ * MAESTRO_WS_DESC_CAP overrides) and truncated with a trailing ellipsis; the
+ * on-disk frozen snapshot keeps the full text.
+ * @param {{description?:string, projects?:Array<{projectName?:string}>}|null|undefined} ws
+ * @returns {string}
+ */
+export function workspaceContextBlock(ws) {
+  if (!ws || !ws.description) return '';
+  const cap = Number(process.env.MAESTRO_WS_DESC_CAP) || 2000;
+  let desc = String(ws.description);
+  if (desc.length > cap) desc = desc.slice(0, cap - 1) + '…';
+  const names = (ws.projects || []).map((p) => p.projectName).filter(Boolean).join(', ');
+  return `## Workspace Context\n\n${desc}\n\nMember projects: ${names}.\n`;
+}
+
+/**
+ * The strategy-specific fan-out directive for a workspace node. Pure + exported.
+ * Each block tells the agent to spawn one read-only/owning sub-agent per unit
+ * (project / plan task / touched project), merge deterministically by sorted
+ * projectKey/taskId, and — the binding anti-explosion rule (§5.6) — NEVER let a
+ * sub-agent re-fan-out. Returns '' when there is no workspace or the strategy is
+ * unknown, so non-workspace task prompts are unchanged.
+ * @param {'explore'|'task'|'review'} strategy
+ * @param {{projects?:Array<{projectName?:string,projectKey?:string}>}|null|undefined} ws
+ * @returns {string}
+ */
+export function workspaceFanOutDirective(strategy, ws) {
+  if (!ws) return '';
+  const ANTI_RECURSION =
+    'Sub-agents are strictly single-level: a sub-agent MUST NOT re-fan-out ' +
+    '(it must never spawn its own Task/Agent sub-agents). YOU synthesize every ' +
+    'merged artifact yourself.\n\n';
+  if (strategy === 'explore') {
+    return (
+      '## Workspace fan-out — explore across member projects\n\n' +
+      'Dispatch ONE read-only Explore sub-agent per member project (cap 4) to survey ' +
+      'its worktree (modules, public API, deps) and return a brief. Then write the ' +
+      'SINGLE unified plan yourself, with findings under per-project headings and ' +
+      'every plan TASK tagged `Projects: <projectKey>[, ...]` for the project(s) it ' +
+      'touches. Merge the briefs in sorted `projectKey` order (never completion ' +
+      'order). ' + ANTI_RECURSION
+    );
+  }
+  if (strategy === 'task') {
+    return (
+      '## Workspace fan-out — one sub-agent per plan task\n\n' +
+      'Read the plan\'s `## Tasks`; dispatch ONE implementer sub-agent per task ' +
+      '(cap 3, `subagent_type:"general-purpose"`), each editing ONLY the worktree(s) ' +
+      'of the project(s) named in that task\'s `Projects:` tag (cwd into the named ' +
+      'worktree). Do NOT edit any project not named by a task. Schedule two tasks ' +
+      'that touch the SAME project sequentially (no overlapping ownership in a wave). ' +
+      'Merge results in plan-task (`taskId`) order. ' + ANTI_RECURSION
+    );
+  }
+  if (strategy === 'review') {
+    return (
+      '## Workspace fan-out — one reviewer per touched project\n\n' +
+      'Dispatch ONE reviewer sub-agent per TOUCHED member project (cap 4) — skip a ' +
+      'project whose diff against its checkpoint is empty. Each sub-agent reviews its ' +
+      'project\'s `checkpointRef...feature` diff against the plan and reports issues. ' +
+      'Then YOU synthesize ONE review markdown + ONE verdict JSON: the UNION of every ' +
+      'critical/major issue (never collapse or drop one), sorted by `projectKey` then ' +
+      'severity, each issue location prefixed with `"<projectKey>: "`. ' + ANTI_RECURSION
+    );
+  }
+  return '';
+}
+
 // ── inline fallbacks (used only when agents/*.md is missing/empty) ──────────────
 const FALLBACK_PROMPTS = {
   'planner-clarify':
@@ -135,13 +207,19 @@ const FALLBACK_PROMPTS = {
 };
 
 /**
- * Build the full appended system prompt: toolInstruction first (if any), then the agent
- * body (or a sensible inline fallback when the body is missing/empty).
+ * Build the full appended system prompt: toolInstruction first (if any), then — on
+ * a workspace run — the `## Workspace Context` block, then the agent body (or a
+ * sensible inline fallback when the body is missing/empty). The optional 4th
+ * `workspace` arg is the read-only workspace metadata; absent it,
+ * workspaceContextBlock returns '' and the prompt is byte-identical to today's
+ * single-project prompt. Exported for testing.
  */
-function buildSystemPrompt(toolInstruction, agentBody, role) {
+export function buildSystemPrompt(toolInstruction, agentBody, role, workspace) {
   const parts = [];
   const tool = (toolInstruction || '').trim();
   if (tool) parts.push(tool);
+  const ws = workspaceContextBlock(workspace); // '' when not a workspace run
+  if (ws) parts.push(ws);
   const body = (agentBody || '').trim();
   parts.push(body || FALLBACK_PROMPTS[role] || '');
   return parts.filter(Boolean).join('\n\n');
@@ -202,8 +280,32 @@ export function taskHeader(ctx, title) {
     `Project and personal skills (.claude/skills in this project and ~/.claude/skills) are ` +
     `available via the Skill tool — invoke any that fit (e.g. design, framework-pattern, or ` +
     `knowledge-graph skills) rather than guessing conventions.\n\n` +
+    workspaceProjectsBlock(ctx.workspace) +
     requestBlock +
     attachBlock
+  );
+}
+
+/**
+ * On a workspace run, a `## Workspace projects` block listing each member's
+ * worktree dir (a fan-out sub-agent's cwd) and checkpoint ref (its diff base), so
+ * the driving agent knows where to dispatch and what to diff against. Returns ''
+ * when there is no workspace, so single-project task headers are byte-identical.
+ * @param {{projects?:Array<{projectKey?,projectName?,worktreeDir?,checkpointRef?}>}|null|undefined} ws
+ */
+function workspaceProjectsBlock(ws) {
+  const projects = ws && Array.isArray(ws.projects) ? ws.projects : [];
+  if (projects.length === 0) return '';
+  const lines = projects.map((p) =>
+    `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): worktree \`${p.worktreeDir || '(pending)'}\`` +
+    `, diff base \`${p.checkpointRef || '(none)'}\``,
+  );
+  return (
+    `## Workspace projects\n\n` +
+    `This run spans the member projects below. A fan-out sub-agent cwds into the ` +
+    `named worktree and diffs against that project's checkpoint:\n\n` +
+    lines.join('\n') +
+    `\n\n`
   );
 }
 
@@ -260,7 +362,7 @@ export async function runPlannerClarify(ctx, opts = {}) {
   const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
   const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
   const role = 'planner-clarify';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role, ctx.workspace);
   const prompt = buildClarifyPrompt(ctx, { round, priorAnswers });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
@@ -277,7 +379,7 @@ export async function runPlannerClarify(ctx, opts = {}) {
 export async function runPlannerPlan(ctx, opts) {
   const { answers = [], planFilePath, baseName, reviewPath } = opts || {};
   const role = 'planner-plan';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role, ctx.workspace);
   const replanBlock = reviewPath
     ? '\n## Revise to address the review\n\n' +
       'A reviewer found issues with the previous plan. Re-plan from scratch (cold start) and ' +
@@ -292,6 +394,7 @@ export async function runPlannerPlan(ctx, opts) {
     'for the features and MUST end with a "## Clarifications (Q&A)" section reproducing the ' +
     'questions and the user answers below so the reviewer can see them.\n\n' +
     fanOutDirective(ctxFanOut(ctx)) +
+    workspaceFanOutDirective('explore', ctx.workspace) +
     `Write the plan markdown to: ${planFilePath}\n` +
     replanBlock +
     '\n## Clarifications already answered\n\n' +
@@ -313,13 +416,14 @@ export async function runPlannerPlan(ctx, opts) {
 export async function runRefiner(ctx, opts) {
   const { inPlanPath, outPlanPath, cycle, reviewJsonPath } = opts || {};
   const role = 'refiner';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.refiner, role);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.refiner, role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Refine the plan (cycle ${cycle})`) +
     '\n## What to do\n\n' +
     `Read the current plan, critically review it INCLUDING its code snippets, then write an ` +
     `improved version and a machine-readable review.\n\n` +
     fanOutDirective(ctxFanOut(ctx)) +
+    workspaceFanOutDirective('explore', ctx.workspace) +
     `Current plan to refine: ${inPlanPath}\n` +
     `Write the refined plan to: ${outPlanPath}\n` +
     `Write the review JSON to: ${reviewJsonPath}\n\n` +
@@ -348,7 +452,7 @@ export async function runRefiner(ctx, opts) {
 export async function runImplementer(ctx, opts) {
   const { planPath, reviewPath, mode = 'implement' } = opts || {};
   const role = 'implementer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.implementer, role);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.implementer, role, ctx.workspace);
 
   const body =
     mode === 'fix'
@@ -364,7 +468,9 @@ export async function runImplementer(ctx, opts) {
     taskHeader(ctx, mode === 'fix' ? 'Fix the implementation' : 'Implement the plan') +
     '\n## What to do\n\n' +
     body +
-    '\nWork inside the project directory (your cwd). Commit nothing; just edit files and tests.\n\n' +
+    '\n' +
+    workspaceFanOutDirective('task', ctx.workspace) +
+    'Work inside the project directory (your cwd). Commit nothing; just edit files and tests.\n\n' +
     mockMarkers({ MOCK_ROLE: role, MOCK_IN: planPath, MOCK_OUT: reviewPath });
 
   const { text } = await runClaude(
@@ -383,7 +489,7 @@ export async function runImplementer(ctx, opts) {
 export async function runReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'reviewer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.reviewer, role);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.reviewer, role, ctx.workspace);
   // Prefer diffing against the recorded checkpoint commit. New files are made
   // visible via the orchestrator's intent-to-add staging after each implement
   // pass, so `git diff <ref>` and `git status` both show greenfield work.
@@ -402,6 +508,7 @@ export async function runReviewer(ctx, opts) {
     'markdown AND a machine-readable review JSON. ' +
     diffInstruction +
     '\n\n' +
+    workspaceFanOutDirective('review', ctx.workspace) +
     `Plan that was implemented: ${planPath}\n` +
     `Write the review markdown to: ${reviewMdPath}\n` +
     `Write the review JSON to: ${reviewJsonPath}\n\n` +
@@ -430,12 +537,13 @@ export async function runReviewer(ctx, opts) {
 export async function runPlanReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'plan-review';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planReviewer, role);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planReviewer, role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Review the plan (cycle ${cycle})`) +
     '\n## What to do\n\n' +
     'Review the implementation PLAN against the original request and the real codebase. Do NOT ' +
     'rewrite the plan. Write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
+    workspaceFanOutDirective('explore', ctx.workspace) +
     `Plan to review: ${planPath}\n` +
     `Write the review markdown to: ${reviewMdPath}\n` +
     `Write the review JSON to: ${reviewJsonPath}\n\n` +
@@ -470,6 +578,7 @@ export async function runManualTestsChecklist(ctx, opts) {
     ctx.toolInstruction,
     ctx.agentPrompts?.manualTestsChecklist,
     role,
+    ctx.workspace,
   );
   const prompt =
     taskHeader(ctx, 'Draft a manual test checklist') +
@@ -503,6 +612,7 @@ export async function runManualWebUiTesting(ctx, opts) {
     ctx.toolInstruction,
     ctx.agentPrompts?.manualWebUiTesting,
     role,
+    ctx.workspace,
   );
   const prompt =
     taskHeader(ctx, `Run the manual web UI tests (cycle ${cycle})`) +
