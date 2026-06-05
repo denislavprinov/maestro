@@ -228,6 +228,56 @@ test('resolveWorkflow overlays per-project model/effort and feedback cycles', as
   assert.equal(reviewFb.maxCycles, 2);
 });
 
+// ── M4: workspace substitution (opts.isWorkspace) + the off-pipeline scanner guard ──
+test('resolveWorkflow({isWorkspace:true}) substitutes the review node reviewer -> workspaceReviewer', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry(); // real registry has both reviewer + workspaceReviewer
+  const plan = await resolveWorkflow(p, 'wf_default', reg, undefined, { isWorkspace: true });
+  const keys = plan.steps.flat().map((n) => n.key);
+  assert.deepEqual(keys, ['planner', 'refiner', 'implementer', 'workspaceReviewer'],
+    'the review node key becomes workspaceReviewer on a workspace run');
+  const wsR = plan.steps.flat().find((n) => n.key === 'workspaceReviewer');
+  assert.equal(wsR.runnerType, 'verifier', 'resolved from the workspaceReviewer meta');
+  assert.equal(wsR.loopSource, true, 'workspaceReviewer is a loop source');
+  assert.equal(wsR.uiPhase, 'review', 'shares the single-project review stepper bucket');
+  assert.ok(typeof wsR.agentPrompt === 'string' && wsR.agentPrompt.length > 0, 'its body loads (the contract)');
+  // The feedback edge (s3_0 -> s2_0) is preserved — the nodeId is unchanged by substitution.
+  assert.ok(plan.feedbacks.some((f) => f.from === 's3_0' && f.to === 's2_0'), 'review->implement loop intact');
+});
+
+test('resolveWorkflow substitution is GATED: no opts === {isWorkspace:false}, single-project byte-identical', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry();
+  const noOpts = await resolveWorkflow(p, 'wf_default', reg);
+  const falseWs = await resolveWorkflow(p, 'wf_default', reg, undefined, { isWorkspace: false });
+  assert.deepEqual(noOpts, falseWs, 'no opts is byte-identical to {isWorkspace:false}');
+  // Both keep the single-project reviewer; neither substitutes.
+  assert.deepEqual(noOpts.steps.flat().map((n) => n.key), ['planner', 'refiner', 'implementer', 'reviewer']);
+  assert.ok(!noOpts.steps.flat().some((n) => n.key === 'workspaceReviewer'), 'no workspaceReviewer when not a workspace run');
+});
+
+test('resolveWorkflow throws if a workflow hand-authors a workspaceScanner node (off-pipeline guard)', async () => {
+  await freshHome();
+  const p = await freshProject();
+  const reg = loadAgentRegistry();
+  await writeWorkflow({
+    id: 'wf_badscan',
+    name: 'Bad Scan',
+    steps: [[{ id: 'n_scan', key: 'workspaceScanner' }], [{ id: 'n_impl', key: 'implementer' }]],
+    feedbacks: [],
+  });
+  await assert.rejects(
+    () => resolveWorkflow(p, 'wf_badscan', reg),
+    /workspaceScanner is an off-pipeline producer and cannot be a workflow node/,
+    'the off-pipeline scanner must never resolve as a node',
+  );
+  // The guard fires regardless of isWorkspace (the scanner is never a node either way).
+  await assert.rejects(() => resolveWorkflow(p, 'wf_badscan', reg, undefined, { isWorkspace: true }),
+    /workspaceScanner is an off-pipeline producer/);
+});
+
 test('resolveWorkflow resolves a saved template (incl. a parallel step)', async () => {
   await freshHome();
   const p = await freshProject();

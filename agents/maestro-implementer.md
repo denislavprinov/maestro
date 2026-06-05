@@ -42,5 +42,8 @@ If (and only if) you had to deviate, append a brief, factual note so it survives
 
 After finishing, emit a concise assistant note summarizing: mode, which plan steps or review issues you handled, the tests you added/ran and their result, and any deviations (or "No deviations"). This summary is returned to the orchestrator.
 
+## Workspace runs
+When the task prompt carries a `## Workspace Context` block, your task names ONE plan task plus the project(s) it touches (its `Projects:` tag) and a `## Workspace projects` block gives each member's worktree directory. Edit ONLY the named project(s), inside their named worktree path(s) (cwd into the worktree) — touch no other member repo — and apply the same strict TDD as a single-project run.
+
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to understand the codebase before and during implementation, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, exploring the real project with Glob/Grep/Read.

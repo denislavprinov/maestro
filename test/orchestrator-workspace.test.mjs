@@ -305,11 +305,19 @@ test('fan-out forcing: a workspace run forces fanOut=true on eligible nodes only
       if (FANOUT_ELIGIBLE.has(node.key)) {
         assert.equal(node.fanOut, true, `eligible node ${node.key} is forced fanOut`);
       } else {
-        // reviewer is NOT eligible at M3 (it stays the single-project reviewer).
+        // Any non-eligible node (none in the default workspace plan) must NOT be forced.
         assert.equal(node.fanOut, false, `ineligible node ${node.key} is NOT forced`);
       }
     }
   }
+  // M4: the review node is substituted reviewer -> workspaceReviewer (workflows.mjs),
+  // so the resolved workspace plan carries a fanned-out workspaceReviewer and NO
+  // single-project reviewer node.
+  const keys = seenPlan.steps.flat().map((n) => n.key);
+  const wsReviewer = seenPlan.steps.flat().find((n) => n.key === 'workspaceReviewer');
+  assert.ok(wsReviewer, 'workspace plan contains a workspaceReviewer node');
+  assert.equal(wsReviewer.fanOut, true, 'the workspaceReviewer node is forced fanOut');
+  assert.ok(!keys.includes('reviewer'), 'no single-project reviewer node in a workspace plan');
 });
 
 // ── history walker discovers the workspace run ────────────────────────────────

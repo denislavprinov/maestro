@@ -39,7 +39,9 @@ export function allocate(channel, ctx) {
           ? 'webui-review'
           : key === 'planReviewer'
             ? 'plan-review'
-            : 'impl-review';
+            : key === 'workspaceReviewer'
+              ? 'ws-review'
+              : 'impl-review';
       // ▲ C2: the refiner emits ONLY a json verdict (its md is null => private to its
       // self-loop). Every other verifier carries a review md so publish() folds it
       // onto the shared `review` channel its loop target consumes. workspaceKey routes
@@ -51,7 +53,9 @@ export function allocate(channel, ctx) {
           ? join(pipelineDir, `webui-review-cycle${cycle}.md`)
           : key === 'planReviewer'
             ? reviewPath(projectDir, baseName, datePrefix, 'plan-review', workspaceKey)
-            : reviewPath(projectDir, baseName, datePrefix, 'impl-review', workspaceKey);
+            : key === 'workspaceReviewer'
+              ? reviewPath(projectDir, baseName, datePrefix, 'ws-review', workspaceKey)
+              : reviewPath(projectDir, baseName, datePrefix, 'impl-review', workspaceKey);
       return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`), reviewKind: base };
     }
     case 'checklist':
@@ -152,6 +156,11 @@ function legacyRoleFields(node, inputs, outputs, cycle, baseName) {
     case 'planReviewer':
       return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'reviewer':
+      return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
+    case 'workspaceReviewer':
+      // Identical field shape to `reviewer` — the workspace synthesizer reads the
+      // same planPath/reviewMd/reviewJson/cycle and folds its merged verdict onto
+      // the shared `review` channel its implementer loop target consumes.
       return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'manualTestsChecklist':
       return { planPath: inputs.plan?.path, checklistPath: outputs.checklist?.path };

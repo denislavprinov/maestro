@@ -373,6 +373,12 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
     case 'plan-review':
       text = await mockPlanReview(m, cycle, onEvent);
       break;
+    case 'workspace-scan':
+      text = await mockWorkspaceScan(m, prompt, onEvent);
+      break;
+    case 'workspace-reviewer':
+      text = await mockWorkspaceReviewer(m, cycle, onEvent);
+      break;
     case 'manual-tests-checklist':
       text = await mockManualTestsChecklist(m, onEvent);
       break;
@@ -674,6 +680,121 @@ async function mockPlanReview(m, cycle, onEvent) {
     const md =
       `# Plan Review (cycle ${cycle})\n\n## Summary\n\n${review.summary}\n\n## Issues\n\n` +
       review.issues.map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`).join('\n') +
+      '\n';
+    await ensureDir(mdPath);
+    await writeFile(mdPath, md, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${mdPath}`, raw: { mock: true, file: mdPath } });
+  }
+  if (jsonPath) {
+    await ensureDir(jsonPath);
+    await writeFile(jsonPath, JSON.stringify(review, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${jsonPath}`, raw: { mock: true, file: jsonPath } });
+  }
+  return JSON.stringify(review);
+}
+
+/**
+ * Mock the off-pipeline workspace scanner. Writes a deterministic interconnection
+ * description following the §5.8 template (so the wizard textarea is populated in
+ * mock mode) and emits one `INVESTIGATING <key> relations to <other>` log line per
+ * project so the live-status UI can be exercised offline. Project keys are parsed
+ * from the prompt's member lines (the runner does NOT spawn sub-agents — fan-out is
+ * a prompt directive the mock ignores).
+ */
+async function mockWorkspaceScan(m, prompt, onEvent) {
+  const out = m.MOCK_OUT;
+  const name = m.MOCK_BASE || 'Workspace';
+  // Parse `(`backtick-key`)` member markers the scan task prompt renders, in order.
+  const keys = [];
+  for (const line of String(prompt || '').split(/\r?\n/)) {
+    const mm = line.match(/^\s*-\s+\*\*.*\*\*\s+\(`([^`]+)`\)/);
+    if (mm) keys.push(mm[1]);
+  }
+  await emitLog(onEvent, `[mock] workspace scanner investigating ${keys.length} project(s)`);
+  // One INVESTIGATING line per project (paired with the next project, round-robin),
+  // then the synthesize line — the changing live-status text the server maps.
+  for (let i = 0; i < keys.length; i++) {
+    const other = keys[(i + 1) % keys.length] || keys[i];
+    await emitLog(onEvent, `INVESTIGATING ${keys[i]} relations to ${other}`);
+  }
+  await emitLog(onEvent, 'SYNTHESIZING workspace description');
+
+  const projects = keys.length ? keys : ['project-a', 'project-b'];
+  const md =
+    `# Workspace: ${name}\n` +
+    `## Overview\n` +
+    `Deterministic mock interconnection description for ${projects.length} member project(s). ` +
+    `The dominant integration theme is a shared REST contract.\n` +
+    `## Projects\n` +
+    projects.map((k) => `- ${k}: member project`).join('\n') + '\n' +
+    `## Interconnections\n` +
+    (projects.length >= 2
+      ? `- ${projects[0]} -> ${projects[1]}: REST API; ${projects[0]} calls ${projects[1]}'s HTTP endpoints.\n`
+      : `- (single project — no interconnections)\n`) +
+    `## Change-coordination notes\n` +
+    `- Changes that touch the shared REST contract must be coordinated across both members.\n` +
+    `## Suggested change order\n` +
+    (projects.length >= 2 ? `${projects[1]} before ${projects[0]} (provider before consumer).\n` : `no strict ordering\n`);
+
+  if (!out) return '[mock] workspace-scan: no MOCK_OUT given';
+  await ensureDir(out);
+  await writeFile(out, md, 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] workspace description written to ${out}`;
+}
+
+/**
+ * Mock the in-pipeline workspace reviewer. Mirrors mockReviewer: the blocking-issue
+ * count DECREASES with `cycle` so the workspace review -> implementer loop terminates
+ * deterministically. Writes ONE merged review markdown + ONE merged review JSON
+ * (the union shape the real synthesizer produces, with projectKey-prefixed locations).
+ */
+async function mockWorkspaceReviewer(m, cycle, onEvent) {
+  const mdPath = m.MOCK_OUT;
+  const jsonPath = m.MOCK_JSON;
+  await emitLog(onEvent, `[mock] workspace reviewer synthesizing per-project reviews (cycle ${cycle})`);
+
+  // Cycle 1: two major issues across two members (a real union). Cycle >=2: only a
+  // suggestion. The loop terminates by cycle 2 (no critical/major remain).
+  const review =
+    cycle <= 1
+      ? {
+          summary: 'Across the member projects, two major issues need a fix before acceptance.',
+          issues: [
+            {
+              severity: 'major',
+              title: 'Unhandled empty-string input',
+              detail: 'feature("") returns "" but the plan expects a thrown error.',
+              location: 'project-a: src/feature.mjs',
+            },
+            {
+              severity: 'major',
+              title: 'Missing contract validation',
+              detail: 'The consumer does not validate the provider response shape.',
+              location: 'project-b: src/client.mjs',
+            },
+          ],
+        }
+      : {
+          summary: 'All member projects look good. Only a suggestion remains.',
+          issues: [
+            {
+              severity: 'suggestion',
+              title: 'Add a usage example',
+              detail: 'A short cross-project example in the README would help.',
+              location: 'project-a: README.md',
+            },
+          ],
+        };
+
+  if (mdPath) {
+    const md =
+      `# Workspace Implementation Review (cycle ${cycle})\n\n` +
+      `## Summary\n\n${review.summary}\n\n` +
+      `## Issues (union across all member projects)\n\n` +
+      review.issues
+        .map((i) => `- **[${i.severity}]** ${i.title} — ${i.detail} (\`${i.location}\`)`)
+        .join('\n') +
       '\n';
     await ensureDir(mdPath);
     await writeFile(mdPath, md, 'utf8');

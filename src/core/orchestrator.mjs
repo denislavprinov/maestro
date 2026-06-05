@@ -54,17 +54,22 @@ const AGENT_FILES = {
   implementer: 'maestro-implementer.md',
   reviewer: 'maestro-code-reviewer.md',
   planReviewer: 'maestro-plan-reviewer.md',
+  // Workspace review synthesizer: its body is the contract (no FALLBACK_PROMPTS
+  // entry, C10), so it must load into agentPrompts for a real workspace run. The
+  // off-pipeline scanner is NOT here (it is driven by the M5 scan engine, not the
+  // dispatcher, which supplies agentPrompts.workspaceScanner itself).
+  workspaceReviewer: 'maestro-workspace-reviewer.md',
 };
 
 /**
  * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
  * The orchestrator forces `node.fanOut=true` on these when isWorkspace, unlocking
  * the Task/Agent tool via effectiveAllowedTools. NOTE the set lists
- * `workspaceReviewer`, NOT `reviewer`: in a workspace run the review node's key is
- * `workspaceReviewer` (the synthesizer). That node + its runner arrive in M4; at M3
- * the review node stays `reviewer`, which is correctly NOT eligible, so review
- * fan-out is not forced yet. Including `workspaceReviewer` here is forward-compatible
- * — the forcing loop simply matches it once M4 substitutes the node.
+ * `workspaceReviewer`, NOT `reviewer`: on a workspace run the review node is
+ * substituted to `workspaceReviewer` (the synthesizer) at resolve time
+ * (workflows.mjs, gated on isWorkspace), so it IS in this set and gets
+ * fanOut=true here. `reviewer` never appears in a workspace plan — it is the
+ * single-project review node only.
  */
 const FANOUT_ELIGIBLE = new Set([
   'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer',
@@ -249,14 +254,17 @@ class Orchestrator extends EventEmitter {
       // after createPipeline below.
       const registry = await loadAgentRegistry();
       this.registry = registry; // ▲ v3: expose for run-start workflow validation (D4)
-      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
-      // Workspace fan-out forcing (§5.5, C4): the ONLY topology mutation a workspace
-      // run makes — force fanOut=true on the eligible nodes so they fan out across
-      // member projects. Applied right after resolveWorkflow; absent isWorkspace the
-      // plan is untouched. The set lists workspaceReviewer (forward-compatible, M4);
-      // at M3 the review node is still `reviewer` (NOT eligible), so review fan-out is
-      // not forced yet — that is correct (the reviewer→workspaceReviewer node
-      // substitution is an M4 workflows.mjs change).
+      // [C5/M4] On a workspace run, resolveWorkflow substitutes the review node's key
+      // reviewer -> workspaceReviewer (the fan-out synthesizer). Single-project runs
+      // pass isWorkspace:false, so the resolved plan is byte-identical to today.
+      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry, undefined, {
+        isWorkspace: this.isWorkspace,
+      });
+      // Workspace fan-out forcing (§5.5, C4): the ONLY in-orchestrator topology change a
+      // workspace run makes — force fanOut=true on the eligible nodes so they fan out
+      // across member projects. Applied right after resolveWorkflow; absent isWorkspace
+      // the plan is untouched. workspaceReviewer is now the resolved review node key
+      // (substituted in workflows.mjs above), so the review fan-out is forced here.
       if (this.isWorkspace) {
         for (const group of plan.steps) {
           for (const node of group) {

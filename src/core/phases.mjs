@@ -565,6 +565,126 @@ export async function runPlanReviewer(ctx, opts) {
 }
 
 /**
+ * Workspace Reviewer — verifier (in-pipeline, loopSource). The workspace-run
+ * replacement for runReviewer: fan out one reviewer sub-agent per CHANGED member
+ * (each diffing `checkpointRefs[projectKey]...feature` inside that member's
+ * worktree — the `## Workspace projects` block in the task header names each
+ * worktree dir + checkpoint), then synthesize ONE review markdown + ONE
+ * review-cycleN.json that is the UNION of every critical/major issue, sorted by
+ * projectKey then severity. Reuses protocol.readReview / hasBlocking unchanged, so
+ * the orchestrator's review->implementer loop gates identically. Returns { review }.
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ planPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
+ */
+export async function runWorkspaceReviewer(ctx, opts) {
+  const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
+  const role = 'workspace-reviewer';
+  // The body is the contract (C10: no FALLBACK_PROMPTS entry); the system prompt
+  // ALSO carries the `## Workspace Context` block via ctx.workspace.
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.workspaceReviewer, role, ctx.workspace);
+  const prompt =
+    taskHeader(ctx, `Review the workspace implementation (cycle ${cycle})`) +
+    '\n## What to do\n\n' +
+    'Review what was implemented across the member projects against the plan. Write a SINGLE ' +
+    'human-readable review markdown AND a SINGLE machine-readable review JSON.\n\n' +
+    workspaceFanOutDirective('review', ctx.workspace) +
+    `Plan that was implemented: ${planPath}\n` +
+    `Write the merged review markdown to: ${reviewMdPath}\n` +
+    `Write the merged review JSON to: ${reviewJsonPath}\n\n` +
+    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
+    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
+    'pipeline. The issue list is the UNION of every per-project critical/major issue (never ' +
+    'collapse one), sorted by projectKey then severity, each location prefixed "<projectKey>: ".\n\n' +
+    mockMarkers({
+      MOCK_ROLE: role,
+      MOCK_OUT: reviewMdPath,
+      MOCK_JSON: reviewJsonPath,
+      MOCK_CYCLE: cycle,
+    });
+
+  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+
+  const review = await readReview(reviewJsonPath);
+  return { review };
+}
+
+/**
+ * Workspace Scan — off-pipeline producer (NOT a workflow node, NOT routed through
+ * runners.mjs). The wizard's scan engine (M5: workspace-scan.mjs) calls this
+ * directly to investigate cross-project relations and write the editable
+ * interconnection description. It IS the scanner, so it gets NO `## Workspace
+ * Context` block injected (4th buildSystemPrompt arg is undefined). The task prompt
+ * names every member + its graph path, carries the scan fan-out directive and the
+ * §5.8 description template, and emits an `INVESTIGATING <key> relations to <other>`
+ * line per investigation so the server's scan-event mapper turns those into the
+ * CHANGING live status (structured `phase` is owned by the engine, not the agent).
+ * Writes ONE markdown string to `pipelineDir/workspace-description.md` (or
+ * opts.outPath) and returns it. Mockable via MOCK_ROLE 'workspace-scan'.
+ * @param {import('./phases.mjs').PhaseContext} ctx  ctx.projects = sorted members
+ * @param {{ outPath?: string, name?: string }} [opts]
+ * @returns {Promise<{ description: string, outPath: string }>}
+ */
+export async function runWorkspaceScan(ctx, opts = {}) {
+  const role = 'workspace-scanner'; // prompt-role string (FALLBACK lookup only); MOCK_ROLE differs (C3)
+  const projects = Array.isArray(ctx.projects) ? ctx.projects : [];
+  const name = opts.name || ctx.workspaceName || 'Workspace';
+  const outPath = opts.outPath || joinPipeline(ctx.pipelineDir, 'workspace-description.md');
+  // The scanner IS the source of the workspace description, so it does NOT receive
+  // an injected workspace block (4th arg undefined). The body is the contract (C10).
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.workspaceScanner, role, undefined);
+
+  const memberLines = projects.map((p) =>
+    `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): investigate \`${p.scanDir || p.projectDir}\`` +
+    `${p.graphify ? ' (graphify-out/ available)' : ''}`,
+  ).join('\n');
+
+  const prompt =
+    `# Task: Scan workspace interconnections — ${name}\n\n` +
+    `Pipeline directory (shared artifacts): ${ctx.pipelineDir}\n\n` +
+    `## Member projects to investigate\n\n${memberLines || '(no members)'}\n\n` +
+    '## What to do\n\n' +
+    'Discover how these projects interconnect (REST APIs, shared DB/migrations, build deps, ' +
+    'message/queue, shared libs) and write ONE editable interconnection description.\n\n' +
+    fanOutDirective(true) +  // scan-fanout: one read-only investigator per project (cap 4)
+    'Dispatch ONE read-only investigator per member project (cap 4); merge their reports in sorted ' +
+    '`projectKey` order and synthesize the single description yourself. Investigators MUST NOT ' +
+    're-fan-out.\n\n' +
+    'Announce each investigation with a line `INVESTIGATING <projectKey> relations to <otherKey>` ' +
+    'and the merge with `SYNTHESIZING workspace description`.\n\n' +
+    '## Description template (write EXACTLY these sections)\n\n' +
+    '```\n' +
+    `# Workspace: ${name}\n` +
+    '## Overview\n<2-4 sentences: the project set + dominant integration theme>\n' +
+    '## Projects\n- <projectName>: <one-line role>\n' +
+    '## Interconnections\n- <A> -> <B>: <REST API | shared DB / migration | build dep | message/queue | shared lib>; <detail>\n' +
+    '## Change-coordination notes\n- <coordination note>\n' +
+    '## Suggested change order\n<topological hint, else "no strict ordering">\n' +
+    '```\n\n' +
+    `Write the interconnection description markdown to: ${outPath}\n\n` +
+    mockMarkers({
+      MOCK_ROLE: 'workspace-scan', // C3: scanner MOCK marker is workspace-scan (NOT the prompt-role)
+      MOCK_OUT: outPath,
+      MOCK_BASE: name,
+    });
+
+  const { text } = await runClaude(
+    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
+  );
+
+  // The written file is the authoritative description; read it back so callers
+  // (the M5 scan engine) get the produced text. Dynamic import keeps the static
+  // import surface focused (mirrors the orchestrator's dynamic protocol import).
+  let description = '';
+  try {
+    const { readFile } = await import('node:fs/promises');
+    description = await readFile(outPath, 'utf8');
+  } catch {
+    description = (text || '').trim();
+  }
+  return { description, outPath };
+}
+
+/**
  * Manual Tests Checklist — producer. Reads the plan (and any implementation diff)
  * and writes a markdown checklist of manual test cases as a pipeline artifact.
  * Returns { checklistPath, summary }.

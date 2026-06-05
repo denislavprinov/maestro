@@ -59,5 +59,8 @@ After writing both files, emit a short assistant note with the absolute paths of
 - Base findings on the real `git diff`, not assumptions. Write only to the two absolute paths given.
 - Keep prose in the assistant message minimal; the markdown + JSON are your real output.
 
+## Workspace runs
+You are NOT used for workspace runs: a workspace pipeline substitutes the **Workspace Reviewer** (`workspaceReviewer`), which fans out one reviewer per changed member and synthesizes one merged verdict. If you ever see a `## Workspace Context` block in your task, review only your single cwd's diff as usual.
+
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to ground the review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with git + Glob/Grep/Read.

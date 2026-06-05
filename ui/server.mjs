@@ -1069,7 +1069,11 @@ app.delete('/api/workflows/:id', async (req, res) => {
 app.get('/api/agents', (_req, res) => {
   try {
     const registry = loadAgentRegistry(AGENTS_DIR); // { [key]: AgentMeta }, sorted by .order
-    res.json({ agents: Object.values(registry) });
+    // §6.6: scope:'workspace-only' agents are EXCLUDED from the single-project
+    // Composer palette (the scanner is non-composable in either palette; the
+    // workspace reviewer is selected only by the workspace-default workflow).
+    const agents = Object.values(registry).filter((m) => m.scope !== 'workspace-only');
+    res.json({ agents });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

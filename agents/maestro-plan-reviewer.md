@@ -63,5 +63,8 @@ After writing both files, emit a short assistant note with the two absolute path
 - Base findings on the real plan + real codebase, not assumptions. Write only to the two absolute paths given. Never edit the plan.
 - Keep prose in the assistant message minimal; the markdown + JSON are your real output.
 
+## Workspace runs
+When the task prompt carries a `## Workspace Context` block, the plan spans a SET of member projects. Additionally check that the plan is implementable given the cross-project dependency order: the per-task `Projects:` tags and the description's suggested change order must form an implementable sequence with no unorderable cycle (a task that requires another member's not-yet-built change).
+
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to ground the review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.

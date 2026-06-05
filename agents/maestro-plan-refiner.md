@@ -62,5 +62,8 @@ After writing both files, emit a short assistant note with the absolute paths of
 - Write only to the two absolute paths given. Preserve the Q&A section in the refined plan.
 - Keep prose minimal; the files are your real output.
 
+## Workspace runs
+When the task prompt carries a `## Workspace Context` block, the plan spans a SET of member projects. Verify cross-project correctness specifically: API/DB/contract mismatches BETWEEN the named members (a provider change that breaks a consumer, a shared migration relied on by another repo). Ensure each plan step still names its target project(s) via its `Projects:` tag, and that the description's interconnections and change order remain consistent in the refined plan.
+
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to ground your review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.

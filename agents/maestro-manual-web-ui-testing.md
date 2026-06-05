@@ -57,5 +57,8 @@ After writing the JSON, emit a short assistant note with the absolute path of `r
 - Always stop the app you started and `browser_close` before finishing.
 - Keep assistant chatter minimal; the verdict JSON is your real output.
 
+## Workspace runs
+When the task prompt carries a `## Workspace Context` block, the UI under test is the member project(s) named in the description that own a web UI — start and test each such member's app (the `## Workspace projects` block names each member's worktree dir). Skip members with no web UI; attribute each case's result to its member project.
+
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to understand the UI's routes/components before testing, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.
