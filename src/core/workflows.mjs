@@ -215,17 +215,25 @@ export async function deleteWorkflow(id) {
  *   Node = { nodeId, key, uiPhase, runnerType, agentFile, agentPrompt, model, effort, tools, loopSource }
  * model/effort come from run-config (undefined when unset; the orchestrator folds
  * in the global fallback at dispatch). maxCycles defaults to DEFAULT_MAX_CYCLES.
+ * [v2/C5] When `opts.isWorkspace` is set, the review node is substituted at resolve
+ * time: any `reviewer` node key becomes `workspaceReviewer` (the fan-out synthesizer
+ * that diffs each member's checkpoint and folds one merged verdict). This is the ONE
+ * topology change a workspace run makes here; the orchestrator then forces fanOut on
+ * the eligible nodes (which now includes `workspaceReviewer`). Absent `isWorkspace`,
+ * the resolved plan is BYTE-IDENTICAL to today's single-project path.
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {Record<string,object>} registry  loadAgentRegistry() output
  * @param {string} [agentsDir]  override for tests; defaults to ../../agents
+ * @param {{ isWorkspace?: boolean }} [opts]  workspace-mode resolve options
  * @returns {Promise<object>} ExecutablePlan
- * @throws {Error} when the workflow id is unknown
+ * @throws {Error} when the workflow id is unknown, or a node resolves the off-pipeline scanner
  */
-export async function resolveWorkflow(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR) {
+export async function resolveWorkflow(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   const tpl = await readWorkflow(workflowId);
   if (!tpl) throw new Error(`workflow not found: ${workflowId}`);
   const reg = registry && typeof registry === 'object' ? registry : {};
+  const isWorkspace = !!(opts && opts.isWorkspace);
   const { nodes: nodeCfg, feedbacks: fbCfg } = await resolveRunConfig(projectDir, workflowId);
   // Legacy per-role config (what the Default-workflow UI writes) applies ONLY to
   // the default workflow's nodes — this is what makes its per-agent model/effort/
@@ -238,20 +246,32 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   const UI_PHASE = {
     planner: 'plan', refiner: 'refine', implementer: 'implement', reviewer: 'review',
     manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web', planReviewer: 'plan-review',
+    workspaceReviewer: 'review', // shares the single-project review stepper bucket
   };
 
   const steps = [];
   for (const group of tpl.steps) {
     const resolvedGroup = [];
     for (const node of group) {
-      const meta = reg[node.key] || {};
+      // [C5] Workspace substitution: the review node becomes the fan-out synthesizer.
+      // Applied to the resolved node key (and its nodeId-stable stepper bucket) so the
+      // dispatcher routes it to runWorkspaceReviewer; single-project keys are untouched.
+      const key = isWorkspace && node.key === 'reviewer' ? 'workspaceReviewer' : node.key;
+      // [§6.6] Defensive guard: the off-pipeline scanner is never a workflow node.
+      // Reject it if hand-authored into a saved workflow so it can't be dispatched.
+      if (key === 'workspaceScanner') {
+        throw new Error('workspaceScanner is an off-pipeline producer and cannot be a workflow node');
+      }
+      const meta = reg[key] || {};
       const { prompt, tools } = await loadAgentFile(agentsDir, meta.agentFile ?? null);
       const sel = nodeCfg[node.id] || {};
+      // Legacy per-role config is keyed by the ORIGINAL UI step key (e.g. `reviewer`),
+      // so a substituted workspaceReviewer still inherits the user's review model/effort.
       const legacy = stepsCfg[node.key] || {};
       resolvedGroup.push({
         nodeId: node.id,
-        key: node.key,
-        uiPhase: UI_PHASE[node.key] || node.key,   // CONV-4: live-UI stepper bucket
+        key,
+        uiPhase: UI_PHASE[key] || key,   // CONV-4: live-UI stepper bucket
         runnerType: meta.runnerType || 'producer',
         agentFile: meta.agentFile ?? null,
         agentPrompt: prompt,

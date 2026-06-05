@@ -11,9 +11,12 @@ import { mkdir, writeFile, readFile, copyFile, readdir, stat, appendFile } from 
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot } from './store.mjs';
+import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot, workspaceStorePath, workspacesStoreRoot } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
+
+/** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
+const WORKSPACE_DESCRIPTION_CAP = 2000;
 
 /**
  * Convert an arbitrary string to a safe kebab-case slug.
@@ -51,11 +54,17 @@ export function today() {
  * i.e. <maestroHome>/store/<projectKey(projectDir)>/{plans,reviews,pipelines}.
  * Every reader/writer (plans, reviews, pipeline history) routes through here, so
  * redirecting this one function moves all three out of the working tree at once.
+ * When `workspaceKey` is given, the root is the workspace store namespace
+ * (<maestroHome>/store/workspaces/<workspaceKey>) instead of the per-project key
+ * dir. Single-project callers (no second arg) are byte-identical.
  * @param {string} projectDir
+ * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {{root:string, plans:string, reviews:string, pipelines:string}}
  */
-export function artifactPaths(projectDir) {
-  const root = projectStorePath(projectKey(projectDir));
+export function artifactPaths(projectDir, workspaceKey) {
+  const root = workspaceKey
+    ? workspaceStorePath(workspaceKey)
+    : projectStorePath(projectKey(projectDir));
   return {
     root,
     plans: join(root, 'plans'),
@@ -86,12 +95,59 @@ async function ensureMeta(projectDir, root) {
   return meta;
 }
 
-export async function ensureArtifactDirs(projectDir) {
-  const p = artifactPaths(projectDir);
+/**
+ * Workspace variant of ensureMeta. Writes the §5.2 workspace meta.json shape
+ * ({key,id,name,projectKeys,projectPaths,firstSeenAt}) — distinct from the project
+ * shape. Name resolution prefers the registry (readWorkspace(workspaceId).name) and
+ * falls back to the primary canonical root basename. Never throws, never blocks a run.
+ * `projectKeys`/`projectPaths` are index-aligned and sorted by projectKey ascending.
+ */
+async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
+  const metaPath = join(workspaceStorePath(workspaceKey), 'meta.json');
+  try { return JSON.parse(await readFile(metaPath, 'utf8')); } catch { /* not written yet */ }
+
+  const members = Array.isArray(opts.projects) ? opts.projects.slice() : [];
+  members.sort((a, b) => {
+    const ka = a?.projectKey ?? '';
+    const kb = b?.projectKey ?? '';
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  let name = typeof opts.workspaceName === 'string' && opts.workspaceName ? opts.workspaceName : '';
+  if (!name) {
+    try {
+      const { readWorkspace } = await import('./workspaces.mjs');
+      const ws = await readWorkspace(opts.workspaceId || workspaceKey);
+      if (ws && ws.name) name = ws.name;
+    } catch { /* registry optional */ }
+  }
+  if (!name) name = basename(canonicalProjectRoot(primaryProjectDir)) || 'workspace';
+
+  const meta = {
+    key: workspaceKey,
+    id: opts.workspaceId || workspaceKey,
+    name,
+    projectKeys: members.map((m) => m.projectKey),
+    projectPaths: members.map((m) => resolve(m.projectDir)),
+    firstSeenAt: new Date().toISOString(),
+  };
+  try { await writeFile(metaPath, JSON.stringify(meta, null, 2) + '\n', 'utf8'); } catch { /* never block a run */ }
+  return meta;
+}
+
+/**
+ * Ensure the artifact directories (plans/reviews/pipelines) + meta.json exist.
+ * When `workspaceKey` is set, routes to the workspace store and writes the
+ * workspace meta shape; `opts` carries {workspaceId, workspaceName, projects}.
+ * Single-project callers (no second arg) are byte-identical.
+ */
+export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
+  const p = artifactPaths(projectDir, workspaceKey);
   await mkdir(p.plans, { recursive: true });
   await mkdir(p.reviews, { recursive: true });
   await mkdir(p.pipelines, { recursive: true });
-  const meta = await ensureMeta(projectDir, p.root);
+  const meta = workspaceKey
+    ? await ensureWorkspaceMeta(projectDir, workspaceKey, opts)
+    : await ensureMeta(projectDir, p.root);
   return { ...p, meta };
 }
 
@@ -108,10 +164,11 @@ export async function ensureArtifactDirs(projectDir) {
  * @param {string} baseName already-slugified base (date is prefixed here)
  * @param {number} [version=1]
  * @param {string} [datePrefix] fixed DD-MM-YY prefix (defaults to today())
+ * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {string}
  */
-export function planPath(projectDir, baseName, version = 1, datePrefix) {
-  const { plans } = artifactPaths(projectDir);
+export function planPath(projectDir, baseName, version = 1, datePrefix, workspaceKey) {
+  const { plans } = artifactPaths(projectDir, workspaceKey);
   const v = Number(version) > 1 ? `-v${Number(version)}` : '';
   const date = datePrefix || today();
   return join(plans, `${date}-${baseName}${v}.md`);
@@ -122,10 +179,12 @@ export function planPath(projectDir, baseName, version = 1, datePrefix) {
  * @param {string} projectDir
  * @param {string} baseName
  * @param {string} [datePrefix] fixed DD-MM-YY prefix (defaults to today())
+ * @param {string} [kind='impl-review']
+ * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {string}
  */
-export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review') {
-  const { reviews } = artifactPaths(projectDir);
+export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review', workspaceKey) {
+  const { reviews } = artifactPaths(projectDir, workspaceKey);
   const date = datePrefix || today();
   return join(reviews, `${date}-${baseName}-${kind}.md`);
 }
@@ -133,6 +192,31 @@ export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review
 /** Short random id (8 hex chars) used to make pipeline dirs unique. */
 function shortId() {
   return randomBytes(4).toString('hex');
+}
+
+/**
+ * Freeze a workspace description into a run: hard cap at WORKSPACE_DESCRIPTION_CAP
+ * total chars (.length, i.e. UTF-16 code units), truncating with a trailing
+ * ellipsis when over (the ellipsis counts toward the cap so the result is never
+ * longer than the cap). Cap-on-freeze only — the editable registry copy in
+ * workspaces.json is never truncated.
+ *
+ * Truncation is code-point aware: it accumulates whole code points until the next
+ * one would push past CAP-1 code units, so it never splits a surrogate pair (a
+ * naive s.slice(0, CAP-1) could leave a lone surrogate before the ellipsis).
+ * @param {string} text
+ * @returns {string}
+ */
+function freezeDescription(text) {
+  const s = typeof text === 'string' ? text : '';
+  if (s.length <= WORKSPACE_DESCRIPTION_CAP) return s;
+  const budget = WORKSPACE_DESCRIPTION_CAP - 1; // reserve one code unit for the ellipsis
+  let out = '';
+  for (const cp of s) {                          // iterates by code point, never mid-pair
+    if (out.length + cp.length > budget) break;
+    out += cp;
+  }
+  return out + '…';
 }
 
 /**
@@ -146,17 +230,39 @@ function resolveAgainst(base, p) {
  * Create a new pipeline directory and seed it with the prompt, extras, an audit
  * header (pipeline.md) and initial state (state.json).
  *
- * @param {string} projectDir
+ * When `opts.workspaceKey` is set the pipeline is written to the WORKSPACE store
+ * (store/workspaces/<key>/), state.json carries the §5.2 workspace superset
+ * (target:'workspace', workspaceId/Key/Name, frozen workspaceDescription, sorted
+ * projectKeys, projects[], empty checkpointRefs/branches), and a frozen
+ * workspace-description.md snapshot is written into the pipeline dir. The frozen
+ * description is hard-capped at 2000 chars (cap-on-freeze; the editable registry
+ * copy is untouched). `projectDir` is the PRIMARY member (projects[0] after sort).
+ * Absent the workspace opts the single-project path is byte-identical.
+ *
+ * @param {string} projectDir   single-project dir, or the workspace primary dir
  * @param {object} opts
  * @param {string} [opts.prompt]      inline prompt text
  * @param {string} [opts.promptFile]  path to a markdown file to use as the prompt
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
+ * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
+ * @param {string} [opts.workspaceId]    == workspaceKey
+ * @param {string} [opts.workspaceName]
+ * @param {string} [opts.workspaceDescription]  frozen verbatim (capped at 2000)
+ * @param {Array<{projectKey,projectDir,projectName}>} [opts.projects]  sorted members
  * @returns {Promise<{id:string, dir:string, promptText:string}>}
  */
 export async function createPipeline(projectDir, opts = {}) {
-  const { prompt, promptFile, extras = [], title } = opts;
-  const paths = await ensureArtifactDirs(projectDir);
+  const {
+    prompt, promptFile, extras = [], title,
+    workspaceKey = null, workspaceId = null, workspaceName = null,
+    workspaceDescription = '', projects = null,
+  } = opts;
+  const paths = await ensureArtifactDirs(projectDir, workspaceKey || undefined, {
+    workspaceId: workspaceId || workspaceKey,
+    workspaceName,
+    projects,
+  });
   const key = projectKey(projectDir);
   const projectName = (paths.meta && paths.meta.name) || basename(resolve(projectDir));
 
@@ -223,6 +329,36 @@ export async function createPipeline(projectDir, opts = {}) {
     updatedAt: startedAt,
     artifacts: [],
   };
+
+  // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
+  // The description is FROZEN here (capped at 2000) so later registry edits never
+  // retroactively alter a started run; branches/checkpointRefs start empty and are
+  // populated by the orchestrator at worktree/checkpoint setup.
+  if (workspaceKey) {
+    const members = (Array.isArray(projects) ? projects.slice() : []).sort(
+      (a, b) => {
+        const ka = a?.projectKey ?? '';
+        const kb = b?.projectKey ?? '';
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      },
+    );
+    const frozenDescription = freezeDescription(workspaceDescription);
+    state.target = 'workspace';
+    state.workspaceId = workspaceId || workspaceKey;
+    state.workspaceKey = workspaceKey;
+    state.workspaceName = workspaceName || (paths.meta && paths.meta.name) || '';
+    state.workspaceDescription = frozenDescription;
+    state.projectKeys = members.map((m) => m.projectKey);
+    state.projects = members.map((m) => ({
+      projectKey: m.projectKey,
+      projectDir: resolve(m.projectDir),
+      projectName: m.projectName ?? basename(resolve(m.projectDir)),
+    }));
+    state.checkpointRefs = {};
+    state.branches = {};
+    await writeFile(join(dir, 'workspace-description.md'), frozenDescription, 'utf8');
+  }
+
   await writeState(dir, state);
 
   const header =
@@ -381,8 +517,8 @@ async function pipelineEntry(dir, projectDir = null, opts = {}) {
  * @param {string} projectDir
  * @returns {Promise<Array>}
  */
-export async function listPipelines(projectDir, opts = {}) {
-  const { pipelines } = artifactPaths(projectDir);
+export async function listPipelines(projectDir, opts = {}, workspaceKey) {
+  const { pipelines } = artifactPaths(projectDir, workspaceKey);
   let entries;
   try { entries = await readdir(pipelines, { withFileTypes: true }); } catch { return []; }
   const out = [];
@@ -394,6 +530,32 @@ export async function listPipelines(projectDir, opts = {}) {
   return out;
 }
 
+/**
+ * Walk one workspace key dir, pushing a row per pipeline. A workspace row carries
+ * the literal store-relative composite key "workspaces/<wkey>" (round-trips through
+ * projectStorePath) and target:'workspace'; name/primary-dir come from the
+ * workspace meta. Live branch facts are best-effort against the primary repo only.
+ */
+async function pushWorkspaceRows(out, wkey, opts) {
+  const keyDir = join(workspacesStoreRoot(), wkey);
+  let meta = null;
+  try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; }
+  const primaryDir = Array.isArray(meta?.projectPaths) ? (meta.projectPaths[0] ?? null) : null;
+  const pipelinesDir = join(keyDir, 'pipelines');
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return; }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const e = await pipelineEntry(join(pipelinesDir, ent.name), primaryDir, opts);
+    e.projectKey = `workspaces/${wkey}`;
+    e.projectName = meta?.name ?? wkey;
+    e.workspaceName = meta?.name ?? wkey; // explicit field the History UI prefers
+    e.projectDir = primaryDir;
+    e.target = 'workspace';
+    out.push(e);
+  }
+}
+
 /** Every pipeline across every store key, newest-first, tagged with project. */
 export async function listAllPipelines(opts = {}) {
   const root = storeRoot();
@@ -402,6 +564,17 @@ export async function listAllPipelines(opts = {}) {
   const out = [];
   for (const k of keys) {
     if (!k.isDirectory()) continue;
+    // The "workspaces" entry is a CONTAINER, not a pipeline-bearing key: recurse one
+    // level and treat each <workspaceKey>/ child as a key dir.
+    if (k.name === 'workspaces') {
+      let wkeys;
+      try { wkeys = await readdir(join(root, k.name), { withFileTypes: true }); } catch { continue; }
+      for (const wk of wkeys) {
+        if (!wk.isDirectory()) continue;
+        await pushWorkspaceRows(out, wk.name, opts);
+      }
+      continue;
+    }
     const keyDir = join(root, k.name);
     let meta = null;
     try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; }
@@ -451,12 +624,12 @@ export async function readPipeline(projectDir, id) {
 }
 
 /**
- * Read a pipeline directly from a store key (project-agnostic). Matches by
- * pipeline short-id (state.id) or by directory basename. Returns null when the
- * key or id is unknown (so the API maps it to a 404).
+ * Read a single pipeline from an absolute pipelines/ directory, matching by
+ * directory basename then by state.id. Returns the {state, auditMarkdown} pair, or
+ * null when the dir or id is unknown. Shared by the project- and workspace-rooted
+ * readers so the match/read logic stays identical.
  */
-export async function readPipelineByKey(key, id) {
-  const pipelinesDir = join(projectStorePath(key), 'pipelines');
+async function readPipelineFromDir(pipelinesDir, id) {
   let entries;
   try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
   let matchDir = null;
@@ -474,4 +647,46 @@ export async function readPipelineByKey(key, id) {
   let auditMarkdown = '';
   try { auditMarkdown = await readFile(join(matchDir, 'pipeline.md'), 'utf8'); } catch { auditMarkdown = ''; }
   return { state, auditMarkdown };
+}
+
+/**
+ * Read a pipeline directly from a store key (project-agnostic). Matches by
+ * pipeline short-id (state.id) or by directory basename. Returns null when the
+ * key or id is unknown (so the API maps it to a 404). Accepts a workspace
+ * composite key "workspaces/<workspaceKey>" as-is (projectStorePath joins it under
+ * storeRoot()).
+ */
+export async function readPipelineByKey(key, id) {
+  return readPipelineFromDir(join(projectStorePath(key), 'pipelines'), id);
+}
+
+/**
+ * List pipelines for a workspace from its OWN store namespace
+ * (store/workspaces/<workspaceKey>/pipelines), newest-first. `primaryDir` supplies
+ * live branch facts (best-effort, primary repo only). Mirrors listPipelines.
+ * @param {string} workspaceKey
+ * @param {string} [primaryDir]
+ * @param {object} [opts]
+ */
+export async function listWorkspacePipelines(workspaceKey, primaryDir = null, opts = {}) {
+  const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    out.push(await pipelineEntry(join(pipelinesDir, ent.name), primaryDir, opts));
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+/**
+ * Read a single workspace pipeline by id, rooted in the workspace store. Mirrors
+ * readPipelineByKey but joins ONLY workspaceStorePath(workspaceKey) so there is no
+ * path-traversal surface (the server validates the key against WORKSPACE_ID_RE).
+ * Returns null when the workspace or id is unknown.
+ */
+export async function readWorkspacePipeline(workspaceKey, id) {
+  return readPipelineFromDir(join(workspaceStorePath(workspaceKey), 'pipelines'), id);
 }

@@ -7,13 +7,17 @@ import { join } from 'node:path';
 import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns the 7 shipped agents', () => {
+test('loadAgentRegistry returns all shipped agents (7 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer'],
+    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 7);
+  assert.equal(Object.keys(reg).length, 9);
+  // The two workspace agents are scope:'workspace-only'; the original 7 are 'project'.
+  const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
+  assert.deepEqual(projectScoped,
+    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
 });
 
 test('each entry is a well-formed AgentMeta', () => {
@@ -49,8 +53,11 @@ test('registry insertion order follows .order ascending', () => {
   const reg = loadAgentRegistry();
   const orders = Object.values(reg).map((m) => m.order);
   assert.deepEqual(orders, [...orders].sort((a, b) => a - b));
+  // workspaceScanner (order 0.5) sorts first; workspaceReviewer (order 4.5) sorts
+  // between reviewer (4) and manualTestsChecklist (5).
   assert.deepEqual(Object.keys(reg), [
-    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
+    'workspaceScanner', 'planner', 'refiner', 'implementer', 'reviewer', 'workspaceReviewer',
+    'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
 });
 
@@ -101,10 +108,11 @@ test('original four agentFiles match the orchestrator AGENT_FILES map', () => {
   }
 });
 
-test('exactly the two verifiers are loopSources; producers are not', () => {
+test('exactly the verifiers are loopSources; producers are not', () => {
   const reg = loadAgentRegistry();
   const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
-  assert.deepEqual(loopSources, ['manualWebUiTesting', 'planReviewer', 'reviewer']);
+  // workspaceReviewer is the workspace-run review loop source (mirrors reviewer).
+  assert.deepEqual(loopSources, ['manualWebUiTesting', 'planReviewer', 'reviewer', 'workspaceReviewer']);
   for (const m of Object.values(reg)) {
     if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
   }

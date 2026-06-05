@@ -87,3 +87,22 @@ test('every sidecar declares produces/consumes/connectsTo explicitly', async () 
     assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `${f} connectsTo`);
   }
 });
+
+test('M4: the two workspace agents are paired (md + sidecar) and scope:"workspace-only"', async () => {
+  const { prompts } = await listAgents();
+  const registry = loadAgentRegistry(AGENTS_DIR);
+  for (const key of ['workspaceScanner', 'workspaceReviewer']) {
+    assert.ok(registry[key], `${key} present in the registry`);
+    assert.equal(registry[key].scope, 'workspace-only', `${key} is workspace-only`);
+    assert.ok(registry[key].agentFile, `${key} names an agentFile`);
+    assert.ok(prompts.includes(registry[key].agentFile), `${key} prompt .md exists`);
+  }
+  // The pair files exist by their canonical names.
+  assert.ok(prompts.includes('maestro-workspace-scanner.md'));
+  assert.ok(prompts.includes('maestro-workspace-reviewer.md'));
+});
+
+test('M4: a workspace-only sidecar carries the optional scope field on disk', async () => {
+  const raw = JSON.parse(await readFile(join(AGENTS_DIR, 'workspaceScanner.meta.json'), 'utf8'));
+  assert.equal(raw.scope, 'workspace-only', 'the sidecar declares scope explicitly');
+});

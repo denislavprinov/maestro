@@ -332,6 +332,67 @@ starts, and `maxCycles ≥ 1` bounds every cycle.
 
 ---
 
+## Workspace agents (`scope` + the `workspace` channel)
+
+Two shipped agents are **workspace-only** — they exist only for a run that targets a
+*Workspace* (a set of 2+ member projects). They are the model for any future
+workspace-scoped agent:
+
+| Agent | `key` | `runnerType` | Role |
+|-------|-------|--------------|------|
+| Workspace Scan | `workspaceScanner` | `producer` | OFF-pipeline. The wizard's scan agent: fans out one read-only investigator per member project and synthesizes the editable interconnection description. NOT a workflow node — driven directly by the scan engine, never the dispatcher. |
+| Workspace Review | `workspaceReviewer` | `verifier` (`loopSource`) | IN-pipeline. The workspace-run replacement for `reviewer`: fans out one reviewer per CHANGED member (diffing that member's `checkpointRef…feature`) and synthesizes ONE merged verdict (the UNION of every critical/major issue, sorted by `projectKey` then severity). |
+
+Three things make a workspace agent different from an ordinary one:
+
+1. **The optional `scope` sidecar field.** Set `"scope": "workspace-only"` to keep an
+   agent OUT of the single-project Composer palette (`GET /api/agents` filters it) and
+   out of `AGENT_STEPS` / the per-project config keyspace. `normalizeMeta` coerces any
+   other value (or its absence) to `"project"`, so a typo fails safe to a *visible*
+   project agent rather than a silently-hidden one. `registryToSteps` excludes
+   `workspace-only` agents, so `AGENT_STEPS` stays exactly the 7 project steps —
+   adding a workspace agent never perturbs single-project behavior.
+
+   ```json
+   {
+     "key": "workspaceScanner",
+     "displayName": "Workspace Scan",
+     "runnerType": "producer",
+     "fanOut": true,
+     "produces": ["workspace"],
+     "consumes": ["userPrompt"],
+     "connectsTo": [],
+     "order": 0.5,
+     "scope": "workspace-only"
+   }
+   ```
+
+2. **The `workspace` channel.** Workspace metadata (the frozen interconnection
+   description + the member set) rides a first-class `workspace` channel
+   (`kind: 'metadata'`), seeded once by the orchestrator and never re-published. A
+   sidecar that `produces`/`consumes` `"workspace"` is only legal because `"workspace"`
+   is in `CHANNEL_IDS` (`src/core/channels.mjs`). **`channelList` silently DROPS an
+   unknown channel id** — so if you add a channel-using agent, add the id to
+   `CHANNEL_IDS` *first*, or `produces`/`consumes` collapse to `[]`. The
+   `workspaceScanner.produces === ['workspace']` canary test guards exactly this.
+
+3. **The off-pipeline contract for the scanner.** `workspaceScanner` is a producer
+   but does NOT route through `runners.mjs` — its runner is `runWorkspaceScan` in
+   `phases.mjs`, called by the scan engine. With `connectsTo: []` and
+   `scope: 'workspace-only'` it is non-composable in either palette, and
+   `resolveWorkflow` throws if it is ever hand-authored as a workflow node (and the
+   producer dispatch throws `unknown producer agent "workspaceScanner"`). The
+   `workspaceReviewer`, by contrast, IS a real node: it adds a `case 'workspaceReviewer'`
+   verifier arm to `runners.mjs` and is substituted in for `reviewer` at resolve time
+   when the run is a workspace run.
+
+> A workspace run injects the frozen description into EVERY agent's system prompt via
+> the 4th `workspace` arg of `buildSystemPrompt` (`workspaceContextBlock`), so the 7
+> ordinary agents need only ONE additive "## Workspace runs" paragraph each — never a
+> rewrite. Single-project prompts are byte-identical because the helper returns `''`.
+
+---
+
 ## Verify (the pairing guard)
 
 Adding an agent means **two** files. This invariant — every prompt has a sibling
@@ -356,4 +417,12 @@ workflow end to end:
 
 ```bash
 MAESTRO_MOCK=1 npm run smoke
+```
+
+For a workspace agent, also run the offline workspace smoke — it proves the
+mock workspace pipeline (description injection + the `workspaceReviewer` review →
+implementer loop terminating) end to end with `$0` spend:
+
+```bash
+npm run smoke:workspace
 ```

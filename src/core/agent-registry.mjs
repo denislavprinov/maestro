@@ -32,6 +32,11 @@ const DEFAULT_SPEC = {
   manualTestsChecklist: { consumes: ['plan', 'code'],      produces: ['checklist'],       connectsTo: ['manualWebUiTesting'] },
   manualWebUiTesting:   { consumes: ['checklist', 'code'], produces: ['review'],          connectsTo: ['implementer'] },
   planReviewer:         { consumes: ['plan'],              produces: ['review'],          connectsTo: ['planner', 'implementer'] },
+  // Workspace agents (scope:'workspace-only', §6.2). The scanner is off-pipeline
+  // (connectsTo:[] -> non-composable); the reviewer slots into the code->review->
+  // implementer loop exactly like `reviewer`.
+  workspaceScanner:     { consumes: ['userPrompt'],        produces: ['workspace'],       connectsTo: [] },
+  workspaceReviewer:    { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer'] },
 };
 
 /** Array of known channel ids from raw input; warns on (and drops) unknown ids (m1). */
@@ -78,6 +83,11 @@ function normalizeMeta(raw) {
   if (!Number.isFinite(order)) return null;
   const color = COLORS.has(raw.color) ? raw.color : 'amber';
   const runnerType = RUNNER_TYPES.has(raw.runnerType) ? raw.runnerType : 'producer';
+  // §6.6 scope coercion (fail-safe, mirrors color): anything but the explicit
+  // 'workspace-only' marker is a normal 'project'-scope agent, so a typo fails
+  // safe to a VISIBLE project agent (surfaced by the palette test) rather than a
+  // silently-hidden one.
+  const scope = raw.scope === 'workspace-only' ? 'workspace-only' : 'project';
   const spec = DEFAULT_SPEC[key] || {};
   const rtFallbackConsumes = runnerType === 'verifier' ? ['code'] : ['userPrompt'];
   const consumes = channelList(raw.consumes, key, 'consumes') || spec.consumes || rtFallbackConsumes;
@@ -94,6 +104,7 @@ function normalizeMeta(raw) {
     icon: typeof raw.icon === 'string' ? raw.icon : '',
     agentFile: typeof raw.agentFile === 'string' && raw.agentFile.trim() ? raw.agentFile.trim() : null,
     runnerType,
+    scope,
     loopSource: !!raw.loopSource,
     fanOut: !!raw.fanOut,
     consumes,
@@ -138,11 +149,17 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR) {
  * Derive the legacy `[{key,label}]` step list from a registry (replacement source
  * for the hardcoded AGENT_STEPS). The original four roles keep their short legacy
  * labels; any additional agent uses its `displayName`.
+ *
+ * §6.6/C9: `scope:'workspace-only'` agents are EXCLUDED — they are not part of the
+ * single-project UI stepper / per-step config keyspace that AGENT_STEPS drives, so
+ * this still returns EXACTLY the 7 project-scope steps (the byte-identity invariant;
+ * without the exclusion the two workspace sidecars would push it to 9).
  * @param {Record<string, object>} registry
  * @returns {Array<{key:string,label:string,fanOut:boolean}>}
  */
 export function registryToSteps(registry) {
   return Object.values(registry || {})
+    .filter((m) => m.scope !== 'workspace-only')
     .sort((a, b) => a.order - b.order)
     .map((m) => ({ key: m.key, label: LEGACY_LABELS[m.key] || m.displayName, fanOut: !!m.fanOut }));
 }

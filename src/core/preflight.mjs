@@ -294,3 +294,20 @@ export async function detectTools(projectDir) {
     instruction: buildInstruction(tool, kind),
   };
 }
+
+/**
+ * Detect tooling for EACH project in a workspace, in parallel. A trivial
+ * Promise.all over detectTools, returning a Map keyed by projectDir so the
+ * orchestrator can grant each member its own per-project graph instruction.
+ * detectTools never throws, so this never throws. Member order is irrelevant
+ * (the Map is keyed by dir); the caller iterates by sorted projectKey.
+ * @param {string[]} projectDirs
+ * @returns {Promise<Map<string,{tool,kind,instruction}>>}
+ */
+export async function detectToolsPerProject(projectDirs) {
+  const dirs = Array.isArray(projectDirs) ? projectDirs : [];
+  const infos = await Promise.all(dirs.map((dir) => detectTools(dir)));
+  const map = new Map();
+  dirs.forEach((dir, i) => map.set(dir, infos[i]));
+  return map;
+}

@@ -55,3 +55,13 @@ export function storeRoot() {
 export function projectStorePath(key) {
   return join(storeRoot(), key);
 }
+
+/** Root of the workspace store namespace: <maestroHome>/store/workspaces. */
+export function workspacesStoreRoot() {
+  return join(storeRoot(), 'workspaces');
+}
+
+/** Per-workspace store directory: <maestroHome>/store/workspaces/<workspaceKey>. */
+export function workspaceStorePath(workspaceKey) {
+  return join(workspacesStoreRoot(), workspaceKey);
+}

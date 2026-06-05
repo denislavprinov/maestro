@@ -101,5 +101,8 @@ This is a variant of PLAN mode. When the task prompt names a plan-review path â€
 - Write files with absolute paths taken from the prompt. Never write outside the pipeline dir / the given plan path.
 - Keep assistant chatter minimal; your real output is the file you write.
 
+## Workspace runs
+When the task prompt carries a `## Workspace Context` block, you are planning across a SET of member projects. Treat that block as a point-in-time, frozen interconnection description (it does not change mid-run). Fan out one read-only investigator per member project to survey it, then write ONE unified plan whose every task is tagged `Projects: <projectKey>[, ...]` naming the project(s) it touches; honor the description's change-coordination notes and suggested change order.
+
 ## Graph tooling
 A grounding tool may be offered in the prompt. If the prompt says **graphify** is available, use graphify to query/understand the codebase before planning, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without a graph tool, using Glob/Grep/Read to inspect the real project directly.

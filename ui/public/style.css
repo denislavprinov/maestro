@@ -743,3 +743,57 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   user-select: none;
 }
 .fanout-toggle input { margin: 0; cursor: pointer; }
+
+/* ========================================================================== */
+/* Workspaces — target selector, management cards, creation wizard, scan loader */
+/* (reuses :root tokens --field/--line/--ink/--panel/--shadow-soft)            */
+/* ========================================================================== */
+
+/* New-Pipeline target panes (mutually exclusive). */
+.target-pane.hidden{display:none;}
+.ws-members{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;}
+.ws-members .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);}
+.ws-members .chip.missing{background:var(--red-bg);color:var(--red-ink);border-color:var(--red);}
+
+/* Workspace management cards. */
+.ws-card{padding:0;overflow:hidden;}
+.ws-head{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;}
+.ws-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.ws-h-meta{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.ws-h-meta .ws-name{font-weight:600;font-size:15px;letter-spacing:-.01em;color:var(--ink);}
+.ws-h-meta .ws-projects{display:block;width:100%;font-family:var(--mono);font-size:12px;color:var(--ink-3);}
+.ws-stale[hidden]{display:none;}
+.ws-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
+.ws-actions .btn-ghost{padding:7px 12px;font-size:12px;}
+.ws-card .chev{width:15px;height:15px;flex:0 0 auto;color:var(--ink-3);}
+.ws-detail{padding:0 20px 18px;border-top:1px dashed var(--line-2);}
+.ws-detail[hidden]{display:none;}
+.ws-desc-view{margin-top:14px;}
+.ws-desc-edit[hidden]{display:none;}
+.ws-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);border:1.5px solid var(--red-ink,#d9534f);color:#fff;font-family:inherit;font-weight:600;font-size:12px;padding:7px 12px;border-radius:8px;cursor:pointer;}
+.ws-delete:hover:not(:disabled){filter:brightness(0.95);}
+.ws-delete:disabled{opacity:.6;cursor:default;}
+
+/* Wizard step panes. */
+.wiz-step.hidden{display:none;}
+.wiz-proj-list{display:flex;flex-direction:column;gap:2px;border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);padding:6px;background:var(--field);}
+.wiz-proj{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;cursor:pointer;font-size:13.5px;color:var(--ink);}
+.wiz-proj:hover{background:#fff;}
+.wiz-proj input{margin:0;cursor:pointer;}
+.wiz-proj.missing{color:var(--ink-3);cursor:not-allowed;}
+
+/* Live scan loader (role=status aria-live=polite). */
+.ws-loader{display:flex;flex-direction:column;align-items:center;gap:12px;padding:36px 24px;text-align:center;}
+.spinner{width:38px;height:38px;border-radius:50%;border:3px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+@keyframes ws-spin{to{transform:rotate(360deg);}}
+.status-label{font-weight:600;font-size:14.5px;color:var(--ink);max-width:520px;}
+.status-sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);}
+
+/* Phase track: graph → investigate → synthesize. */
+.wiz-phase-track{display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 0 14px;}
+.wiz-phase-track [data-phase]{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);background:var(--field);border:1px solid var(--line);border-radius:999px;padding:6px 14px;}
+.wiz-phase-track [data-phase].active{color:#fff;background:var(--ink);border-color:var(--ink);}
+
+/* History pill "WS" badge for workspace runs. */
+.hist-pill.ws::before{content:'WS';font-size:9px;font-weight:800;letter-spacing:.06em;background:var(--violet-bg);color:var(--violet-ink);border-radius:5px;padding:2px 5px;margin-right:2px;}
+.hist-pill.ws.active::before{background:rgba(255,255,255,.22);color:#fff;}

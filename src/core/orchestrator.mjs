@@ -28,7 +28,8 @@ import {
   slugify,
   today,
 } from './artifacts.mjs';
-import { detectTools, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
+import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
+import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runPlannerClarify } from './phases.mjs';
@@ -39,6 +40,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
+  isValidSourceRef,
 } from './worktree.mjs';
 
 /**
@@ -52,7 +54,26 @@ const AGENT_FILES = {
   implementer: 'maestro-implementer.md',
   reviewer: 'maestro-code-reviewer.md',
   planReviewer: 'maestro-plan-reviewer.md',
+  // Workspace review synthesizer: its body is the contract (no FALLBACK_PROMPTS
+  // entry, C10), so it must load into agentPrompts for a real workspace run. The
+  // off-pipeline scanner is NOT here (it is driven by the M5 scan engine, not the
+  // dispatcher, which supplies agentPrompts.workspaceScanner itself).
+  workspaceReviewer: 'maestro-workspace-reviewer.md',
 };
+
+/**
+ * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
+ * The orchestrator forces `node.fanOut=true` on these when isWorkspace, unlocking
+ * the Task/Agent tool via effectiveAllowedTools. NOTE the set lists
+ * `workspaceReviewer`, NOT `reviewer`: on a workspace run the review node is
+ * substituted to `workspaceReviewer` (the synthesizer) at resolve time
+ * (workflows.mjs, gated on isWorkspace), so it IS in this set and gets
+ * fanOut=true here. `reviewer` never appears in a workspace plan — it is the
+ * single-project review node only.
+ */
+const FANOUT_ELIGIBLE = new Set([
+  'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer',
+]);
 
 /**
  * Create an orchestrator instance.
@@ -77,7 +98,31 @@ class Orchestrator extends EventEmitter {
   constructor(opts) {
     super();
     this.opts = opts || {};
-    this.projectDir = resolve(this.opts.projectDir || process.cwd());
+
+    // ── Workspace mode (opt-in; absent => single-project, every path unchanged) ──
+    // A workspace run targets 2+ member projects (sorted by projectKey). The scalar
+    // projectDir/workDir below point at the PRIMARY (members[0]) so every existing
+    // call site that reads them keeps working; per-project data lives in the maps.
+    this.workspace = this.opts.workspace || null;
+    this.isWorkspace = !!this.workspace;
+    this.workspaceKey = this.workspace?.key || null;
+    this.members = Array.isArray(this.workspace?.projects)
+      ? this.workspace.projects
+          .slice()
+          .sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0))
+      : [];
+    this.memberByKey = new Map(this.members.map((m) => [m.projectKey, m]));
+    this.workDirs = new Map();         // projectKey -> worktree checkout dir
+    this.checkpointRefs = {};          // projectKey -> pre-run commit
+    this.branchInfos = new Map();      // projectKey -> createWorktree() result
+    this.toolInstructions = new Map(); // projectKey -> per-project graph instruction
+    this.workspaceDescription = '';    // frozen at run start (after createPipeline)
+
+    // primaryCwd: the lowest-projectKey member in workspace mode, else the scalar
+    // projectDir. resolve() keeps the single-project behavior byte-identical.
+    this.projectDir = this.isWorkspace
+      ? resolve(this.members[0].projectDir)
+      : resolve(this.opts.projectDir || process.cwd());
     this.claude = {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
@@ -209,7 +254,24 @@ class Orchestrator extends EventEmitter {
       // after createPipeline below.
       const registry = await loadAgentRegistry();
       this.registry = registry; // ▲ v3: expose for run-start workflow validation (D4)
-      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry);
+      // [C5/M4] On a workspace run, resolveWorkflow substitutes the review node's key
+      // reviewer -> workspaceReviewer (the fan-out synthesizer). Single-project runs
+      // pass isWorkspace:false, so the resolved plan is byte-identical to today.
+      const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry, undefined, {
+        isWorkspace: this.isWorkspace,
+      });
+      // Workspace fan-out forcing (§5.5, C4): the ONLY in-orchestrator topology change a
+      // workspace run makes — force fanOut=true on the eligible nodes so they fan out
+      // across member projects. Applied right after resolveWorkflow; absent isWorkspace
+      // the plan is untouched. workspaceReviewer is now the resolved review node key
+      // (substituted in workflows.mjs above), so the review fan-out is forced here.
+      if (this.isWorkspace) {
+        for (const group of plan.steps) {
+          for (const node of group) {
+            if (FANOUT_ELIGIBLE.has(node.key)) node.fanOut = true;
+          }
+        }
+      }
       this.state.stepper = buildStepperManifest(plan, registry);
       this._emit('state', this.getState());
 
@@ -232,15 +294,53 @@ class Orchestrator extends EventEmitter {
           : 'No knowledge-graph tooling detected',
       );
 
-      // 2) Create the pipeline directory + audit.
+      // 2) Create the pipeline directory + audit. On a workspace run the pipeline is
+      // written to the WORKSPACE store (artifactPaths routes by workspaceKey),
+      // state.json carries the §5.2 superset, and workspace-description.md is frozen
+      // (capped at 2000) — all owned by createPipeline (M1). Absent the workspace
+      // opts the single-project call is byte-identical.
       this.pipeline = await createPipeline(this.projectDir, {
         prompt: this.opts.prompt,
         promptFile: this.opts.promptFile,
         extras: this.opts.extras,
         title: this.opts.title,
+        ...(this.isWorkspace ? {
+          workspaceKey: this.workspaceKey,
+          workspaceId: this.workspace.id,
+          workspaceName: this.workspace.name,
+          workspaceDescription: this.workspace.description || '',
+          projects: this.members.map((m) => ({
+            projectKey: m.projectKey,
+            projectDir: m.projectDir,
+            projectName: m.projectName,
+          })),
+        } : {}),
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
+      // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
+      // description now (read from the pipeline's frozen state.json snapshot, never
+      // re-read from workspaces.json), so later registry edits never alter this run.
+      if (this.isWorkspace) {
+        // Freeze from the on-disk snapshot createPipeline wrote (the capped,
+        // point-in-time copy) — never re-read from workspaces.json mid-run.
+        this.workspaceDescription = await readFile(
+          join(this.pipeline.dir, 'workspace-description.md'), 'utf8',
+        ).catch(() => this.workspace.description || '');
+        this.state.target = 'workspace';
+        this.state.workspaceId = this.workspace.id;
+        this.state.workspaceKey = this.workspaceKey;
+        this.state.workspaceName = this.workspace.name;
+        this.state.workspaceDescription = this.workspaceDescription;
+        this.state.projectKeys = this.members.map((m) => m.projectKey);
+        this.state.projects = this.members.map((m) => ({
+          projectKey: m.projectKey,
+          projectDir: resolve(m.projectDir),
+          projectName: m.projectName,
+        }));
+        this.state.checkpointRefs = {};
+        this.state.branches = {};
+      }
       if (!this.state.title) this.state.title = basename(this.pipeline.dir);
       this.baseName = this._deriveBaseName(this.pipeline.promptText, this.state.title);
       // Capture the date prefix ONCE so every plan -vN and the review file share
@@ -260,18 +360,22 @@ class Orchestrator extends EventEmitter {
         );
       }
 
-      // 3) Ensure a git repo + checkpoint commit.
-      await this._ensureGitCheckpoint();
+      // 3) Ensure a git repo + checkpoint commit (per member on a workspace run).
+      if (this.isWorkspace) await this._ensureGitCheckpointAll();
+      else await this._ensureGitCheckpoint();
       this._phase('preflight', 0, 'done');
       this._checkAbort();
 
-      // 3b) Set up the per-pipeline worktree. All subsequent claude spawns cwd
-      // into this.workDir; artifacts continue to live under this.projectDir.
-      await this._setupWorktree();
+      // 3b) Set up the per-pipeline worktree(s). All subsequent claude spawns cwd
+      // into this.workDir (the primary on a workspace run; per-member fan-out
+      // sub-agents cwd into this.workDirs). Artifacts route via the workspace store.
+      if (this.isWorkspace) await this._setupWorktreeAll();
+      else await this._setupWorktree();
       this._checkAbort();
 
-      // 3c) Build the knowledge graph INSIDE the worktree so agents can query it.
-      await this._buildWorktreeGraph();
+      // 3c) Build the knowledge graph INSIDE each worktree so agents can query it.
+      if (this.isWorkspace) await this._buildWorktreeGraphAll();
+      else await this._buildWorktreeGraph();
       this._checkAbort();
 
       // 4) Planner clarify (single round).
@@ -320,9 +424,11 @@ class Orchestrator extends EventEmitter {
       });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
-      // C1: always tear the worktree down. By now this.state.status is the
-      // terminal value (done/stopped/error), which decides branch retention.
-      await this._teardownWorktree().catch(() => {});
+      // C1: always tear the worktree(s) down. By now this.state.status is the
+      // terminal value (done/stopped/error); the branch is always kept (every
+      // member's, on a workspace run), only the disposable checkout is removed.
+      if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
+      else await this._teardownWorktree().catch(() => {});
     }
   }
 
@@ -359,6 +465,85 @@ class Orchestrator extends EventEmitter {
       this.pipeline.dir,
       `Worktree: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
     );
+    this._emit('state', this.getState());
+  }
+
+  /**
+   * Resolve the worktree source/feature branch pair for ONE member (D2). The named
+   * source (run-level or per-member) is used only when it resolves to a real commit
+   * IN THAT member's repo; otherwise the member's own default branch. The feature is
+   * the run-level featureBranch suffixed with the project slug (so members never
+   * collide on one branch name), or a suggested name when none was given.
+   * @param {{projectDir,projectKey,projectName,branch?:{source?,feature?}}} m
+   * @returns {Promise<{source:string, featureRaw:string}>}
+   */
+  async _resolveMemberBranches(m) {
+    const dir = resolve(m.projectDir);
+    const named = (m.branch && m.branch.source) || this.branchOpts.source || null;
+    const source = (named && (await isValidSourceRef(dir, named)))
+      ? named
+      : await resolveDefaultBranch(dir);
+    const feature = (m.branch && m.branch.feature) || this.branchOpts.feature || null;
+    const featureRaw = feature
+      ? sanitizeBranchName(`${feature}-${slugify(m.projectName)}`)
+      : suggestBranchName({
+          prompt: this.pipeline.promptText,
+          title: `${this.opts.title || ''} ${m.projectName}`.trim() || null,
+          pipelineId: this.pipeline.id,
+        });
+    return { source, featureRaw };
+  }
+
+  /**
+   * Workspace worktree setup (D3): one worktree per member in ITS OWN repo at
+   * <m.projectDir>/.maestro/worktrees/<pipelineId>/, in parallel (cap fanoutCap()).
+   * Populates this.workDirs/this.branchInfos/state.branches[projectKey] and mirrors
+   * the scalar this.workDir/this.branchInfo to the primary (members[0]). Results are
+   * in sorted-projectKey order (mapWithCap is deterministic), so writes are stable.
+   * createWorktree's M2 resume/in-use semantics apply per member unchanged. Each
+   * created worktree is registered into this.branchInfos/workDirs/state.branches
+   * IMMEDIATELY (before the whole batch settles), so if a later member throws (e.g.
+   * its branch is already checked out) the partial worktrees are still found and
+   * torn down by _teardownWorktreeAll in run()'s finally (§5.10 edge 4).
+   */
+  async _setupWorktreeAll() {
+    this._log('worktree', 'info', `Resolving source/feature branches for ${this.members.length} members…`);
+    this.state.branches = this.state.branches || {};
+    await mapWithCap(this.members, fanoutCap(), async (m) => {
+      const { source, featureRaw } = await this._resolveMemberBranches(m);
+      const info = await createWorktree({
+        projectDir: resolve(m.projectDir),
+        pipelineId: this.pipeline.id,
+        sourceBranch: source,
+        featureBranch: featureRaw,
+        signal: this.abort.signal,
+      });
+      // Register eagerly (Map.set is synchronous, safe under bounded concurrency)
+      // so a sibling's failure cannot orphan this worktree past teardown.
+      this.workDirs.set(m.projectKey, info.worktreeDir);
+      this.branchInfos.set(m.projectKey, info);
+      this.state.branches[m.projectKey] = {
+        source: info.sourceBranch,
+        feature: info.branch,
+        worktreeDir: info.worktreeDir,
+        reusedExisting: info.reusedExisting,
+      };
+      const reuseNote = info.reusedExisting ? ' (resumed existing branch)' : '';
+      await appendAudit(
+        this.pipeline.dir,
+        `Worktree \`${m.projectKey}\`: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
+      ).catch(() => {});
+    });
+    // Scalars mirror the primary so existing scalar readers keep working. C8: the
+    // scalar state.branch is the primary's OBJECT (pipeline-delete reads .feature/
+    // .worktreeDir), copied from state.branches[primaryKey].
+    const primary = this.members[0];
+    if (primary && this.state.branches[primary.projectKey]) {
+      this.workDir = this.workDirs.get(primary.projectKey);
+      this.branchInfo = this.branchInfos.get(primary.projectKey);
+      this.state.branch = { ...this.state.branches[primary.projectKey] };
+    }
+    await this._persist();
     this._emit('state', this.getState());
   }
 
@@ -400,6 +585,42 @@ class Orchestrator extends EventEmitter {
         `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`,
       );
     }
+  }
+
+  /**
+   * Workspace graph builds (D4): build a graphify graph inside EACH member worktree
+   * in parallel (cap 4), storing this.toolInstructions[projectKey]. Fail-safe per
+   * §5.8: a member whose detectTools.kind !== 'cli' or whose build fails/times out
+   * degrades to '' (source-reading) WITHOUT aborting the others. Skipped wholesale
+   * in mock mode (keeps `npm run smoke` offline + deterministic), matching the
+   * single-project _buildWorktreeGraph mock guard.
+   */
+  async _buildWorktreeGraphAll() {
+    if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
+    const dirs = this.members.map((m) => resolve(m.projectDir));
+    const toolsByDir = await detectToolsPerProject(dirs); // never throws
+    await mapWithCap(this.members, 4, async (m) => {
+      const workDir = this.workDirs.get(m.projectKey);
+      const info = toolsByDir.get(resolve(m.projectDir));
+      if (!workDir || workDir === resolve(m.projectDir)) {
+        this.toolInstructions.set(m.projectKey, '');
+        return;
+      }
+      if (info?.kind !== 'cli') {
+        this.toolInstructions.set(m.projectKey, '');
+        this._log('graph', 'info', `graphify CLI not on PATH for ${m.projectKey}; skipping graph build`);
+        return;
+      }
+      const res = await runGraphifyUpdate({ dir: workDir, cwd: workDir, timeoutMs: this.graphBuildTimeoutMs });
+      if (res.ok) {
+        this.toolInstructions.set(m.projectKey, worktreeGraphInstruction());
+        this._log('graph', 'info', `graphify graph built in ${m.projectKey} worktree.`);
+        await appendAudit(this.pipeline.dir, `Preflight: built graphify graph for ${m.projectKey} (AST-only).`).catch(() => {});
+      } else {
+        this.toolInstructions.set(m.projectKey, '');
+        this._log('graph', 'warn', `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`);
+      }
+    });
   }
 
   /**
@@ -447,15 +668,65 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Workspace teardown (C1, N times): per member, commit its work onto its feature
+   * branch (in its own repo), remove its checkout, and KEEP the branch — done,
+   * error, or stopped alike. Each member's SHA + survival flags are recorded on
+   * state.branches[projectKey]. Idempotent (guards against a double teardown by
+   * clearing branchInfos); best-effort (never throws). Iterated serially so the
+   * teardown commits don't contend on interleaved git index locks across repos.
+   */
+  async _teardownWorktreeAll() {
+    if (this.branchInfos.size === 0) return;
+    const entries = [...this.branchInfos.entries()]; // [projectKey, info]
+    this.branchInfos = new Map(); // guard against a double teardown
+    for (const [projectKey_, info] of entries) {
+      if (!info || !info.worktreeDir) continue;
+      const branchRecord = (this.state.branches && this.state.branches[projectKey_]) || null;
+      await this._commitWork(info, branchRecord).catch(() => {});
+      const res = await removeWorktree({
+        projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
+        worktreeDir: info.worktreeDir,
+        branch: null, // always keep the branch
+        force: true,
+      });
+      for (const s of res.steps.filter((x) => !x.ok)) {
+        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`);
+      }
+      if (this.pipeline) {
+        await appendAudit(
+          this.pipeline.dir,
+          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (kept branch \`${info.branch}\`).`,
+        ).catch(() => {});
+      }
+      if (branchRecord) {
+        branchRecord.worktreeRemoved = true;
+        branchRecord.branchKept = true;
+      }
+      this.workDirs.delete(projectKey_);
+    }
+    // Keep the scalar mirror coherent for late observers.
+    if (this.state.branch) {
+      this.state.branch.worktreeRemoved = true;
+      this.state.branch.branchKept = true;
+    }
+    this.branchInfo = null;
+    this.workDir = this.projectDir;
+    await this._persist().catch(() => {});
+  }
+
+  /**
    * Commit every change in the worktree onto the feature branch so the kept
    * branch actually carries the agent's work after the worktree is removed.
    * Best-effort: never throws; logs and returns null on any failure. Skips
    * cleanly when the working tree is clean (no diff from the checkpoint), which
    * is the truthful "no change needed" outcome. Records the SHA on state.branch.
    * @param {{worktreeDir:string, branch:string}} info the branch being kept
+   * @param {object} [branchRecord] the state branch object to stamp .commit onto
+   *   (defaults to the scalar this.state.branch; a workspace member passes its own
+   *   state.branches[projectKey] so per-member SHAs are recorded distinctly).
    * @returns {Promise<string|null>} the new commit SHA, or null when nothing committed.
    */
-  async _commitWork(info) {
+  async _commitWork(info, branchRecord = this.state.branch) {
     const cwd = info?.worktreeDir;
     if (!cwd) return null;
     // ignoreAbort on every call: teardown runs after stop/error has aborted the
@@ -493,7 +764,7 @@ class Orchestrator extends EventEmitter {
     }
     const ref = await this._git(['rev-parse', 'HEAD'], gitOpts);
     const sha = ref.ok ? ref.stdout.trim() : null;
-    if (this.state.branch) this.state.branch.commit = sha;
+    if (branchRecord) branchRecord.commit = sha;
     if (sha && this.pipeline) {
       await appendAudit(
         this.pipeline.dir,
@@ -596,10 +867,16 @@ class Orchestrator extends EventEmitter {
     // diffs ctx.checkpointRef, not code.baseRef). Tolerate undefined gracefully.
     const bus = {
       userPrompt: { kind: 'value', text: this.pipeline.promptText, answers: runArgs.answers || [] },
-      plan: { kind: 'artifact', path: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix) },
+      // planPath routes to the workspace store when workspaceKey is set (byte-
+      // identical to today's path otherwise).
+      plan: { kind: 'artifact', path: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix, this.workspaceKey || undefined) },
       review: null,
       checklist: { kind: 'artifact', path: join(this.pipeline.dir, 'manual-tests-checklist.md') },
       code: { kind: 'worktree', dir: this.workDir, baseRef: this.checkpointRef },
+      // Read-only metadata channel: the frozen workspace description + member set
+      // (worktree dir, checkpoint ref, per-project graph instruction). Seeded ONCE
+      // here, never re-published (CONV-6). null on a single-project run.
+      workspace: this.isWorkspace ? this._workspaceChannel() : null,
     };
 
     // Prompt-as-entry-artifact: fill any materializable channel the topology requires
@@ -717,11 +994,34 @@ class Orchestrator extends EventEmitter {
     const ctx = {
       projectDir: this.projectDir, pipelineDir: this.pipeline.dir,
       baseName: this.baseName, datePrefix: this.planDatePrefix, cycle, key: node.key,
+      // allocate() forwards workspaceKey into planPath/reviewPath so a workspace
+      // run's unified plan/review route to the workspace store; null otherwise.
+      workspaceKey: this.workspaceKey,
     };
     const inputs = bindInputs(consumes, optional, snapshot);
     const outputs = {};
     for (const c of produces) outputs[c] = allocate(c, ctx);
     return { inputs, outputs, ...legacyFields(node, inputs, outputs, cycle, this.baseName) };
+  }
+
+  /**
+   * Build the read-only `workspace` metadata channel handle (the bus value for the
+   * workspace channel): the frozen description + the member set with each member's
+   * worktree dir, checkpoint ref, and per-project graph instruction. Seeded once by
+   * _dispatch and never re-published (CONV-6). Members are in sorted-projectKey order.
+   */
+  _workspaceChannel() {
+    return {
+      kind: 'metadata',
+      workspaceDescription: this.workspaceDescription,
+      projects: this.members.map((m) => ({
+        projectKey: m.projectKey,
+        projectName: m.projectName,
+        worktreeDir: this.workDirs.get(m.projectKey),
+        checkpointRef: this.checkpointRefs[m.projectKey],
+        graphInstruction: this.toolInstructions.get(m.projectKey) || '',
+      })),
+    };
   }
 
   /** Publish a node's produced channels back onto the bus (node order). Emits the
@@ -833,6 +1133,9 @@ class Orchestrator extends EventEmitter {
       agentPrompts: this.agentPrompts,
       fanOut,
       checkpointRef: this.checkpointRef,
+      // Workspace metadata for prompt injection (undefined on a single-project run,
+      // so buildSystemPrompt/taskHeader emit the byte-identical single-project text).
+      workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
       onEvent: (e) => this._onAgentEvent(role, e),
       signal: this.abort.signal,
       claudeOpts: {
@@ -889,6 +1192,11 @@ class Orchestrator extends EventEmitter {
       toolInstruction: this.toolInstruction,
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
+      // Workspace metadata for prompt injection — reaches EVERY dispatched runner
+      // (it does not depend on a node declaring `workspace` in consumes). undefined
+      // on a single-project run, preserving byte-identical prompts. _bindNodeIo's
+      // legacyFields would surface the same handle if the node consumed the channel.
+      workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
       signal: this.abort.signal,
       node,
       nodeId: node.nodeId,
@@ -1005,14 +1313,22 @@ class Orchestrator extends EventEmitter {
 
   // ── git checkpoint ─────────────────────────────────────────────────────────
 
-  async _ensureGitCheckpoint() {
-    // C2: `--is-inside-work-tree` is true even when projectDir merely sits
-    // *inside* an enclosing repo (no .git of its own). Acting on that parent
-    // repo would silently create maestro/* branches + checkpoint commits in the
-    // developer's real repo. Require projectDir to BE the repo toplevel; if it
-    // isn't (no repo, or only a parent repo), `git init` a dedicated repo here.
-    const projReal = await realpath(this.projectDir).catch(() => resolve(this.projectDir));
-    const top = await this._git(['rev-parse', '--show-toplevel']);
+  /**
+   * Ensure `dir` is its OWN git repo with at least one commit, and return its
+   * checkpoint ref (HEAD), or null when none could be established. Pure of state
+   * writes — the caller wires checkpointRef(s)/state. Single-project and each
+   * workspace member call this with their own dir (D3: never an enclosing repo).
+   * @param {string} dir
+   * @returns {Promise<string|null>}
+   */
+  async _ensureGitCheckpointFor(dir) {
+    // C2: `--is-inside-work-tree` is true even when dir merely sits *inside* an
+    // enclosing repo (no .git of its own). Acting on that parent repo would
+    // silently create maestro/* branches + checkpoint commits in the developer's
+    // real repo. Require dir to BE the repo toplevel; if it isn't (no repo, or
+    // only a parent repo), `git init` a dedicated repo here.
+    const projReal = await realpath(dir).catch(() => resolve(dir));
+    const top = await this._git(['rev-parse', '--show-toplevel'], { cwd: dir });
     let topReal = null;
     if (top.ok && top.stdout.trim()) {
       topReal = await realpath(top.stdout.trim()).catch(() => top.stdout.trim());
@@ -1023,18 +1339,18 @@ class Orchestrator extends EventEmitter {
         this._log(
           'git',
           'info',
-          `projectDir is nested in repo ${topReal}; initializing a dedicated repo to isolate worktrees.`,
+          `${dir} is nested in repo ${topReal}; initializing a dedicated repo to isolate worktrees.`,
         );
       }
-      await this._git(['init']);
+      await this._git(['init'], { cwd: dir });
       // Ensure an identity exists for the commit (local, non-destructive).
-      await this._git(['config', 'user.email', 'orchestrator@local']);
-      await this._git(['config', 'user.name', 'orchestrator']);
+      await this._git(['config', 'user.email', 'orchestrator@local'], { cwd: dir });
+      await this._git(['config', 'user.name', 'orchestrator'], { cwd: dir });
     }
     // Is there any commit yet?
-    const head = await this._git(['rev-parse', 'HEAD']);
+    const head = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
     if (!head.ok) {
-      await this._git(['add', '-A']);
+      await this._git(['add', '-A'], { cwd: dir });
       const commit = await this._git([
         '-c',
         'user.email=orchestrator@local',
@@ -1044,13 +1360,18 @@ class Orchestrator extends EventEmitter {
         '--allow-empty',
         '-m',
         'orchestrator: initial checkpoint',
-      ]);
+      ], { cwd: dir });
       if (!commit.ok) {
         this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`);
       }
     }
-    const ref = await this._git(['rev-parse', 'HEAD']);
-    this.checkpointRef = ref.ok ? ref.stdout.trim() : null;
+    const ref = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
+    return ref.ok ? ref.stdout.trim() : null;
+  }
+
+  /** Single-project checkpoint: own repo + commit, record the scalar ref + state. */
+  async _ensureGitCheckpoint() {
+    this.checkpointRef = await this._ensureGitCheckpointFor(this.projectDir);
     this.state.checkpointRef = this.checkpointRef;
     if (this.checkpointRef) {
       await appendAudit(
@@ -1063,6 +1384,33 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Workspace checkpoint: run _ensureGitCheckpointFor once per member (serial —
+   * git is cheap and serial avoids interleaved index locks), record
+   * this.checkpointRefs[projectKey], mirror the scalar this.checkpointRef to the
+   * primary, and write state.checkpointRefs (+ scalar). Members are iterated in
+   * sorted-projectKey order so the primary is members[0].
+   */
+  async _ensureGitCheckpointAll() {
+    for (const m of this.members) {
+      const ref = await this._ensureGitCheckpointFor(resolve(m.projectDir));
+      this.checkpointRefs[m.projectKey] = ref;
+      if (ref) {
+        await appendAudit(
+          this.pipeline.dir,
+          `Git checkpoint for \`${m.projectKey}\` at \`${ref.slice(0, 10)}\`.`,
+        ).catch(() => {});
+      } else {
+        this._log('git', 'warn', `No git checkpoint ref for ${m.projectKey} (continuing).`);
+      }
+    }
+    const primaryKey = this.members[0]?.projectKey;
+    this.checkpointRef = primaryKey ? this.checkpointRefs[primaryKey] : null;
+    this.state.checkpointRef = this.checkpointRef;
+    this.state.checkpointRefs = { ...this.checkpointRefs };
+    await this._persist();
+  }
+
+  /**
    * Stage every change in the working tree with intent-to-add so that newly
    * created (untracked) files show up in a plain `git diff` for the reviewer.
    * Uses `git add -A -N`: it records intent-to-add for new paths (making their
@@ -1070,6 +1418,17 @@ class Orchestrator extends EventEmitter {
    * checkpoint commit remains the single diff base. Best-effort; never throws.
    */
   async _stageWorkingTree() {
+    if (this.isWorkspace) {
+      // Stage EVERY member worktree (not just primary) so each per-project
+      // reviewer's `git diff` sees that project's agent edits.
+      for (const dir of this.workDirs.values()) {
+        const res = await this._git(['add', '-A', '-N'], { cwd: dir });
+        if (!res.ok && res.stderr && res.stderr.trim()) {
+          this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`);
+        }
+      }
+      return;
+    }
     // Stage inside the worktree so the reviewer's `git diff` sees agent edits.
     const res = await this._git(['add', '-A', '-N'], { cwd: this.workDir });
     if (!res.ok && res.stderr && res.stderr.trim()) {

@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { projectKey, canonicalProjectRoot, storeRoot, projectStorePath } from '../src/core/store.mjs';
+import { projectKey, canonicalProjectRoot, storeRoot, projectStorePath, workspacesStoreRoot, workspaceStorePath } from '../src/core/store.mjs';
 
 function git(cwd, args) { execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }); }
 
@@ -41,6 +41,24 @@ test('store paths are rooted under MAESTRO_HOME/.maestro/store', async () => {
     assert.equal(storeRoot(), join(home, '.maestro', 'store'));
     assert.equal(projectStorePath('abc-12345678'), join(home, '.maestro', 'store', 'abc-12345678'));
     assert.ok(canonicalProjectRoot(home).length > 0);
+  } finally {
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
+});
+
+test('workspace store paths nest under store/workspaces/<workspaceKey>', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-home-'));
+  const prev = process.env.MAESTRO_HOME;
+  process.env.MAESTRO_HOME = home;
+  try {
+    const store = join(home, '.maestro', 'store');
+    assert.equal(workspacesStoreRoot(), join(store, 'workspaces'));
+    assert.equal(
+      workspaceStorePath('wks-demo-12345678'),
+      join(store, 'workspaces', 'wks-demo-12345678'),
+    );
+    // The container is the literal "workspaces" segment under the shared store root.
+    assert.equal(workspacesStoreRoot(), projectStorePath('workspaces'));
   } finally {
     if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
   }

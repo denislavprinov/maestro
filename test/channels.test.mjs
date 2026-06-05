@@ -4,8 +4,9 @@ import { allocate, bindInputs, publish, legacyFields, CHANNEL_IDS } from '../src
 
 const ALLOC = { projectDir: '/p', pipelineDir: '/pipe', baseName: 'feat', datePrefix: '03-06-26', cycle: 1 };
 
-test('CHANNEL_IDS is the closed v1 set', () => {
-  assert.deepEqual([...CHANNEL_IDS].sort(), ['checklist', 'code', 'plan', 'review', 'userPrompt']);
+test('CHANNEL_IDS is the closed set (workspace added in M3)', () => {
+  assert.deepEqual([...CHANNEL_IDS].sort(),
+    ['checklist', 'code', 'plan', 'review', 'userPrompt', 'workspace']);
 });
 
 test('▲ C1: allocate mints the planner plan at v1 and the refiner plan at cycle+1', () => {

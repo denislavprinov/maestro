@@ -22,6 +22,16 @@ const state = {
   historyAll: [],    // full /api/history dataset; client-side filter cache
   historyFilter: '', // active projectKey filter for History; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
+
+  // --- Workspaces ---
+  workspaces: [],            // GET /api/workspaces read-model
+  selectedWorkspaceId: '',   // '' === none; set ONLY in workspace target mode
+  runTarget: 'project',      // 'project' | 'workspace' — New Pipeline target toggle
+  // --- Creation wizard (ephemeral; reset on wizard close) ---
+  wizard: {
+    step: 1, name: '', selectedPaths: [], scanId: '', description: '',
+    graphifyUsed: null, abort: null, editingId: '',
+  },
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -81,6 +91,38 @@ const el = {
   historyFilter: $('#historyFilter'),
   refreshHistory: $('#refresh-history'),
   navHistoryCount: $('#nav-history-count'),
+  navWorkspacesCount: $('#nav-workspaces-count'),
+
+  // Target selector (New Pipeline)
+  targetSeg: $('#target-seg'),
+  targetRadios: $$('input[name="target"]'),
+  targetProjectPane: $('#target-project-pane'),
+  targetWorkspacePane: $('#target-workspace-pane'),
+  workspaceSelect: $('#workspaceSelect'),
+  wsMembers: $('#ws-members'),
+  sourceBranchHint: $('#sourceBranchHint'),
+
+  // Workspaces management view
+  wsCreateBtn: $('#ws-create-btn'),
+  wsMsg: $('#ws-msg'),
+  wsList: $('#ws-list'),
+
+  // Wizard
+  wizName: $('#wiz-name'),
+  wizProjects: $('#wiz-projects'),
+  wizStep1Hint: $('#wiz-step1-hint'),
+  wizStartScan: $('#wiz-start-scan'),
+  wizStatus: $('#wiz-status'),
+  wizProgress: $('#wiz-progress'),
+  wizPhases: $('#wiz-phases'),
+  wizAbort: $('#wiz-abort'),
+  wizDesc: $('#wiz-desc'),
+  wizGraphifyNote: $('#wiz-graphify-note'),
+  wizMsg: $('#wiz-msg'),
+  wizRescan: $('#wiz-rescan'),
+  wizSave: $('#wiz-save'),
+  wizClose: $('#wiz-close'),
+  wizTitle: $('#wiz-title'),
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
@@ -167,6 +209,13 @@ function handleServerMessage(msg) {
 
   if (msg.type === 'hello') {
     onHello(msg);
+    return;
+  }
+
+  // Scan events are tagged by scanId (not runId) and ride the same broadcast
+  // socket. Handle them BEFORE the !msg.runId early-return below.
+  if (msg.type === 'scan-progress' || msg.type === 'scan-done' || msg.type === 'scan-error') {
+    onScanEvent(msg);
     return;
   }
 
@@ -2482,6 +2531,601 @@ el.projectDelete.addEventListener('click', async () => {
   }
 });
 
+// ===========================================================================
+// WORKSPACES — target selector, management view, creation wizard, scan WS.
+// All workspace paths are opt-in; project-mode behavior is byte-identical.
+// ===========================================================================
+const LAST_TARGET_KEY = 'maestro.runTarget';
+const LAST_WORKSPACE_KEY = 'maestro.lastWorkspace';
+
+const wsBasename = (p) => {
+  if (!p) return '';
+  const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1] || String(p);
+};
+
+// ---- Target selector (New Pipeline) ----------------------------------------
+
+// Toggle Project vs Workspace target. Persists the choice; in workspace mode
+// lazy-loads options and re-points the config panel at the built-in models.
+function setRunTarget(target) {
+  const t = target === 'workspace' ? 'workspace' : 'project';
+  state.runTarget = t;
+  localStorage.setItem(LAST_TARGET_KEY, t);
+
+  // Segmented buttons + hidden radios (source of truth read at submit).
+  $$('#target-seg button[data-target]').forEach((b) => {
+    const on = b.dataset.target === t;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  const radio = (el.targetRadios || []).find((r) => r.value === t);
+  if (radio) radio.checked = true;
+
+  // Panes are mutually exclusive; only the visible pane's value is read at submit.
+  if (el.targetProjectPane) el.targetProjectPane.classList.toggle('hidden', t !== 'project');
+  if (el.targetWorkspacePane) el.targetWorkspacePane.classList.toggle('hidden', t !== 'workspace');
+
+  // Source-branch field: in workspace mode the single dropdown is a per-project
+  // default; show an "auto" placeholder so an empty value falls back per project (D2).
+  if (t === 'workspace') {
+    setBranchPlaceholder('default branch per project (auto)');
+    if (el.sourceBranchHint) el.sourceBranchHint.textContent = 'Each member project falls back to its own default branch.';
+    // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
+    loadConfig('');
+    ensureWorkspaceOptions();
+  } else {
+    if (el.sourceBranchHint) el.sourceBranchHint.textContent = "The new worktree is created off this branch. Defaults to the project's current branch.";
+    // Restore the project-driven branch list + config for the selected project.
+    onProjectChanged();
+  }
+}
+
+// Render the member chips for the currently-selected workspace.
+function renderWorkspaceMembers() {
+  const host = el.wsMembers;
+  if (!host) return;
+  host.innerHTML = '';
+  const ws = state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId);
+  if (!ws || !Array.isArray(ws.projectPaths)) return;
+  ws.projectPaths.forEach((p, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    const missing = Array.isArray(ws.exists) && ws.exists[i] === false;
+    if (missing) chip.classList.add('missing');
+    chip.textContent = wsBasename(p) + (missing ? ' (missing)' : '');
+    host.appendChild(chip);
+  });
+}
+
+// Populate #workspaceSelect from state.workspaces (loading them if empty).
+// Workspaces with any missing member are rendered disabled "+ (incomplete)".
+// Restores LAST_WORKSPACE_KEY when valid.
+async function ensureWorkspaceOptions() {
+  const sel = el.workspaceSelect;
+  if (!sel) return;
+  if (!state.workspaces.length) await loadWorkspaces();
+
+  sel.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.textContent = state.workspaces.length ? 'Select a workspace…' : 'No workspaces yet';
+  sel.appendChild(placeholder);
+
+  const want = state.selectedWorkspaceId || localStorage.getItem(LAST_WORKSPACE_KEY) || '';
+  let restored = false;
+  for (const w of state.workspaces) {
+    if (!w || !w.id) continue;
+    const incomplete = Array.isArray(w.exists) && w.exists.some((e) => !e);
+    const opt = document.createElement('option');
+    opt.value = w.id;
+    opt.dataset.name = w.name || '';
+    opt.textContent = (w.name || w.id) + (incomplete ? ' (incomplete)' : '');
+    if (incomplete) opt.disabled = true;
+    sel.appendChild(opt);
+    if (!incomplete && w.id === want) { opt.selected = true; restored = true; }
+  }
+  if (restored) {
+    state.selectedWorkspaceId = want;
+    localStorage.setItem(LAST_WORKSPACE_KEY, want);
+  } else {
+    state.selectedWorkspaceId = '';
+    placeholder.selected = true;
+  }
+  renderWorkspaceMembers();
+}
+
+if (el.targetSeg) {
+  $$('#target-seg button[data-target]').forEach((btn) => {
+    btn.addEventListener('click', () => setRunTarget(btn.dataset.target));
+  });
+}
+if (el.workspaceSelect) {
+  el.workspaceSelect.addEventListener('change', () => {
+    state.selectedWorkspaceId = el.workspaceSelect.value || '';
+    if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
+    renderWorkspaceMembers();
+  });
+}
+
+// ---- Workspaces data load --------------------------------------------------
+
+// Fetch /api/workspaces into state.workspaces. Clears a stale remembered
+// selection (and falls back to project target) when its id is gone. Degrades
+// gracefully to [] when the route 404s / errors.
+async function loadWorkspaces() {
+  try {
+    const res = await fetch('/api/workspaces');
+    const data = await safeJson(res);
+    state.workspaces = res.ok && Array.isArray(data.workspaces) ? data.workspaces : [];
+  } catch {
+    state.workspaces = [];
+  }
+  // Stale selection guard: a remembered workspace id not in the fetched list is
+  // cleared, and we fall back to project target.
+  const remembered = localStorage.getItem(LAST_WORKSPACE_KEY) || '';
+  if (remembered && !state.workspaces.some((w) => w && w.id === remembered)) {
+    localStorage.removeItem(LAST_WORKSPACE_KEY);
+    if (state.selectedWorkspaceId === remembered) state.selectedWorkspaceId = '';
+    if (state.runTarget === 'workspace') setRunTarget('project');
+  }
+  return state.workspaces;
+}
+
+function updateWorkspacesCount() {
+  if (el.navWorkspacesCount) el.navWorkspacesCount.textContent = String(state.workspaces.length);
+}
+
+// ---- Workspaces management view --------------------------------------------
+
+async function loadWorkspacesView() {
+  await loadWorkspaces();
+  renderWorkspaces();
+  updateWorkspacesCount();
+}
+
+function setWsMsg(text, kind) {
+  if (!el.wsMsg) return;
+  el.wsMsg.textContent = text || '';
+  el.wsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function renderWorkspaces() {
+  const host = el.wsList;
+  if (!host) return;
+  host.innerHTML = '';
+  if (!state.workspaces.length) {
+    host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
+    return;
+  }
+  for (const w of state.workspaces) host.appendChild(buildWorkspaceCard(w));
+}
+
+// Build one workspace card from the template. The description is markdown shown
+// VERBATIM in a <pre> (no renderer — matches the #viewer pattern; .textContent
+// only, never innerHTML).
+function buildWorkspaceCard(w) {
+  const tpl = $('#ws-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  node.dataset.workspaceId = w.id || '';
+
+  const nameEl = node.querySelector('.ws-name');
+  if (nameEl) nameEl.textContent = w.name || w.id || '(unnamed)';
+
+  const projEl = node.querySelector('.ws-projects');
+  if (projEl) projEl.textContent = (Array.isArray(w.projectPaths) ? w.projectPaths.map(wsBasename) : []).join(' · ');
+
+  const stale = node.querySelector('.ws-stale');
+  if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
+
+  const descView = node.querySelector('.ws-desc-view');
+  if (descView) descView.textContent = w.description || '(no description yet — re-scan to generate one)';
+
+  return node;
+}
+
+// Delegated actions on the workspaces list.
+if (el.wsList) {
+  el.wsList.addEventListener('click', (e) => {
+    const card = e.target.closest && e.target.closest('.ws-card');
+    if (!card) return;
+    const id = card.dataset.workspaceId;
+    const w = state.workspaces.find((x) => x && x.id === id);
+
+    if (e.target.closest('.ws-edit')) { e.stopPropagation(); openWsEdit(card, w); return; }
+    if (e.target.closest('.ws-desc-cancel')) { e.stopPropagation(); closeWsEdit(card, w); return; }
+    if (e.target.closest('.ws-desc-save')) { e.stopPropagation(); saveWsDescription(card, w); return; }
+    if (e.target.closest('.ws-rescan')) { e.stopPropagation(); rescanWorkspace(w); return; }
+    if (e.target.closest('.ws-delete')) { e.stopPropagation(); deleteWorkspaceCard(card, w); return; }
+
+    // Header click toggles the detail pane.
+    if (e.target.closest('.ws-head')) toggleWsDetail(card);
+  });
+  el.wsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const head = e.target.closest && e.target.closest('.ws-head');
+    if (!head) return;
+    e.preventDefault();
+    toggleWsDetail(head.closest('.ws-card'));
+  });
+}
+
+function toggleWsDetail(card) {
+  if (!card) return;
+  const head = card.querySelector('.ws-head');
+  const detail = card.querySelector('.ws-detail');
+  if (!head || !detail) return;
+  const open = head.getAttribute('aria-expanded') === 'true';
+  head.setAttribute('aria-expanded', String(!open));
+  detail.hidden = open;
+}
+
+function openWsEdit(card, w) {
+  if (!card || !w) return;
+  const detail = card.querySelector('.ws-detail');
+  const head = card.querySelector('.ws-head');
+  if (detail && head && detail.hidden) { detail.hidden = false; head.setAttribute('aria-expanded', 'true'); }
+  const pane = card.querySelector('.ws-desc-edit');
+  const input = card.querySelector('.ws-desc-input');
+  if (input) input.value = w.description || '';
+  if (pane) pane.hidden = false;
+  if (input) input.focus();
+}
+
+function closeWsEdit(card) {
+  const pane = card && card.querySelector('.ws-desc-edit');
+  if (pane) pane.hidden = true;
+}
+
+// Save an edited description: PATCH /api/workspaces/:id { description }. JSON-safe
+// (JSON.stringify); the textarea value is read via .value, written via .textContent.
+async function saveWsDescription(card, w) {
+  if (!card || !w) return;
+  const input = card.querySelector('.ws-desc-input');
+  const description = input ? input.value : '';
+  const saveBtn = card.querySelector('.ws-desc-save');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setWsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    const updated = data.workspace || { ...w, description };
+    const i = state.workspaces.findIndex((x) => x && x.id === w.id);
+    if (i >= 0) state.workspaces[i] = updated;
+    setWsMsg('Description saved.', 'ok');
+    renderWorkspaces();
+  } catch (err) {
+    setWsMsg(err.message, 'err');
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+// Re-scan: POST /api/workspaces/:id/scan and jump into the wizard at Step 2 with
+// editingId set, so Step 3 Save issues a PATCH (not a POST).
+async function rescanWorkspace(w) {
+  if (!w) return;
+  state.wizard.editingId = w.id;
+  state.wizard.name = w.name || '';
+  state.wizard.selectedPaths = Array.isArray(w.projectPaths) ? [...w.projectPaths] : [];
+  location.hash = 'workspace-create';
+  // showView('workspace-create') runs enterWizard(); kick off the scan after.
+  await startWizardScan();
+}
+
+// Delete: confirm, then DELETE. 200 removes the card + surfaces warnings; 409
+// (live run/scan) keeps the card + surfaces data.error.
+async function deleteWorkspaceCard(card, w) {
+  if (!card || !w) return;
+  if (!window.confirm(`Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.`)) return;
+  const btn = card.querySelector('.ws-delete');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (res.status === 409) { setWsMsg(data.error || 'Workspace has a live run or scan.', 'err'); if (btn) btn.disabled = false; return; }
+    if (!res.ok) { setWsMsg(data.error || `HTTP ${res.status}`, 'err'); if (btn) btn.disabled = false; return; }
+    state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
+    if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
+    if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    setWsMsg(warnings.length ? `Deleted. Warnings: ${warnings.join('; ')}` : 'Workspace deleted.', warnings.length ? '' : 'ok');
+    renderWorkspaces();
+    updateWorkspacesCount();
+  } catch (err) {
+    setWsMsg(err.message, 'err');
+    if (btn) btn.disabled = false;
+  }
+}
+
+if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { location.hash = 'workspace-create'; });
+
+// ---- Creation wizard -------------------------------------------------------
+
+// Reset the ephemeral wizard state to defaults, preserving a re-scan's editingId
+// + selectedPaths so Step 2/3 still know what they're scanning.
+function resetWizard(preserveEditing = false) {
+  const keepId = preserveEditing ? state.wizard.editingId : '';
+  const keepPaths = preserveEditing ? state.wizard.selectedPaths : [];
+  state.wizard = {
+    step: 1, name: preserveEditing ? state.wizard.name : '', selectedPaths: keepPaths,
+    scanId: '', description: '', graphifyUsed: null, abort: null, editingId: keepId,
+  };
+}
+
+// enterWizard is idempotent: it does NOT reset if a scan is already live;
+// otherwise it resets (preserving a re-scan's editingId/selectedPaths), loads the
+// project list, and shows the current step.
+async function enterWizard() {
+  const liveScan = !!state.wizard.scanId || !!state.wizard.abort;
+  if (!liveScan) {
+    const editing = !!state.wizard.editingId;
+    if (!editing) resetWizard(false);
+  }
+  if (el.wizTitle) el.wizTitle.textContent = state.wizard.editingId ? 'Re-scan workspace' : 'Create workspace';
+  if (el.wizName) {
+    el.wizName.value = state.wizard.name || '';
+    el.wizName.disabled = !!state.wizard.editingId; // name immutable on re-scan
+  }
+  if (!state.projects.length) await loadProjects();
+  renderWizardProjects();
+  showWizardStep(state.wizard.step || 1);
+}
+
+// Toggle the three wizard step panes.
+function showWizardStep(step) {
+  state.wizard.step = step;
+  for (let i = 1; i <= 3; i++) {
+    const pane = document.getElementById(`wiz-step-${i}`);
+    if (pane) pane.classList.toggle('hidden', i !== step);
+  }
+}
+
+// Render one checkbox per onboarded project (disabled for !exists). Pre-checks
+// anything already in selectedPaths (re-scan). Enables Start only at 2+.
+function renderWizardProjects() {
+  const host = el.wizProjects;
+  if (!host) return;
+  host.innerHTML = '';
+  const projects = Array.isArray(state.projects) ? state.projects : [];
+  const usable = projects.filter((p) => p && p.exists);
+
+  if (el.wizStep1Hint) {
+    el.wizStep1Hint.textContent = usable.length < 2
+      ? 'Onboard at least two projects (in New Pipeline) to create a workspace.'
+      : 'Select two or more projects to scan their interconnections.';
+  }
+
+  projects.forEach((p) => {
+    if (!p || !p.path) return;
+    const row = document.createElement('label');
+    row.className = 'wiz-proj' + (p.exists ? '' : ' missing');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'wiz-proj-cb';
+    cb.value = p.path;
+    cb.disabled = !p.exists;
+    cb.checked = state.wizard.selectedPaths.includes(p.path);
+    cb.addEventListener('change', () => {
+      const set = new Set(state.wizard.selectedPaths);
+      if (cb.checked) set.add(p.path); else set.delete(p.path);
+      state.wizard.selectedPaths = [...set];
+      syncWizardStartEnabled();
+    });
+    const txt = document.createElement('span');
+    txt.textContent = p.exists ? p.name : `${p.name} (missing)`;
+    row.append(cb, txt);
+    host.appendChild(row);
+  });
+  syncWizardStartEnabled();
+}
+
+function syncWizardStartEnabled() {
+  if (el.wizStartScan) el.wizStartScan.disabled = state.wizard.selectedPaths.length < 2;
+}
+
+// Start (or restart) the scan. Validates name + 2+ projects, shows Step 2,
+// creates an AbortController, POSTs (pre-persist for new / :id/scan for re-scan),
+// stores scanId, and subscribes. The scan runs BEFORE the workspace is persisted.
+async function startWizardScan() {
+  const editing = !!state.wizard.editingId;
+  const name = el.wizName ? el.wizName.value.trim() : state.wizard.name;
+  state.wizard.name = name;
+  if (!editing && !name) { showWizardStep(1); setStatusText(''); if (el.wizName) el.wizName.focus(); return; }
+  if (state.wizard.selectedPaths.length < 2) { showWizardStep(1); return; }
+
+  // Clear any prior scanId BEFORE the POST resolves, so a buffered/duplicate
+  // scan-* for the OLD scan can never match (onScanEvent gates on scanId).
+  state.wizard.scanId = '';
+
+  // Reset Step 2 surface.
+  setStatusText('Starting scan…');
+  if (el.wizProgress) el.wizProgress.textContent = '';
+  markScanPhase('');
+  if (el.wizMsg) el.wizMsg.textContent = '';
+  showWizardStep(2);
+
+  const abort = new AbortController();
+  state.wizard.abort = abort;
+
+  const url = editing
+    ? `/api/workspaces/${encodeURIComponent(state.wizard.editingId)}/scan`
+    : '/api/workspaces/scan';
+  const body = editing ? {} : { projectPaths: state.wizard.selectedPaths, name };
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: abort.signal,
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !data.scanId) {
+      state.wizard.abort = null;
+      setStatusText('');
+      showWizardStep(1);
+      setWizStep1Error(data.error || `Scan failed (${res.status})`);
+      return;
+    }
+    state.wizard.scanId = data.scanId;
+    subscribeScan(data.scanId);
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // user aborted; leave-guard handled state
+    state.wizard.abort = null;
+    setStatusText('');
+    showWizardStep(1);
+    setWizStep1Error(err.message);
+  }
+}
+
+function setWizStep1Error(message) {
+  if (el.wizStep1Hint) el.wizStep1Hint.textContent = `Scan error: ${message}`;
+}
+
+// Persist at Step 3 Save: new → POST /api/workspaces; re-scan → PATCH :id.
+// On 200 reset + navigate to #workspaces. On 409 (dup name OR dup set) surface
+// data.error verbatim and KEEP the user on Step 3 with their edited text intact.
+async function saveWorkspace() {
+  const description = el.wizDesc ? el.wizDesc.value : '';
+  state.wizard.description = description;
+  const editing = !!state.wizard.editingId;
+  if (el.wizMsg) el.wizMsg.textContent = '';
+  if (el.wizSave) el.wizSave.disabled = true;
+
+  const url = editing
+    ? `/api/workspaces/${encodeURIComponent(state.wizard.editingId)}`
+    : '/api/workspaces';
+  const method = editing ? 'PATCH' : 'POST';
+  const body = editing
+    ? { description }
+    : { name: state.wizard.name, projectPaths: state.wizard.selectedPaths, description };
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (res.status === 409) { setWizMsg(data.error || 'Duplicate workspace.', 'err'); return; }
+    if (!res.ok) { setWizMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    resetWizard(false);
+    await loadWorkspaces();
+    updateWorkspacesCount();
+    location.hash = 'workspaces';
+  } catch (err) {
+    setWizMsg(err.message, 'err');
+  } finally {
+    if (el.wizSave) el.wizSave.disabled = false;
+  }
+}
+
+function setWizMsg(text, kind) {
+  if (!el.wizMsg) return;
+  el.wizMsg.textContent = text || '';
+  el.wizMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+// Abort a live scan: abort the fetch, unsubscribe, clear wizard scan state.
+// Invoked by the leave-guard, #wiz-abort, and Cancel.
+function abortWizardScan() {
+  const scanId = state.wizard.scanId;
+  if (state.wizard.abort) { try { state.wizard.abort.abort(); } catch { /* ignore */ } }
+  if (scanId) {
+    const ws = state.ws;
+    if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'unsubscribe', scanId })); } catch { /* ignore */ } }
+  }
+  state.wizard.abort = null;
+  state.wizard.scanId = '';
+}
+
+if (el.wizStartScan) el.wizStartScan.addEventListener('click', () => startWizardScan());
+if (el.wizAbort) el.wizAbort.addEventListener('click', () => { abortWizardScan(); showWizardStep(1); });
+if (el.wizRescan) el.wizRescan.addEventListener('click', () => startWizardScan());
+if (el.wizSave) el.wizSave.addEventListener('click', () => saveWorkspace());
+if (el.wizClose) el.wizClose.addEventListener('click', () => { location.hash = state.wizard.editingId ? 'workspaces' : 'new'; });
+if (el.wizName) el.wizName.addEventListener('input', () => { state.wizard.name = el.wizName.value; });
+
+// A11y: Escape in the wizard view triggers #wiz-close (which navigates away;
+// the showView leave-guard aborts any live scan). Scoped to the wizard view so
+// it never collides with the viewer-modal Escape handler.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (currentView() !== 'workspace-create') return;
+  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return; // modal owns Escape
+  if (el.wizClose) el.wizClose.click();
+});
+
+// ---- Scan WebSocket wiring -------------------------------------------------
+
+// Bind the live, CHANGING status text. .ws-loader carries role="status"
+// aria-live="polite", so each update is announced.
+function setStatusText(text) {
+  if (el.wizStatus) el.wizStatus.textContent = text || '';
+}
+
+// Light up the phase track; phases progress graph → investigate → synthesize.
+function markScanPhase(phase) {
+  if (!el.wizPhases) return;
+  el.wizPhases.querySelectorAll('[data-phase]').forEach((n) => {
+    n.classList.toggle('active', !!phase && n.dataset.phase === phase);
+  });
+}
+
+// Subscribe to a scan's buffered events on the shared socket.
+function subscribeScan(scanId) {
+  const ws = state.ws;
+  if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'subscribe', scanId })); } catch { /* ignore */ } }
+}
+
+// Route a scan-* event. Ignores events for a different/aborted scan.
+function onScanEvent(msg) {
+  if (!msg || !msg.scanId || msg.scanId !== state.wizard.scanId) return; // stale/aborted scan
+  if (msg.type === 'scan-progress') {
+    setStatusText(msg.message || '');
+    if (el.wizProgress && (msg.projectsTotal != null)) {
+      el.wizProgress.textContent = `${msg.projectsDone || 0} / ${msg.projectsTotal} projects`;
+    }
+    markScanPhase(msg.phase || '');
+    return;
+  }
+  if (msg.type === 'scan-done') {
+    state.wizard.abort = null;
+    state.wizard.description = typeof msg.description === 'string' ? msg.description : '';
+    state.wizard.graphifyUsed = !!(msg.graphify && msg.graphify.used);
+    if (el.wizDesc) el.wizDesc.value = state.wizard.description; // .value only — never innerHTML
+    if (el.wizGraphifyNote) {
+      el.wizGraphifyNote.textContent = state.wizard.graphifyUsed
+        ? 'Generated with graphify-assisted analysis.'
+        : 'Generated from source reading (graphify not available).';
+    }
+    showWizardStep(3);
+    return;
+  }
+  if (msg.type === 'scan-error') {
+    state.wizard.abort = null;
+    state.wizard.scanId = '';
+    showWizardStep(1);
+    setWizStep1Error(msg.message || 'scan failed');
+  }
+}
+
+// Test hook: expose the wizard helpers + workspace renderers for jsdom tests.
+if (typeof window !== 'undefined') {
+  window.__ws = {
+    setRunTarget, ensureWorkspaceOptions, loadWorkspaces, loadWorkspacesView,
+    renderWorkspaces, buildWorkspaceCard, enterWizard, showWizardStep,
+    renderWizardProjects, startWizardScan, saveWorkspace, abortWizardScan,
+    onScanEvent, subscribeScan, setStatusText, resetWizard,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Start a run
 // ---------------------------------------------------------------------------
@@ -2489,8 +3133,21 @@ el.form.addEventListener('submit', async (e) => {
   e.preventDefault();
   setFormMsg('', '');
 
-  const projectDir = selectedProjectPath();
-  if (!projectDir) return setFormMsg('Select a project first (or add one).', 'err');
+  // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
+  // and NO projectDir; project mode sends {projectDir} and NO workspaceId.
+  const target = state.runTarget === 'workspace' ? 'workspace' : 'project';
+  let projectDir = '';
+  let workspaceId = '';
+  let workspaceName = '';
+  if (target === 'workspace') {
+    workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    if (!workspaceId) return setFormMsg('Select a workspace first (or create one).', 'err');
+    const ws = state.workspaces.find((w) => w && w.id === workspaceId);
+    workspaceName = (ws && ws.name) || '';
+  } else {
+    projectDir = selectedProjectPath();
+    if (!projectDir) return setFormMsg('Select a project first (or add one).', 'err');
+  }
 
   const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
   const promptText = el.prompt.value.trim();
@@ -2498,13 +3155,14 @@ el.form.addEventListener('submit', async (e) => {
   const title = el.title.value.trim();
 
   const body = {
-    projectDir,
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
   };
+  if (target === 'workspace') body.workspaceId = workspaceId;
+  else body.projectDir = projectDir;
 
   if (source === 'markdown') {
     if (!mdText) return setFormMsg('Provide markdown text or load a .md file.', 'err');
@@ -2540,7 +3198,7 @@ el.form.addEventListener('submit', async (e) => {
     }
 
     // begin tracking the new run (creates a local model + switches to Running)
-    beginRun(data.runId, projectDir, title);
+    beginRun(data.runId, projectDir, title, target === 'workspace' ? { workspaceId, workspaceName } : {});
     // Re-enable the form so more runs can be started concurrently.
     el.startBtn.disabled = false;
     setFormMsg('Run started.', 'ok');
@@ -2562,8 +3220,20 @@ el.form.addEventListener('submit', async (e) => {
 // Running view. We do NOT send a subscribe here: live events arrive via the
 // server's broadcast, and a subscribe would double-replay this run's buffer on
 // the next hello.
-function beginRun(runId, projectDir, title) {
-  const r = upsertRun({ runId, title: title || '(untitled)', projectDir, status: 'starting', local: true });
+// [v2/C2] beginRun is POSITIONAL. opts is an optional 4th arg carrying workspace
+// attribution ({workspaceId, workspaceName}); in workspace mode the card label
+// prefers the workspace name. Project mode passes {} and is byte-identical.
+function beginRun(runId, projectDir, title, opts = {}) {
+  const label = title || opts.workspaceName || '(untitled)';
+  const r = upsertRun({
+    runId,
+    title: label,
+    projectDir: projectDir || '',
+    status: 'starting',
+    local: true,
+    workspaceId: opts.workspaceId || undefined,
+    workspaceName: opts.workspaceName || undefined,
+  });
   hideViewer();
   updateNavCounts();
   showView('running');
@@ -2734,12 +3404,17 @@ async function loadHistoryView() {
 // Distinct projects present in the dataset, in most-recent-activity order
 // (listAllPipelines is newest-first, so first encounter === most recent pipeline).
 function historyProjects() {
-  const seen = new Map(); // projectKey -> { key, name, count }
+  const seen = new Map(); // projectKey -> { key, name, count, workspace }
   for (const p of state.historyAll) {
     if (!p || !p.projectKey) continue;
     const cur = seen.get(p.projectKey);
     if (cur) cur.count += 1;
-    else seen.set(p.projectKey, { key: p.projectKey, name: p.projectName || p.projectKey, count: 1 });
+    else {
+      const isWs = p.target === 'workspace';
+      // Workspace rows (projectKey="workspaces/<key>") prefer the workspace name.
+      const name = isWs ? (p.workspaceName || p.projectName || p.projectKey) : (p.projectName || p.projectKey);
+      seen.set(p.projectKey, { key: p.projectKey, name, count: 1, workspace: isWs });
+    }
   }
   return [...seen.values()];
 }
@@ -2770,11 +3445,11 @@ function renderHistoryPills() {
   if (!host) return;
   host.innerHTML = '';
 
-  const mkPill = (key, label, count) => {
+  const mkPill = (key, label, count, isWs = false) => {
     const b = document.createElement('button');
     b.type = 'button';
     const active = state.historyFilter === key;
-    b.className = 'hist-pill' + (active ? ' active' : '');
+    b.className = 'hist-pill' + (isWs ? ' ws' : '') + (active ? ' active' : '');
     b.dataset.projectKey = key;
     b.setAttribute('aria-pressed', active ? 'true' : 'false');
     const txt = document.createElement('span');
@@ -2790,7 +3465,7 @@ function renderHistoryPills() {
   };
 
   host.appendChild(mkPill('', 'All Projects', state.historyAll.length));
-  for (const pr of historyProjects()) host.appendChild(mkPill(pr.key, pr.name, pr.count));
+  for (const pr of historyProjects()) host.appendChild(mkPill(pr.key, pr.name, pr.count, pr.workspace));
 
   // Keep the sticky project header offset in sync with the toolbar's height
   // (also re-measures on resize, when pills wrap to more/fewer rows).
@@ -2847,7 +3522,13 @@ function renderHistory() {
   for (const p of records) {
     const key = p && p.projectKey ? p.projectKey : '';
     let g = groups.get(key);
-    if (!g) { g = { name: (p && p.projectName) || key || '(unknown project)', items: [] }; groups.set(key, g); }
+    if (!g) {
+      // Workspace rows prefer the workspace name for the section header.
+      const name = (p && p.target === 'workspace' && p.workspaceName)
+        || (p && p.projectName) || key || '(unknown project)';
+      g = { name, items: [] };
+      groups.set(key, g);
+    }
     g.items.push(p);
   }
   for (const g of groups.values()) host.appendChild(buildHistGroup(g));
@@ -2995,8 +3676,15 @@ function setupDeleteButton(node, projectDir, p) {
     btn.textContent = 'Deleting…';
     try {
       const qs = new URLSearchParams();
-      if (p.projectKey) qs.set('projectKey', p.projectKey);
-      else qs.set('projectDir', p.projectDir || projectDir);
+      // A workspace run routes by bare workspaceId; ?projectKey would carry the
+      // slashed "workspaces/<wkey>" segment that DELETE /api/runs/:id rejects.
+      if (p.target === 'workspace' && typeof p.projectKey === 'string') {
+        qs.set('workspaceId', p.projectKey.replace(/^workspaces\//, ''));
+      } else if (p.projectKey) {
+        qs.set('projectKey', p.projectKey);
+      } else {
+        qs.set('projectDir', p.projectDir || projectDir);
+      }
       const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}?${qs.toString()}`, { method: 'DELETE' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
@@ -3095,11 +3783,25 @@ function toggleHistCard(projectDir, id, head, detail, record) {
 
 // Fetch GET /api/runs/:id and tint this card's stepper from data.state. On
 // failure, show a small inline notice and allow a retry on the next expand.
+// Resolve the saved-pipeline detail URL ({state, auditMarkdown}) for a history
+// record. A workspace run (target==='workspace', projectKey="workspaces/<wkey>")
+// MUST use the workspace-aware route — the /api/history/:key/:id key regex
+// forbids the slashed key (would 404). The two routes share readPipelineFromDir,
+// so the response shape is identical. Single-project rows are byte-identical.
+function historyDetailUrl(projectDir, id, record) {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}`;
+  }
+  if (record && record.projectKey) {
+    return `/api/history/${encodeURIComponent(record.projectKey)}/${encodeURIComponent(id)}`;
+  }
+  return `/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`;
+}
+
 async function loadHistDetail(projectDir, id, detail, record) {
   try {
-    const url = record && record.projectKey
-      ? `/api/history/${encodeURIComponent(record.projectKey)}/${encodeURIComponent(id)}`
-      : `/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`;
+    const url = historyDetailUrl(projectDir, id, record);
     const res = await fetch(url);
     const data = await safeJson(res);
     if (!res.ok) {
@@ -3215,9 +3917,7 @@ function renderHistoryError(message) {
 async function viewPipeline(projectDir, id, title, record) {
   if (!id) return;
   try {
-    const url = record && record.projectKey
-      ? `/api/history/${encodeURIComponent(record.projectKey)}/${encodeURIComponent(id)}`
-      : `/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`;
+    const url = historyDetailUrl(projectDir, id, record);
     const res = await fetch(url);
     const data = await safeJson(res);
     if (!res.ok) {
@@ -3527,9 +4227,19 @@ function updateNavCounts() {
 // ---------------------------------------------------------------------------
 const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'settings'];
+// [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
+// workspace-create is in the array (so deep-links resolve) but has no nav link.
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'settings'];
 
 function showView(name) {
+  // Leave-guard: navigating away from the wizard while a scan is live aborts the
+  // scan + resets wizard state (addresses orphaned-background-request risk).
+  if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
+    if (state.wizard.scanId || state.wizard.abort) abortWizardScan();
+    resetWizard();
+  }
+  currentShownView = name;
+
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
   navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
   // Toggle a body flag so CSS can drop .main's top padding for the History view,
@@ -3537,9 +4247,13 @@ function showView(name) {
   document.body.classList.toggle('view-history', name === 'history');
   if (name === 'running') renderRunningView();
   if (name === 'history') loadHistoryView();
+  if (name === 'workspaces') loadWorkspacesView();
+  if (name === 'workspace-create') enterWizard();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
 }
+// Tracks the currently shown view so the leave-guard can fire on transition.
+let currentShownView = null;
 
 // Nav clicks only update the hash; the single hashchange listener drives
 // showView so each navigation runs it exactly once (no double /api/runs fetch).
@@ -3590,6 +4304,10 @@ syncSourceToggle();
 setWsStatus(false);
 loadProjects();
 connectWS();
+// Restore the New-Pipeline target (project | workspace). 'workspace' lazy-loads
+// the workspace options + re-points the config panel; 'project' is the default.
+const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'workspace' : 'project';
+if (bootTarget === 'workspace') setRunTarget('workspace');
 const bootHash = location.hash.slice(1);
 showView(VIEW_NAMES.includes(bootHash) ? bootHash : 'new');
 updateNavCounts();

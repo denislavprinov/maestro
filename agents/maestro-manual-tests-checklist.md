@@ -56,5 +56,8 @@ After writing the file, emit a short assistant note with the absolute path of th
 - The file must be valid GitHub-flavored markdown with `- [ ]` task items (a downstream agent parses these as the cases to execute).
 - Keep assistant chatter minimal; the markdown file is your real output.
 
+## Workspace runs
+When the task prompt carries a `## Workspace Context` block, the change spans a SET of member projects. Group the checklist cases per member project (one `##` area heading per project that has user-facing changes), so a tester can execute and tick off each project's cases independently.
+
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to map the user-facing surfaces before drafting cases, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with git + Glob/Grep/Read.

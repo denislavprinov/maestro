@@ -35,6 +35,11 @@
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
           </a>
+          <a href="#workspaces" data-nav="workspaces">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
+            <span>Workspaces</span>
+            <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
+          </a>
           <a href="#composer" data-nav="composer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Pipeline Composer</span>
@@ -60,6 +65,7 @@
           <a href="#new" data-nav="new" class="active">New</a>
           <a href="#running" data-nav="running">Running</a>
           <a href="#history" data-nav="history">History</a>
+          <a href="#workspaces" data-nav="workspaces">Workspaces</a>
           <a href="#composer" data-nav="composer">Composer</a>
           <a href="#settings" data-nav="settings">Settings</a>
         </nav>
@@ -76,8 +82,20 @@
           <div class="grid single">
             <section class="card">
               <form id="run-form" autocomplete="off">
-                <!-- Project -->
+                <!-- Target: single project vs workspace -->
                 <div class="field">
+                  <label>Target</label>
+                  <div class="seg" id="target-seg">
+                    <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
+                    <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                  </div>
+                  <!-- hidden radios kept as the source of truth read at submit -->
+                  <input type="radio" name="target" value="project" checked hidden />
+                  <input type="radio" name="target" value="workspace" hidden />
+                </div>
+
+                <!-- Project (target = project) -->
+                <div class="field target-pane" id="target-project-pane">
                   <label for="projectSelect">Project</label>
                   <div class="row-2">
                     <div class="select-wrap with-x">
@@ -101,6 +119,19 @@
                   </div>
                 </div>
 
+                <!-- Workspace (target = workspace) -->
+                <div class="field target-pane hidden" id="target-workspace-pane">
+                  <label for="workspaceSelect">Workspace</label>
+                  <div class="select-wrap">
+                    <select id="workspaceSelect" name="workspaceSelect">
+                      <option value="" disabled selected>No workspaces yet</option>
+                    </select>
+                  </div>
+                  <div class="ws-members" id="ws-members"></div>
+                  <small class="hint">A run fans out across the workspace's member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
+                  <small class="hint" id="workspaceHintConfig">Per-agent models resolve per project from each project's own config.</small>
+                </div>
+
                 <!-- Title -->
                 <div class="field">
                   <label for="title">Title <span class="opt">(optional)</span></label>
@@ -113,7 +144,7 @@
                   <div class="select-wrap">
                     <select id="sourceBranch" class="select"></select>
                   </div>
-                  <small class="hint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
+                  <small class="hint" id="sourceBranchHint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
                 </div>
 
                 <div class="field">
@@ -327,6 +358,121 @@
           </template>
         </section>
         <!-- /view history -->
+
+        <!-- ===== VIEW: WORKSPACES ===== -->
+        <section class="view hidden" data-view="workspaces">
+          <div class="topbar">
+            <div>
+              <h1>Workspaces</h1>
+              <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description</div>
+            </div>
+            <button type="button" id="ws-create-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Create workspace
+            </button>
+          </div>
+
+          <p id="ws-msg" class="form-msg" aria-live="polite"></p>
+
+          <div class="run-list" id="ws-list"></div>
+
+          <!-- clone target for one workspace card -->
+          <template id="ws-card-tpl">
+            <section class="card ws-card">
+              <div class="ws-head" role="button" tabindex="0" aria-expanded="false">
+                <div class="ws-h-meta">
+                  <b class="ws-name"></b>
+                  <span class="ws-stale badge red" hidden>missing projects</span>
+                  <small class="ws-projects"></small>
+                </div>
+                <div class="ws-actions">
+                  <button type="button" class="ws-edit btn-ghost" title="Edit description">Edit description</button>
+                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
+                  <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
+                </div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <div class="ws-detail" hidden>
+                <pre class="ws-desc-view viewer"></pre>
+                <div class="ws-desc-edit" hidden>
+                  <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
+                  <div class="actions" style="justify-content:flex-end;margin-top:10px">
+                    <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
+                    <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </template>
+        </section>
+        <!-- /view workspaces -->
+
+        <!-- ===== VIEW: WORKSPACE CREATE (wizard) ===== -->
+        <section class="view hidden" data-view="workspace-create">
+          <div class="topbar">
+            <div>
+              <h1 id="wiz-title">Create workspace</h1>
+              <div class="sub">Pick 2+ projects, scan their interconnections, then save</div>
+            </div>
+            <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
+          </div>
+
+          <section class="card" style="max-width:820px">
+            <!-- Step 1: name + project multi-select -->
+            <div class="wiz-step" id="wiz-step-1">
+              <div class="field">
+                <label for="wiz-name">Workspace name</label>
+                <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
+              </div>
+              <div class="field">
+                <label>Projects <span class="opt">(select 2 or more)</span></label>
+                <div class="wiz-proj-list" id="wiz-projects"></div>
+                <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
+              </div>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="wiz-start-scan" class="btn-go" disabled>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                  Scan interconnections
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 2: live scan loader -->
+            <div class="wiz-step hidden" id="wiz-step-2">
+              <div class="ws-loader" role="status" aria-live="polite">
+                <div class="spinner" aria-hidden="true"></div>
+                <div class="status-label" id="wiz-status">Starting scan&hellip;</div>
+                <div class="status-sub" id="wiz-progress"></div>
+              </div>
+              <div class="wiz-phase-track" id="wiz-phases">
+                <span data-phase="graph">Graph</span>
+                <span data-phase="investigate">Investigate</span>
+                <span data-phase="synthesize">Synthesize</span>
+              </div>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="wiz-abort" class="btn btn-ghost btn-mini">Abort scan</button>
+              </div>
+            </div>
+
+            <!-- Step 3: editable description -->
+            <div class="wiz-step hidden" id="wiz-step-3">
+              <div class="field">
+                <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                <textarea id="wiz-desc" class="textarea" rows="16" spellcheck="false" placeholder="# Workspace: ..."></textarea>
+                <small class="hint" id="wiz-graphify-note"></small>
+              </div>
+              <p id="wiz-msg" class="form-msg" aria-live="polite"></p>
+              <div class="actions" style="justify-content:space-between">
+                <button type="button" id="wiz-rescan" class="btn btn-ghost btn-mini">Re-scan</button>
+                <button type="button" id="wiz-save" class="btn-go">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  Save workspace
+                </button>
+              </div>
+            </div>
+          </section>
+        </section>
+        <!-- /view workspace-create -->
 
         <!-- ===== VIEW: PIPELINE COMPOSER ===== -->
         <section class="view hidden" data-view="composer">

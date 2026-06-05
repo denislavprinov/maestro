@@ -6,8 +6,10 @@
 import { join } from 'node:path';
 import { planPath, reviewPath } from './artifacts.mjs';
 
-/** The closed set of channel ids for v1 (single source; imported by registry + validator). */
-export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code'];
+/** The closed set of channel ids (single source; imported by registry + validator).
+ *  `workspace` (M3) is a read-only metadata channel carrying the frozen workspace
+ *  description + member set; it is seeded once and never re-published (CONV-6). */
+export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace'];
 
 /**
  * Mint the concrete OUTPUT handle for a channel the node produces. This is the
@@ -17,15 +19,17 @@ export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code']
  * @param {{projectDir,pipelineDir,baseName,datePrefix,cycle,key?}} ctx
  */
 export function allocate(channel, ctx) {
-  const { projectDir, pipelineDir, baseName, datePrefix, cycle, key } = ctx;
+  const { projectDir, pipelineDir, baseName, datePrefix, cycle, key, workspaceKey } = ctx;
   switch (channel) {
     case 'plan': {
       // The planner is cycle-aware so a plan-review -> planner loop writes a fresh
       // -vN on each replan instead of clobbering v1 (cycle is 1 on the first pass,
       // so v1 has NO -v suffix, matching today's seeded io.planPath). The refiner
-      // versions up to cycle+1 (a self-loop never produces v1).
+      // versions up to cycle+1 (a self-loop never produces v1). workspaceKey (when
+      // present) routes the unified plan to the workspace store; absent it is byte-
+      // identical to the single-project path.
       const version = key === 'planner' ? cycle : cycle + 1;
-      return { kind: 'artifact', path: planPath(projectDir, baseName, version, datePrefix) };
+      return { kind: 'artifact', path: planPath(projectDir, baseName, version, datePrefix, workspaceKey) };
     }
     case 'review': {
       // Review json basename differs by producing role (keeps existing filenames).
@@ -35,23 +39,34 @@ export function allocate(channel, ctx) {
           ? 'webui-review'
           : key === 'planReviewer'
             ? 'plan-review'
-            : 'impl-review';
+            : key === 'workspaceReviewer'
+              ? 'ws-review'
+              : 'impl-review';
       // ▲ C2: the refiner emits ONLY a json verdict (its md is null => private to its
       // self-loop). Every other verifier carries a review md so publish() folds it
-      // onto the shared `review` channel its loop target consumes.
+      // onto the shared `review` channel its loop target consumes. workspaceKey routes
+      // the review md to the workspace store (the json stays per-cycle in the pipeline
+      // dir, store-root independent); absent it is byte-identical.
       const mdPath = key === 'refiner'
         ? null
         : key === 'manualWebUiTesting'
           ? join(pipelineDir, `webui-review-cycle${cycle}.md`)
           : key === 'planReviewer'
-            ? reviewPath(projectDir, baseName, datePrefix, 'plan-review')
-            : reviewPath(projectDir, baseName, datePrefix);
+            ? reviewPath(projectDir, baseName, datePrefix, 'plan-review', workspaceKey)
+            : key === 'workspaceReviewer'
+              ? reviewPath(projectDir, baseName, datePrefix, 'ws-review', workspaceKey)
+              : reviewPath(projectDir, baseName, datePrefix, 'impl-review', workspaceKey);
       return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`), reviewKind: base };
     }
     case 'checklist':
       return { kind: 'artifact', path: join(pipelineDir, 'manual-tests-checklist.md') };
     case 'code':
       return { kind: 'worktree' }; // standing channel; nothing to allocate
+    case 'workspace':
+      // Read-only metadata handle: the frozen workspace description snapshot. The
+      // member set + description are seeded onto the bus directly by the orchestrator
+      // (this just names the on-disk path of the frozen snapshot).
+      return { kind: 'metadata', path: join(pipelineDir, 'workspace-description.md') };
     default:
       return null;
   }
@@ -97,6 +112,9 @@ export function publish(produces, result, outputs, bus) {
       if (path) bus.checklist = { kind: 'artifact', path };
     } else if (c === 'code') {
       bus.review = null; // implementer superseded any pending review (fix-mode reset)
+    } else if (c === 'workspace') {
+      // Read-only metadata: seeded once by the orchestrator, NEVER re-published
+      // (CONV-6: the frozen per-step snapshot must not change mid-run). No-op.
     }
   }
 }
@@ -109,6 +127,17 @@ export function publish(produces, result, outputs, bus) {
  * compute data flow.
  */
 export function legacyFields(node, inputs, outputs, cycle, baseName) {
+  const fields = legacyRoleFields(node, inputs, outputs, cycle, baseName);
+  // Workspace runs: surface the read-only metadata channel (description + member
+  // set) onto the flattened ctx so phases.mjs runners read ctx.workspace. Absent
+  // the channel (every single-project node) the field is never added, so the ctx
+  // shape stays byte-identical.
+  if (inputs && inputs.workspace) fields.workspace = inputs.workspace;
+  return fields;
+}
+
+/** Per-role field naming (the original legacyFields body). */
+function legacyRoleFields(node, inputs, outputs, cycle, baseName) {
   switch (node.key) {
     case 'planner':
       // reviewPath is set only when a review is bound (a plan-review -> planner
@@ -127,6 +156,11 @@ export function legacyFields(node, inputs, outputs, cycle, baseName) {
     case 'planReviewer':
       return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'reviewer':
+      return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
+    case 'workspaceReviewer':
+      // Identical field shape to `reviewer` — the workspace synthesizer reads the
+      // same planPath/reviewMd/reviewJson/cycle and folds its merged verdict onto
+      // the shared `review` channel its implementer loop target consumes.
       return { planPath: inputs.plan?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'manualTestsChecklist':
       return { planPath: inputs.plan?.path, checklistPath: outputs.checklist?.path };

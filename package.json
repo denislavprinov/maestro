@@ -19,6 +19,7 @@
     "cli": "node src/cli/maestro.mjs",
     "install:agents": "node scripts/install.mjs",
     "smoke": "MAESTRO_MOCK=1 MAESTRO_HOME=.maestro-smoke node src/cli/maestro.mjs --project examples/sandbox --prompt \"demo task\" --mock --yes",
+    "smoke:workspace": "MAESTRO_MOCK=1 MAESTRO_HOME=.maestro-smoke node scripts/smoke-workspace.mjs",
     "test": "rm -rf .maestro-test && MAESTRO_HOME=.maestro-test node --test test/*.mjs"
   },
   "dependencies": {
