@@ -113,6 +113,12 @@ body{
 
 /* ---------- Main ---------- */
 .main{flex:1;min-width:0;padding:26px 32px 40px;overflow-y:auto;}
+/* History view drops the scroll container's TOP padding so the sticky pills
+   toolbar + per-project headers can pin flush to the very top of the scroll
+   area. Without this, .main's 26px top padding leaves a band above the stuck
+   header where scrolled cards peek through (the reported bug). The inset is
+   re-applied inside the view (below) so the unscrolled layout is unchanged. */
+body.view-history .main{padding-top:0;}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
 .topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
@@ -477,7 +483,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- History project-filter pills ---------- */
-.hist-filter{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px;}
+/* Re-apply (inside the scrolling view) the top inset that body.view-history
+   removed from .main, so the unscrolled layout is unchanged while the scroll
+   container itself has no top padding for position:sticky to fight. */
+.view[data-view="history"]{padding-top:26px;}
+/* The project-filter pills become a persistent sticky toolbar pinned to the top
+   of the scroll area while the list scrolls underneath. Opaque background +
+   z-index above the per-project header (z-index:3) so scrolled cards never
+   show through, and the user can switch projects while scrolled. */
+.hist-filter{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;
+  gap:8px;margin:0 0 14px;padding:12px 0;background:var(--bg);}
 .hist-pill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
   border:1.5px solid var(--line-2);border-radius:999px;padding:7px 14px;font-weight:600;
   font-size:12.5px;color:var(--ink-2);cursor:pointer;white-space:nowrap;
@@ -489,7 +504,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- History per-project sticky sections (All Projects view) ---------- */
 .hist-group{display:flex;flex-direction:column;gap:18px;}
 .hist-group + .hist-group{margin-top:18px;}
-.hist-group-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:10px;
+.hist-group-head{position:sticky;top:var(--hist-toolbar-h, 58px);z-index:3;display:flex;align-items:center;gap:10px;
   background:var(--bg);padding:10px 2px;margin:0;font-weight:700;font-size:14px;color:var(--ink);}
 .hist-group-head .pill-count{font-size:11.5px;font-weight:600;color:var(--ink-3);}
 

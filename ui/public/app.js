@@ -2744,6 +2744,25 @@ function historyProjects() {
   return [...seen.values()];
 }
 
+// The pinned pills toolbar has a dynamic height (pills wrap on narrow widths),
+// so measure it and expose it as --hist-toolbar-h on the History view. The
+// per-project sticky header reads it (top:var(--hist-toolbar-h)) to sit exactly
+// below the toolbar instead of behind it.
+let histToolbarRO = null;
+function syncHistToolbarHeight() {
+  const tb = el.historyFilter;
+  if (!tb) return;
+  const view = tb.closest('.view');
+  if (view) view.style.setProperty('--hist-toolbar-h', tb.offsetHeight + 'px');
+}
+function ensureHistToolbarObserver() {
+  // window.ResizeObserver matches the existing usage at app.js:766; absent under
+  // jsdom, where the typeof guard makes this a no-op (offsetHeight is 0 there).
+  if (histToolbarRO || !el.historyFilter || typeof ResizeObserver === 'undefined') return;
+  histToolbarRO = new window.ResizeObserver(() => syncHistToolbarHeight());
+  histToolbarRO.observe(el.historyFilter);
+}
+
 // Build the pill row: "All Projects" + one pill per project. Clicking sets the
 // filter, persists it, and repaints.
 function renderHistoryPills() {
@@ -2772,6 +2791,11 @@ function renderHistoryPills() {
 
   host.appendChild(mkPill('', 'All Projects', state.historyAll.length));
   for (const pr of historyProjects()) host.appendChild(mkPill(pr.key, pr.name, pr.count));
+
+  // Keep the sticky project header offset in sync with the toolbar's height
+  // (also re-measures on resize, when pills wrap to more/fewer rows).
+  ensureHistToolbarObserver();
+  syncHistToolbarHeight();
 }
 
 // Switch the active project filter, persist it (so it survives reloads), repaint.
@@ -3508,6 +3532,9 @@ const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'settings'];
 function showView(name) {
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
   navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
+  // Toggle a body flag so CSS can drop .main's top padding for the History view,
+  // letting the sticky pills toolbar + project headers pin flush to the top.
+  document.body.classList.toggle('view-history', name === 'history');
   if (name === 'running') renderRunningView();
   if (name === 'history') loadHistoryView();
   if (name === 'composer') initComposer();
