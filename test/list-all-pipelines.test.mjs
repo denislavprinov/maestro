@@ -58,6 +58,7 @@ test('listAllPipelines descends workspaces/ and tags the row with a composite ke
     assert.equal(ws.projectKey, 'workspaces/wks-demo-9f3a1c20', 'literal store-relative composite key');
     assert.equal(ws.target, 'workspace');
     assert.equal(ws.projectName, 'Demo WS', 'name from the workspace meta');
+    assert.equal(ws.workspaceName, 'Demo WS', 'explicit workspaceName the History UI prefers');
     assert.equal(ws.projectDir, '/abs/one', 'primary projectPaths[0]');
     // The single-project row keeps target undefined (or non-workspace).
     const proj = all.find((p) => p.id === 'a1');

@@ -549,6 +549,7 @@ async function pushWorkspaceRows(out, wkey, opts) {
     const e = await pipelineEntry(join(pipelinesDir, ent.name), primaryDir, opts);
     e.projectKey = `workspaces/${wkey}`;
     e.projectName = meta?.name ?? wkey;
+    e.workspaceName = meta?.name ?? wkey; // explicit field the History UI prefers
     e.projectDir = primaryDir;
     e.target = 'workspace';
     out.push(e);
