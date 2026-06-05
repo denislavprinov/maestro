@@ -28,13 +28,13 @@ import { slugify } from './artifacts.mjs';
 function err(message, code) { return Object.assign(new Error(message), { code }); }
 
 /**
- * The workspace-key shape: "wks-<slug>-<sha1[:8]>". This is the SAME pattern the
- * server's WORKSPACE_ID_RE will use (M2), so core + route agree. Validating an id
- * against it also forecloses any path-traversal: a key matching this regex can
- * never contain "/" or "..", so workspaceStorePath(id) cannot escape the store
- * namespace even before a registry-membership check.
+ * The workspace-key shape: "wks-<slug>-<sha1[:8]>". The server imports this as
+ * its single source of truth (M2 route validation), so core + route agree on one
+ * invariant. Validating an id against it also forecloses any path-traversal: a
+ * key matching this regex can never contain "/" or "..", so workspaceStorePath(id)
+ * cannot escape the store namespace even before a registry-membership check.
  */
-const WORKSPACE_KEY_RE = /^wks-[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;
+export const WORKSPACE_KEY_RE = /^wks-[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;
 
 /** Absolute path to the workspace registry file. Sibling of projects.json. */
 export function workspacesFile() {
@@ -46,8 +46,12 @@ function isDir(p) {
   try { return statSync(p).isDirectory(); } catch { return false; }
 }
 
-/** True when `p` is inside a git work tree (and a directory). Never throws. */
-function isGitRepo(p) {
+/**
+ * True when `p` is inside a git work tree (and a directory). Never throws.
+ * Exported so the server's run-target loop can reject a member that exists but is
+ * no longer a git repo (§2.6 step 3) using the SAME check createWorkspace applies.
+ */
+export function isGitRepo(p) {
   if (!isDir(p)) return false;
   try {
     execFileSync('git', ['rev-parse', '--is-inside-work-tree'],

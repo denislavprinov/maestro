@@ -32,6 +32,12 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { listLocalBranches, currentBranch, isValidSourceRef } from '../src/core/worktree.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
+import {
+  listWorkspaces, readWorkspace, createWorkspace,
+  updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE,
+} from '../src/core/workspaces.mjs';
+import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
+import { projectKey } from '../src/core/store.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -152,6 +158,11 @@ function summarizeRuns() {
     status: r.status,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
+    // kind discriminator so the client routes runs vs scans vs workspace runs
+    // without guessing; scanId/workspaceId are the matching attribution fields.
+    kind: r.kind || 'run',
+    scanId: r.scanId || null,
+    workspaceId: r.workspaceId || null,
   }));
 }
 
@@ -260,6 +271,22 @@ function badRequest(res, message) {
   res.status(400).json({ error: message });
 }
 
+// A workspace id/key is "wks-<nameSlug>-<sha1[:8]>". WORKSPACE_KEY_RE is imported
+// from src/core/workspaces.mjs (one source of truth) and validated against any
+// :id/workspaceId before a disk touch: a value failing it can never contain "/"
+// or ".." so workspaceStorePath(id) cannot escape the namespace, and a stale
+// bookmark reads as "not found" (404), not "bad request".
+
+// Map a workspaces.mjs err.code to an HTTP status. BAD_REQUEST->400,
+// DUPLICATE_NAME/DUPLICATE_SET->409, NOT_FOUND->404 (mirrors the thin-delegator
+// pattern of /api/projects + /api/workflows). Anything else is a 500 caller bug.
+function workspaceErrorStatus(code) {
+  if (code === 'DUPLICATE_NAME' || code === 'DUPLICATE_SET') return 409;
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'BAD_REQUEST') return 400;
+  return 500;
+}
+
 // Single source of truth for path normalization lives in the core registry.
 function resolveProjectDir(input) {
   return normalizeProjectPath(input);
@@ -267,28 +294,31 @@ function resolveProjectDir(input) {
 
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
-// body: { projectDir, prompt?, promptMarkdown?, title?, mock? }
+// body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
+// body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
+//                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
 app.post('/api/run', async (req, res) => {
   try {
     const body = req.body || {};
-    const projectDir = resolveProjectDir(body.projectDir);
-    if (!projectDir) return badRequest(res, 'projectDir is required');
 
+    // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
+    const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
+    const hasProjectDir = typeof body.projectDir === 'string' && body.projectDir.trim();
+    if (hasWorkspace && hasProjectDir) {
+      return badRequest(res, 'provide workspaceId OR projectDir, not both');
+    }
+    if (!hasWorkspace && !hasProjectDir) {
+      return badRequest(res, 'workspaceId or projectDir is required');
+    }
+
+    // ── Shared resolution (factored BEFORE the target branch, §2.6) ──────────
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
     const promptMarkdown =
       typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
     const effectivePrompt = prompt || promptMarkdown;
     if (!effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
-
-    if (!fs.existsSync(projectDir)) {
-      try {
-        await fsp.mkdir(projectDir, { recursive: true });
-      } catch (err) {
-        return badRequest(res, `cannot create projectDir: ${err.message}`);
-      }
-    }
 
     const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
 
@@ -313,35 +343,122 @@ app.post('/api/run', async (req, res) => {
       feature: typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
     };
-    // M1: never hand an unvalidated sourceBranch to `git worktree add`. Reject a
-    // leading-dash (option injection) or unknown ref here so the client gets a
-    // clean 400 instead of a mid-run error event. featureBranch is sanitized
-    // downstream by sanitizeBranchName, so it needs no ref check.
-    if (branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
-      return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
+
+    let orch, entry;
+
+    if (hasWorkspace) {
+      // ── Workspace target (§2.6) ────────────────────────────────────────────
+      const workspaceId = body.workspaceId.trim();
+      // A stale bookmark / crafted id reads as "not found", not "bad request".
+      if (!WORKSPACE_KEY_RE.test(workspaceId)) {
+        return res.status(404).json({ error: 'workspace not found' });
+      }
+      const ws = await readWorkspace(workspaceId);
+      if (!ws) return res.status(404).json({ error: 'workspace not found' });
+
+      // Resolve member detail. Each member must be an existing git repo (D3:
+      // per-project worktrees + checkpoints). A vanished member is a hard 400 —
+      // skip-missing is NOT allowed; a workspace run is defined over its full set.
+      // A member that exists but is no longer a git repo (its .git removed since
+      // creation, where createWorkspace enforced isGitRepo) is rejected the same
+      // way, so the client gets a clean 400 instead of a mid-run worktree error.
+      const projects = [];
+      for (const dir of ws.projectPaths) {
+        if (!fs.existsSync(dir)) {
+          return badRequest(res, 'workspace member path is missing');
+        }
+        if (!isGitRepo(dir)) {
+          return badRequest(res, `workspace member is not a git repository: ${dir}`);
+        }
+        projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir) });
+      }
+      // Sort by projectKey (the canonical member order used everywhere);
+      // projects[0] is the primary (lowest projectKey).
+      projects.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));
+
+      // D2: sourceBranch/featureBranch are per-project DEFAULTS; do NOT
+      // pre-validate against any one repo (the orchestrator resolves each
+      // project's default via resolveDefaultBranch). This is the single
+      // intentional divergence from the single-project isValidSourceRef guard.
+      // Still reject option-injection (a leading dash) on sourceBranch.
+      if (branch.source && branch.source.startsWith('-')) {
+        return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
+      }
+
+      orch = createOrchestrator({
+        workspace: {
+          id: ws.id,
+          key: ws.id, // ws.id === workspaceKey(ws); routes artifacts to its store
+          name: ws.name,
+          description: ws.description,
+          projects: projects.map((p) => ({ ...p, branch })),
+        },
+        prompt: effectivePrompt,
+        title,
+        extras,
+        agentsDir: AGENTS_DIR,
+        workflowId,
+        branch,
+        claude: { permissionMode: 'acceptEdits', mock },
+      });
+
+      entry = {
+        id: runId,
+        orch,
+        projectDir: projects[0].projectDir, // primary, for back-compat readers
+        workspaceId: ws.id,
+        kind: 'workspace-run',
+        title,
+        status: 'starting',
+        startedAt: new Date().toISOString(),
+        events: [],
+        pendingQuestion: null,
+      };
+    } else {
+      // ── Single-project target (UNCHANGED) ──────────────────────────────────
+      const projectDir = resolveProjectDir(body.projectDir);
+      if (!projectDir) return badRequest(res, 'projectDir is required');
+
+      if (!fs.existsSync(projectDir)) {
+        try {
+          await fsp.mkdir(projectDir, { recursive: true });
+        } catch (err) {
+          return badRequest(res, `cannot create projectDir: ${err.message}`);
+        }
+      }
+
+      // M1: never hand an unvalidated sourceBranch to `git worktree add`. Reject a
+      // leading-dash (option injection) or unknown ref here so the client gets a
+      // clean 400 instead of a mid-run error event. featureBranch is sanitized
+      // downstream by sanitizeBranchName, so it needs no ref check.
+      if (branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
+        return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
+      }
+
+      orch = createOrchestrator({
+        projectDir,
+        prompt: effectivePrompt,
+        title,
+        extras,
+        agentsDir: AGENTS_DIR,
+        workflowId,
+        branch,
+        claude: { permissionMode: 'acceptEdits', mock },
+      });
+
+      entry = {
+        id: runId,
+        orch,
+        projectDir,
+        kind: 'run',
+        title,
+        status: 'starting',
+        startedAt: new Date().toISOString(),
+        events: [],
+        pendingQuestion: null,
+      };
     }
 
-    const orch = createOrchestrator({
-      projectDir,
-      prompt: effectivePrompt,
-      title,
-      extras,
-      agentsDir: AGENTS_DIR,
-      workflowId,
-      branch,
-      claude: { permissionMode: 'acceptEdits', mock },
-    });
-
-    const entry = {
-      id: runId,
-      orch,
-      projectDir,
-      title,
-      status: 'starting',
-      startedAt: new Date().toISOString(),
-      events: [],
-      pendingQuestion: null,
-    };
     runs.set(runId, entry);
     wireRun(entry);
 
@@ -399,8 +516,29 @@ app.post('/api/stop', (req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/runs?projectDir  -> history of saved pipelines
+// GET /api/runs?workspaceId  -> workspace-store pipelines + live workspace runs
 // ---------------------------------------------------------------------------
 app.get('/api/runs', async (req, res) => {
+  // Workspace arm: when workspaceId is present (and projectDir absent), list the
+  // workspace store's pipelines + live workspace runs (§2.7). A bad/unknown id
+  // reads as not-found (404), matching the run-target + detail routes.
+  const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
+  if (workspaceId && !resolveProjectDir(req.query.projectDir)) {
+    if (!WORKSPACE_KEY_RE.test(workspaceId)) return res.status(404).json({ error: 'workspace not found' });
+    try {
+      const ws = await readWorkspace(workspaceId);
+      if (!ws) return res.status(404).json({ error: 'workspace not found' });
+      const primaryDir = ws.projectPaths[0] || null;
+      const pipelines = (await listWorkspacePipelines(ws.id, primaryDir, { withPr: true })) || [];
+      const live = [...runs.values()]
+        .filter((r) => r.workspaceId === ws.id)
+        .map((r) => ({ id: r.pipelineId || r.id, runId: r.id, title: r.title, status: r.status, live: true }));
+      return res.json({ pipelines, live, ghAvailable: await hasGh() });
+    } catch (err) {
+      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    }
+  }
+
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
@@ -476,12 +614,20 @@ app.get('/api/history/:key/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.delete('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
+  const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
   const projectKey = typeof req.query.projectKey === 'string' ? req.query.projectKey.trim() : '';
   const projectDir = resolveProjectDir(req.query.projectDir);
+  // A workspace pipeline routes to store/workspaces/<key>/; its id reads as
+  // not-found when malformed (no path-traversal surface).
+  if (workspaceId && !WORKSPACE_KEY_RE.test(workspaceId)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
   if (projectKey && !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(projectKey)) {
     return res.status(404).json({ error: 'pipeline not found' });
   }
-  if (!projectKey && !projectDir) return badRequest(res, 'projectKey or projectDir is required');
+  if (!workspaceId && !projectKey && !projectDir) {
+    return badRequest(res, 'workspaceId, projectKey or projectDir is required');
+  }
 
   // Never tear down a pipeline that is still live in this server process.
   const liveActive = [...runs.values()].some((r) =>
@@ -491,8 +637,9 @@ app.delete('/api/runs/:id', async (req, res) => {
 
   try {
     const report = await deletePipeline({
-      key: projectKey || null,
-      projectDir: projectKey ? null : projectDir,
+      workspaceKey: workspaceId || null,
+      key: workspaceId ? null : (projectKey || null),
+      projectDir: (workspaceId || projectKey) ? null : projectDir,
       id,
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
@@ -615,6 +762,109 @@ app.delete('/api/projects', async (req, res) => {
   if (!name.trim()) return badRequest(res, 'name is required');
   try {
     res.json({ projects: await removeProject(name) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Workspace registry: a named set of 2+ onboarded git repos with one editable
+// interconnection description. Thin delegation to src/core/workspaces.mjs (which
+// owns validation + persistence); the route maps err.code -> HTTP exactly like
+// /api/projects + /api/workflows. The :id is the workspaceKey, validated against
+// WORKSPACE_KEY_RE before any disk touch (a stale/crafted id reads as 404).
+// ---------------------------------------------------------------------------
+app.get('/api/workspaces', async (_req, res) => {
+  try {
+    res.json({ workspaces: await listWorkspaces() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/workspaces/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  try {
+    const workspace = await readWorkspace(id);
+    if (!workspace) return res.status(404).json({ error: 'workspace not found' });
+    res.json({ workspace });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/workspaces', async (req, res) => {
+  const body = req.body || {};
+  // Normalize member paths through the same single source of truth as /api/run;
+  // createWorkspace re-normalizes + de-dupes by canonical root, but a fast <2
+  // reject here matches the spec's defense-in-depth (§2.3).
+  const projectPaths = Array.isArray(body.projectPaths)
+    ? body.projectPaths.map((p) => resolveProjectDir(p)).filter(Boolean)
+    : [];
+  if (projectPaths.length < 2) return badRequest(res, 'a workspace needs at least 2 member projects');
+  try {
+    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description });
+    res.status(201).json({ workspace });
+  } catch (err) {
+    const status = workspaceErrorStatus(err && err.code);
+    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/workspaces/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  const body = req.body || {};
+  // Immutability (defense-in-depth, §2.3): the project set never changes via PATCH.
+  if ('projectPaths' in body || 'projectKeys' in body) {
+    return badRequest(res, 'a workspace project set is immutable; PATCH accepts only name/description');
+  }
+  // Pass through only the editable fields.
+  const patch = {};
+  if (typeof body.name === 'string') patch.name = body.name;
+  if (typeof body.description === 'string') patch.description = body.description;
+  try {
+    const workspace = await updateWorkspace(id, patch);
+    res.json({ workspace });
+  } catch (err) {
+    const status = workspaceErrorStatus(err && err.code);
+    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/workspaces/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  // 409 while a live workspace run OR live scan for this workspace exists. The
+  // module-level deleteWorkspace has no runs map, so this guard lives here (§2.3).
+  const live = [...runs.values()].some((r) =>
+    r.workspaceId === id &&
+    ['running', 'starting', 'created', 'scanning'].includes(String(r.status || '').toLowerCase()));
+  if (live) return res.status(409).json({ error: 'cannot delete a workspace with a live run or scan' });
+  try {
+    const report = await deleteWorkspace(id);
+    res.json({ ok: true, warnings: (report && report.warnings) || [] });
+  } catch (err) {
+    const status = workspaceErrorStatus(err && err.code);
+    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/workspaces/:id/runs/:runId  -> persisted state + markdown for a
+// finished workspace run. The /api/history/:key/:id key regex forbids a slash,
+// so a workspace run (store key "workspaces/<key>") needs this dedicated route.
+// readWorkspacePipeline joins ONLY workspaceStorePath(validatedKey) -> no
+// path-traversal surface; do NOT widen the history :key regex (§2.7).
+// ---------------------------------------------------------------------------
+app.get('/api/workspaces/:id/runs/:runId', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'pipeline not found' });
+  try {
+    const data = await readWorkspacePipeline(id, req.params.runId);
+    if (!data) return res.status(404).json({ error: 'pipeline not found' });
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -967,4 +1217,4 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export const _testing = { wireRun };
+export const _testing = { wireRun, summarizeRuns };
