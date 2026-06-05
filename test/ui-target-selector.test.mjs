@@ -91,17 +91,22 @@ test('selecting a workspace renders its member chips (missing flagged)', async (
   assert.equal(chips[1].textContent, 'svc-ui');
 });
 
-test('source-branch field shows the per-project "auto" placeholder in workspace mode (D2)', async () => {
+test('workspace mode swaps the single source dropdown for per-project dropdowns', async () => {
   const window = await boot();
   const doc = window.document;
   click(window, doc.querySelector('#target-seg button[data-target="workspace"]'));
   await new Promise((r) => setTimeout(r, 0));
-  const sb = doc.querySelector('#sourceBranch');
-  assert.equal(sb.options.length >= 1, true);
-  assert.match(sb.options[0].textContent, /default branch per project \(auto\)/);
-  assert.equal(sb.options[0].value, '', 'empty value → server falls back per project');
-  // Branch fields stay VISIBLE (the field is never hidden in workspace mode).
-  assert.equal(doc.querySelector('#sourceBranch').closest('.field').classList.contains('hidden'), false);
+  // Select a complete workspace so its members render.
+  const wsel = doc.querySelector('#workspaceSelect');
+  wsel.value = 'wks-alpha-00000001';
+  wsel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  // Single dropdown hidden; per-project list shown with one select per member.
+  assert.equal(doc.querySelector('#sourceBranchWrap').classList.contains('hidden'), true);
+  assert.equal(doc.querySelector('#ws-source-branches').classList.contains('hidden'), false);
+  assert.equal(doc.querySelectorAll('#ws-source-branches select.ws-src-select').length, 2);
+  // The "Source branch" field/header itself is never hidden.
+  assert.equal(doc.querySelector('#sourceBranchHint').closest('.field').classList.contains('hidden'), false);
 });
 
 test('submit in workspace mode sends {workspaceId} and NO projectDir; project mode is unchanged', async () => {

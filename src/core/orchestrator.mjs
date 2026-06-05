@@ -501,39 +501,56 @@ class Orchestrator extends EventEmitter {
    * the scalar this.workDir/this.branchInfo to the primary (members[0]). Results are
    * in sorted-projectKey order (mapWithCap is deterministic), so writes are stable.
    * createWorktree's M2 resume/in-use semantics apply per member unchanged. Each
-   * created worktree is registered into this.branchInfos/workDirs/state.branches
-   * IMMEDIATELY (before the whole batch settles), so if a later member throws (e.g.
-   * its branch is already checked out) the partial worktrees are still found and
-   * torn down by _teardownWorktreeAll in run()'s finally (§5.10 edge 4).
+   * created worktree is registered into this.branchInfos/workDirs/state.branches the
+   * instant it resolves, and a failing member is held until ALL members settle before
+   * the failure is propagated — so every worktree that got created (even a sibling of
+   * the failing member) is found and torn down by _teardownWorktreeAll in run()'s
+   * finally (§5.10 edge 4: partial setup leaks nothing).
    */
   async _setupWorktreeAll() {
     this._log('worktree', 'info', `Resolving source/feature branches for ${this.members.length} members…`);
     this.state.branches = this.state.branches || {};
+    // Settle EVERY member before propagating any failure. mapWithCap is Promise.all,
+    // which rejects the instant one member throws and would abandon a sibling whose
+    // createWorktree is still in flight — that sibling resolves AFTER run()'s finally
+    // has already snapshotted branchInfos in _teardownWorktreeAll, orphaning its
+    // worktree on disk (a real leak; the partial-setup test guards exactly this).
+    // Catch per member so each successful worktree registers first, then re-throw so
+    // the run still errors and teardown finds + removes every survivor (no leak).
+    const setupFailures = [];
     await mapWithCap(this.members, fanoutCap(), async (m) => {
-      const { source, featureRaw } = await this._resolveMemberBranches(m);
-      const info = await createWorktree({
-        projectDir: resolve(m.projectDir),
-        pipelineId: this.pipeline.id,
-        sourceBranch: source,
-        featureBranch: featureRaw,
-        signal: this.abort.signal,
-      });
-      // Register eagerly (Map.set is synchronous, safe under bounded concurrency)
-      // so a sibling's failure cannot orphan this worktree past teardown.
-      this.workDirs.set(m.projectKey, info.worktreeDir);
-      this.branchInfos.set(m.projectKey, info);
-      this.state.branches[m.projectKey] = {
-        source: info.sourceBranch,
-        feature: info.branch,
-        worktreeDir: info.worktreeDir,
-        reusedExisting: info.reusedExisting,
-      };
-      const reuseNote = info.reusedExisting ? ' (resumed existing branch)' : '';
-      await appendAudit(
-        this.pipeline.dir,
-        `Worktree \`${m.projectKey}\`: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
-      ).catch(() => {});
+      try {
+        const { source, featureRaw } = await this._resolveMemberBranches(m);
+        const info = await createWorktree({
+          projectDir: resolve(m.projectDir),
+          pipelineId: this.pipeline.id,
+          sourceBranch: source,
+          featureBranch: featureRaw,
+          signal: this.abort.signal,
+        });
+        // Register eagerly (Map.set is synchronous) so teardown always sees it.
+        this.workDirs.set(m.projectKey, info.worktreeDir);
+        this.branchInfos.set(m.projectKey, info);
+        this.state.branches[m.projectKey] = {
+          source: info.sourceBranch,
+          feature: info.branch,
+          worktreeDir: info.worktreeDir,
+          reusedExisting: info.reusedExisting,
+        };
+        const reuseNote = info.reusedExisting ? ' (resumed existing branch)' : '';
+        await appendAudit(
+          this.pipeline.dir,
+          `Worktree \`${m.projectKey}\`: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
+        ).catch(() => {});
+      } catch (err) {
+        setupFailures.push(err);
+      }
     });
+    // Any member failing setup fails the whole run (createWorktree cleans up its own
+    // failed attempt; the registered survivors are torn down in run()'s finally).
+    if (setupFailures.length) {
+      throw setupFailures[0] instanceof Error ? setupFailures[0] : new Error(String(setupFailures[0]));
+    }
     // Scalars mirror the primary so existing scalar readers keep working. C8: the
     // scalar state.branch is the primary's OBJECT (pipeline-delete reads .feature/
     // .worktreeDir), copied from state.branches[primaryKey].

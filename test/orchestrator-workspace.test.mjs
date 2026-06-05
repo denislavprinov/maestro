@@ -185,6 +185,27 @@ test('D2: per-project feature branch is the feature + project slug', async () =>
   assert.notEqual(state.branches[projectKey(a)].feature, state.branches[projectKey(b)].feature);
 });
 
+test('per-project source: each member uses its own branch.source (the server map result)', async () => {
+  // Two repos; give each its own extra source branch, then set distinct per-member sources.
+  const a = await freshRepo();
+  const b = await freshRepo();
+  for (const [dir, br] of [[a, 'develop'], [b, 'release']]) {
+    const g = (args) => spawnSync('git', args, { cwd: dir });
+    g(['branch', br]); // create the branch the member will be based on
+  }
+  const ws = workspaceOpts([a, b]); // baseline shape, sorted by projectKey, branch:{source:'main'}
+  // Mimic buildWorkspaceMembers: assign each member its own source by projectKey.
+  const byKey = { [projectKey(a)]: 'develop', [projectKey(b)]: 'release' };
+  ws.workspace.projects = ws.workspace.projects.map((p) => ({ ...p, branch: { source: byKey[p.projectKey], feature: null } }));
+
+  const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  const state = orch.getState();
+  assert.equal(state.branches[projectKey(a)].source, 'develop');
+  assert.equal(state.branches[projectKey(b)].source, 'release');
+});
+
 // ── description injection + freeze ────────────────────────────────────────────
 test('description is frozen at run start onto state + this.workspaceDescription', async () => {
   const a = await freshRepo();

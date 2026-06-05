@@ -336,6 +336,29 @@ function resolveProjectDir(input) {
   return normalizeProjectPath(input);
 }
 
+// ── Per-project source branches (workspace runs) ──────────────────────────────
+// A workspace run may carry a { [projectKey]: sourceBranch } override map. Each
+// member's source is its override (when non-blank) else the shared run default;
+// the feature branch is always shared (the orchestrator suffixes it per project).
+export function buildWorkspaceMembers(projects, branch, sourceByKey = {}) {
+  const byKey = sourceByKey && typeof sourceByKey === 'object' ? sourceByKey : {};
+  return projects.map((p) => {
+    const override = byKey[p.projectKey];
+    const source = typeof override === 'string' && override.trim() ? override.trim() : branch.source;
+    return { ...p, branch: { source, feature: branch.feature } };
+  });
+}
+
+// Mirror the shared-source option-injection guard (D2) for every override entry.
+// Returns the first leading-dash value found, or null when all entries are safe.
+export function firstInjectionSource(sourceByKey = {}) {
+  if (!sourceByKey || typeof sourceByKey !== 'object') return null;
+  for (const v of Object.values(sourceByKey)) {
+    if (typeof v === 'string' && v.trim().startsWith('-')) return v.trim();
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
@@ -428,6 +451,15 @@ app.post('/api/run', async (req, res) => {
       if (branch.source && branch.source.startsWith('-')) {
         return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
       }
+      // Per-project source overrides { [projectKey]: branch }. Same injection guard.
+      const sourceByKey =
+        body.sourceBranchByKey && typeof body.sourceBranchByKey === 'object' && !Array.isArray(body.sourceBranchByKey)
+          ? body.sourceBranchByKey
+          : {};
+      const badOverride = firstInjectionSource(sourceByKey);
+      if (badOverride) {
+        return badRequest(res, `unknown or invalid sourceBranch: ${badOverride}`);
+      }
 
       orch = createOrchestrator({
         workspace: {
@@ -435,7 +467,7 @@ app.post('/api/run', async (req, res) => {
           key: ws.id, // ws.id === workspaceKey(ws); routes artifacts to its store
           name: ws.name,
           description: ws.description,
-          projects: projects.map((p) => ({ ...p, branch })),
+          projects: buildWorkspaceMembers(projects, branch, sourceByKey),
         },
         prompt: effectivePrompt,
         title,
