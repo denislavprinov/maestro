@@ -38,6 +38,7 @@ import {
 } from '../src/core/workspaces.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
+import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,6 +72,10 @@ const HOST = process.env.MAESTRO_HOST || '127.0.0.1';
 const runs = new Map();
 
 const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error'];
+// The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
+// the 7-event run plumbing above is untouched. createWorkspaceScan emits many
+// scan-progress then exactly one terminal scan-done OR scan-error.
+const SCAN_EVENT_NAMES = ['scan-progress', 'scan-done', 'scan-error'];
 const MAX_BUFFER = 5000;
 
 // ---------------------------------------------------------------------------
@@ -91,35 +96,42 @@ wss.on('connection', (ws, req) => {
     return;
   }
   sockets.add(ws);
-  // Optional ?runId=... -> replay that run's buffered events so a reconnecting
-  // client immediately sees the full state.
+  // Optional ?runId=... (or ?scanId=...) -> replay that entry's buffered events so
+  // a reconnecting client immediately sees the full state. Scan entries live in the
+  // SAME runs Map keyed by scanId, so a single id lookup serves both families.
   let requestedRunId = null;
+  let requestedScanId = null;
   try {
     const u = new URL(req.url, 'http://localhost');
     requestedRunId = u.searchParams.get('runId');
+    requestedScanId = u.searchParams.get('scanId');
   } catch {
     requestedRunId = null;
+    requestedScanId = null;
   }
+  const id = requestedRunId || requestedScanId;
 
   send(ws, { type: 'hello', runs: summarizeRuns() });
 
-  if (requestedRunId && runs.has(requestedRunId)) {
-    const entry = runs.get(requestedRunId);
+  if (id && runs.has(id)) {
+    const entry = runs.get(id);
     for (const ev of entry.events) send(ws, ev);
   }
 
   ws.on('close', () => sockets.delete(ws));
   ws.on('error', () => sockets.delete(ws));
   ws.on('message', (data) => {
-    // Clients may ask to (re)subscribe / replay a run's history.
+    // Clients may ask to (re)subscribe / replay an entry's history. A scan's
+    // {type:'subscribe', scanId} is accepted identically to a run's runId.
     let msg = null;
     try {
       msg = JSON.parse(String(data));
     } catch {
       return;
     }
-    if (msg && msg.type === 'subscribe' && msg.runId && runs.has(msg.runId)) {
-      const entry = runs.get(msg.runId);
+    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId) : null;
+    if (subId && runs.has(subId)) {
+      const entry = runs.get(subId);
       for (const ev of entry.events) send(ws, ev);
     }
   });
@@ -220,6 +232,38 @@ function wireRun(entry) {
         if (typeof payload.id === 'string' && payload.id) entry.pipelineId = payload.id;
       }
 
+      record(event);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wire a WorkspaceScan's events onto the WebSocket, tagged with scanId. A NEW
+// family in the SAME runs Map — the 7-event run plumbing (wireRun) is untouched.
+// Maps scan-progress->running, scan-done->done, scan-error->error so the hello
+// snapshot + DELETE-while-live guard see a live scan as "running" and a finished
+// one as terminal. createWorkspaceScan emits many scan-progress then exactly one
+// terminal scan-done OR scan-error (§5.4).
+// ---------------------------------------------------------------------------
+function wireScan(entry) {
+  const { scanId, orch } = entry;
+
+  const record = (event) => {
+    // scanId LAST so the runs-Map key always wins (the engine already tags its
+    // payload with the same id; this is a defensive override against any drift).
+    const tagged = { ...event, scanId };
+    entry.events.push(tagged);
+    if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
+    broadcast(tagged);
+    return tagged;
+  };
+
+  for (const name of SCAN_EVENT_NAMES) {
+    subscribe(orch, name, (payload) => {
+      const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
+      if (name === 'scan-progress') entry.status = 'running';
+      else if (name === 'scan-done') entry.status = 'done';
+      else if (name === 'scan-error') entry.status = 'error';
       record(event);
     });
   }
@@ -852,6 +896,119 @@ app.delete('/api/workspaces/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Scan endpoints (the wizard's backend, §2.4 / §5.4). Both fire-and-forget:
+// mint scanId, register a kind:'scan' entry in the SAME runs Map, wire its
+// scan-* events, start createWorkspaceScan(...).run() detached, return {scanId}.
+// The scan NEVER persists workspaces.json — persistence is the wizard's explicit
+// follow-up CRUD call (POST create / PATCH re-scan).
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared launcher for both scan routes (DRY, §2.4). Mints scanId, registers the
+ * entry, wires events, starts the engine detached with a .catch backstop that
+ * converts an unexpected throw into a broadcast scan-error (status 'error') so
+ * the process never crashes on a fire-and-forget scan.
+ * @param {{projectPaths:string[], name?:string, workspaceId?:string}} args
+ * @returns {string} scanId
+ */
+function startScan({ projectPaths, name, workspaceId }) {
+  const orch = createWorkspaceScan({
+    projectPaths,
+    name,
+    agentsDir: AGENTS_DIR,
+    claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK) },
+  });
+  // The engine mints its own scanId (scan_<uuid>) and tags every emitted event
+  // with it; use THAT as the runs-Map key + the returned id so the entry, its
+  // buffered events, and WS reconnect/replay (?scanId=) all agree on one id.
+  const scanId = orch.getState().scanId;
+  const entry = {
+    id: scanId,
+    scanId,
+    orch,
+    kind: 'scan',
+    projectDir: (Array.isArray(projectPaths) && projectPaths[0]) || null,
+    workspaceId: workspaceId || null,
+    title: name || 'workspace scan',
+    status: 'scanning',
+    startedAt: new Date().toISOString(),
+    events: [],
+    pendingQuestion: null,
+  };
+  runs.set(scanId, entry);
+  wireScan(entry);
+
+  Promise.resolve()
+    .then(() => orch.run())
+    .catch((err) => {
+      // run() should never throw (it emits scan-error), but a defensive backstop
+      // mirrors POST /api/run: surface an unexpected throw as a tagged scan-error.
+      const event = { scanId, type: 'scan-error', message: err && err.message ? err.message : String(err) };
+      entry.status = 'error';
+      entry.events.push(event);
+      broadcast(event);
+    });
+
+  return scanId;
+}
+
+// POST /api/workspaces/scan (pre-persist, Step 2->3). Takes projectPaths directly:
+// validate >=2 paths + fs.existsSync each + reject non-git-repos (400); the deep
+// git work happens inside the engine.
+app.post('/api/workspaces/scan', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const projectPaths = Array.isArray(body.projectPaths)
+      ? body.projectPaths.map((p) => resolveProjectDir(p)).filter(Boolean)
+      : [];
+    if (projectPaths.length < 2) return badRequest(res, 'a workspace scan needs at least 2 member projects');
+    for (const dir of projectPaths) {
+      if (!fs.existsSync(dir)) return badRequest(res, `member path is missing: ${dir}`);
+      if (!isGitRepo(dir)) return badRequest(res, `member is not a git repository: ${dir}`);
+    }
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
+    const scanId = startScan({ projectPaths, name });
+    res.json({ scanId });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/workspaces/:id/scan (re-scan). Reads the workspace (404 if absent),
+// scans ws.projectPaths, tags the entry with workspaceId. 409 if a live run for
+// that workspace already exists (avoid graphify-build contention).
+app.post('/api/workspaces/:id/scan', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  try {
+    const ws = await readWorkspace(id);
+    if (!ws) return res.status(404).json({ error: 'workspace not found' });
+    const liveRun = [...runs.values()].some((r) =>
+      r.workspaceId === id && r.kind === 'workspace-run' &&
+      ['running', 'starting', 'created'].includes(String(r.status || '').toLowerCase()));
+    if (liveRun) return res.status(409).json({ error: 'a live run exists for this workspace' });
+    const scanId = startScan({ projectPaths: ws.projectPaths, name: ws.name, workspaceId: ws.id });
+    res.json({ scanId });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/scan/stop  body:{scanId} -> entry.orch.stop() (aborts in-flight
+// investigators + best-effort scan-worktree/branch cleanup in the engine's
+// finally, D4); marks the entry 'stopped'. Idempotent: an unknown/finished scan
+// still returns ok.
+app.post('/api/scan/stop', (req, res) => {
+  const scanId = req.body && typeof req.body.scanId === 'string' ? req.body.scanId : '';
+  const entry = scanId ? runs.get(scanId) : null;
+  if (entry && entry.kind === 'scan' && entry.orch && typeof entry.orch.stop === 'function') {
+    try { entry.orch.stop(); } catch { /* best-effort */ }
+    entry.status = 'stopped';
+  }
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/workspaces/:id/runs/:runId  -> persisted state + markdown for a
 // finished workspace run. The /api/history/:key/:id key regex forbids a slash,
 // so a workspace run (store key "workspaces/<key>") needs this dedicated route.
@@ -1221,4 +1378,4 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, summarizeRuns };
+export const _testing = { wireRun, wireScan, summarizeRuns, startScan };
