@@ -17,7 +17,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+import { mkdtemp, rm, mkdir, writeFile, readdir } from 'node:fs/promises';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,23 +27,84 @@ import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { writeStoreMeta, recordArtifact } from '../src/core/artifacts.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+
+// ── Robust temp-repo teardown (fixes a full-suite-only ENOTEMPTY flake) ──────
+// The two run-returns-200 workspace tests POST a workspace run; the route fires
+// orch.run() fire-and-forget. A workspace run creates a per-member worktree under
+// <member>/.git/worktrees/<id>, and run()'s finally tears it down with
+// `git worktree remove` that runs with ignoreAbort:true (orchestrator._commitWork
+// / removeWorktree) — i.e. it deliberately OUTLIVES orch.stop(). So after stop()
+// a git child can still be mutating <member>/.git when after() begins the
+// recursive rm of created[], and the final `rmdir .git` loses the race ->
+// ENOTEMPTY. It only surfaces under full-suite event-loop load (the teardown git
+// finishes promptly when this file runs alone). Two layers, defense-in-depth:
+//   (1) drainWorktrees(): after stopping, wait (bounded) for each member's
+//       .git/worktrees to drain + git lock files to clear, so the teardown
+//       `worktree remove` is done before we touch the dir;
+//   (2) rmWithRetry(): a bounded ENOTEMPTY/EBUSY retry on the recursive rm, so a
+//       teardown git that lands in the residual window can't fail cleanup.
+
+/** True while a member repo still has a live worktree entry or a git lock. */
+async function gitBusy(dir) {
+  try {
+    if (!existsSync(join(dir, '.git'))) return false;
+    const wt = join(dir, '.git', 'worktrees');
+    if (existsSync(wt) && (await readdir(wt)).length > 0) return true;
+    for (const lock of ['index.lock', 'HEAD.lock', 'config.lock']) {
+      if (existsSync(join(dir, '.git', lock))) return true;
+    }
+    return false;
+  } catch {
+    return false; // a dir vanishing mid-check is not "busy"
+  }
+}
+
+/** Wait (bounded) for in-flight teardown git to release every member repo. */
+async function drainWorktrees(dirs, { timeoutMs = 4000, stepMs = 25 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const busy = [];
+    for (const d of dirs) if (await gitBusy(d)) busy.push(d);
+    if (busy.length === 0 || Date.now() >= deadline) return;
+    await delay(stepMs);
+  }
+}
+
+/** Recursive rm that retries on ENOTEMPTY/EBUSY (late git writes into .git). */
+async function rmWithRetry(dir, { attempts = 12, stepMs = 25 } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = err?.code || '';
+      if ((code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'ENOENT') && i < attempts) {
+        await delay(stepMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 // Outer isolation that outlives the per-suite before/after: a fire-and-forget
 // orch.run() can write to the store after teardown restores MAESTRO_HOME.
 useTempHome(after);
 
 // CONTAINMENT (test-leak guard). The two run-returns-200 workspace tests POST a
-// workspace run that fires orch.run() in the background. At M2 the orchestrator
-// does NOT yet consume opts.workspace, so it resolves this.projectDir =
-// process.cwd() and runs `git worktree add` there — mock mode short-circuits the
-// graph build + claude spawn, NOT worktree setup. To keep ZERO pollution of the
-// real maestro repo, we chdir the whole file's process into a throwaway git repo
-// for the duration (node runs each test FILE in its own process and tests within
-// this file run sequentially, so a process-wide chdir is safe and isolated): any
-// worktree the orchestrator creates lands inside the sandbox and dies with the
-// `rm -rf` in after(). All other paths in this file are absolute, so chdir is
-// otherwise inert. The defensive after() also stops every registered orch (which
-// aborts in-flight worktree creation) before removing the sandbox.
+// workspace run that fires orch.run() in the background. The orchestrator now
+// consumes the workspace and creates one worktree PER MEMBER under each member's
+// own <member>/.git/worktrees/<id> (mock mode short-circuits the graph build +
+// claude spawn, NOT worktree setup) — the members are the freshRepo() dirs in
+// created[]. As a belt for the scalar primary/cwd resolution, we ALSO chdir the
+// whole file's process into a throwaway git repo for the duration (node runs each
+// test FILE in its own process and tests within this file run sequentially, so a
+// process-wide chdir is safe and isolated); any worktree resolved against cwd
+// lands inside the sandbox and dies with the rm in after(). All other paths in
+// this file are absolute, so chdir is otherwise inert. The defensive after()
+// stops every registered orch, then drains the in-flight (ignoreAbort) teardown
+// git before removing the member repos + sandbox (see drainWorktrees/rmWithRetry).
 const origCwd = process.cwd();
 let cwdSandbox = null;
 
@@ -65,6 +127,7 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-wsapi-'));
   prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
+  _resetForTests(); // reopen the DB singleton against THIS home before any /api/workspaces call
   process.env.MAESTRO_MOCK = '1'; // keep /api/run offline
   const mod = await import('../ui/server.mjs'); // imported => no port bind
   runs = mod.runs;
@@ -82,14 +145,22 @@ after(async () => {
     try { r.orch && typeof r.orch.stop === 'function' && r.orch.stop(); } catch { /* best-effort */ }
   }
   runs.clear();
+  // stop() aborts the run, but run()'s finally tears down each member worktree with
+  // ignoreAbort git that outlives the abort. Wait for that teardown to release the
+  // member repos BEFORE removing them, so `git worktree remove` can't race the rm
+  // and leave .git non-empty (the full-suite-only ENOTEMPTY flake). See header.
+  await drainWorktrees([...created, cwdSandbox].filter(Boolean));
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   delete process.env.MAESTRO_MOCK;
+  _resetForTests(); // next file reopens the DB singleton clean
   // Restore cwd BEFORE removing the sandbox so the rm cannot fail on a cwd that
   // is being deleted; the sandbox (with any worktree inside it) goes with it.
   process.chdir(origCwd);
-  if (cwdSandbox) await rm(cwdSandbox, { recursive: true, force: true });
-  await rm(homeDir, { recursive: true, force: true });
-  await Promise.all(created.map((d) => rm(d, { recursive: true, force: true })));
+  // rmWithRetry absorbs any teardown git that lands in the residual window after
+  // the drain (bounded ENOTEMPTY/EBUSY retry) so cleanup is resilient regardless.
+  if (cwdSandbox) await rmWithRetry(cwdSandbox);
+  await rmWithRetry(homeDir);
+  await Promise.all(created.map((d) => rmWithRetry(d)));
 });
 
 /** A real git repo so the server's per-member isGitRepo resolution passes. */
