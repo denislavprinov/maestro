@@ -811,3 +811,63 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* History pill "WS" badge for workspace runs. */
 .hist-pill.ws::before{content:'WS';font-size:9px;font-weight:800;letter-spacing:.06em;background:var(--violet-bg);color:var(--violet-ink);border-radius:5px;padding:2px 5px;margin-right:2px;}
 .hist-pill.ws.active::before{background:rgba(255,255,255,.22);color:#fff;}
+
+/* ========================================================================== */
+/* Run-flow — composer-style node graph for Running + History cards            */
+/* (ported from the mockup; reuses :root tokens. Node base look — accent bar,  */
+/*  border, radius, shadow — is inherited from the unscoped `.node` rule.       */
+/*  --c is set per-node inline by runNode(); these rules read it via var(--c).) */
+/* ========================================================================== */
+.run-flow-wrap{position:relative;margin:0 0 18px;border-radius:18px;border:1px solid var(--line);overflow-x:auto;overflow-y:hidden;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
+.run-flow{position:relative;display:flex;align-items:center;padding:66px 30px 52px;width:max-content;min-width:100%;}
+.run-flow .strip{flex:0 0 44px;align-self:stretch;margin:40px 0;background:none;outline:none;}
+.run-flow .col{padding:14px 8px;}
+.run-flow .col .col-tag{color:var(--ink-3);}
+
+/* Node sizing overrides — base look (accent bar ::before, border, radius,
+   soft shadow, flex layout) is inherited from the unscoped `.node` rule. */
+.run-flow .node{width:198px;padding:11px 13px 11px 16px;cursor:default;transition:opacity .25s, box-shadow .25s, border-color .25s, transform .25s;}
+.run-flow .node .nic{width:33px;height:33px;border-radius:10px;}
+.run-flow .node .nic svg{width:17px;height:17px;}
+.run-flow .node .nmeta b{font-size:12.5px;}
+.run-flow .node .nmeta small{font-size:10px;}
+.run-flow .node:hover{box-shadow:var(--shadow-soft);transform:none;}
+
+/* Always-visible per-node duration · cost (our decision; not in the mockup). */
+.run-flow .node .nrun{display:flex;align-items:center;gap:5px;margin-top:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);}
+.run-flow .node .nrun .dur,.run-flow .node .nrun .cost{font-family:var(--mono);color:var(--ink-3);}
+.run-flow .node .nrun .dur:empty,.run-flow .node .nrun .cost:empty{display:none;}
+
+/* Status badge (top-right pip). */
+.run-flow .nstat{position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;box-shadow:var(--shadow-soft);z-index:3;}
+.run-flow .nstat svg{width:12px;height:12px;}
+.run-flow .nstat.done{background:var(--green);} .run-flow .nstat.done svg{stroke:#fff;stroke-width:3;}
+.run-flow .nstat.paused{background:var(--amber);} .run-flow .nstat.paused svg{fill:#fff;}
+.run-flow .nstat.stopped{background:var(--red);} .run-flow .nstat.stopped svg{stroke:#fff;stroke-width:3;}
+
+/* Per-status node states. */
+.run-flow .node.is-pending{opacity:.5;}
+.run-flow .node.is-pending .nmeta small{color:var(--ink-3);}
+.run-flow .node.is-done .nmeta small{color:var(--green-ink);font-weight:600;}
+.run-flow .node.is-active{border-color:color-mix(in srgb, var(--c) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
+.run-flow .node.is-active .nmeta small{color:var(--c);font-weight:600;}
+.run-flow .node.is-paused{border-color:color-mix(in srgb, var(--amber) 55%, var(--line-2));animation:nodeGlowAmber 2.2s ease-in-out infinite;}
+.run-flow .node.is-paused .nmeta small{color:var(--amber-ink);font-weight:600;}
+.run-flow .node.is-stopped{border-color:color-mix(in srgb, var(--red) 50%, var(--line-2));box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 13%, transparent),var(--shadow-soft);}
+.run-flow .node.is-stopped .nmeta small{color:var(--red-ink);font-weight:600;}
+@keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
+@keyframes nodeGlowAmber{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
+
+/* Loop-badge cycle-count text (renderer sizes font-size inline). */
+.run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
+
+/* Wires — dimmed by default; the live (originating) loop marches. */
+.run-flow .wires path.wire-dim{opacity:.26;}
+.run-flow .wires path.wire-live{opacity:1;stroke-width:2.4;animation:wireFlow .9s linear infinite;}
+@keyframes wireFlow{to{stroke-dashoffset:-18;}}
+
+@media (prefers-reduced-motion: reduce){
+  .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent),var(--shadow-soft);}
+  .run-flow .node.is-paused{box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent),var(--shadow-soft);}
+  .run-flow .wires path.wire-live{animation:none;}
+}
