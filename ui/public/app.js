@@ -466,8 +466,8 @@ function runNode(node, status, isSelf) {
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
     `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
-      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small></div>` +
-    `<div class="nrun"><span class="dur"></span> · <span class="cost"></span></div>` +
+      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small>` +
+      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div></div>` +
     (STAT_BADGE[status] || '');
   return d;
 }

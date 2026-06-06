@@ -749,7 +749,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /*  --c is set per-node inline by runNode(); these rules read it via var(--c).) */
 /* ========================================================================== */
 .run-flow-wrap{position:relative;margin:0 0 18px;border-radius:18px;border:1px solid var(--line);overflow-x:auto;overflow-y:hidden;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
-.run-flow{position:relative;display:flex;align-items:center;padding:66px 30px 52px;width:max-content;min-width:100%;}
+.run-flow{position:relative;display:flex;align-items:center;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
 .run-flow .strip{flex:0 0 44px;align-self:stretch;margin:40px 0;background:none;outline:none;}
 .run-flow .col{padding:14px 8px;}
 .run-flow .col .col-tag{color:var(--ink-3);}
@@ -767,6 +767,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-flow .node .nrun{display:flex;align-items:center;gap:5px;margin-top:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);}
 .run-flow .node .nrun .dur,.run-flow .node .nrun .cost{font-family:var(--mono);color:var(--ink-3);}
 .run-flow .node .nrun .dur:empty,.run-flow .node .nrun .cost:empty{display:none;}
+/* Separator rendered only when cost is present, so a lone duration (e.g. "0s") has no dangling "·". */
+.run-flow .node .nrun .cost:not(:empty)::before{content:"·";margin-right:4px;}
 
 /* Status badge (top-right pip). */
 .run-flow .nstat{position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;box-shadow:var(--shadow-soft);z-index:3;}
