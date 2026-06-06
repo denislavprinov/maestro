@@ -344,6 +344,60 @@ test('buildStepperManifest: brackets nodes with preflight + done', () => {
   assert.equal(m.steps[4].nodes[0].cycles, false); // s3_0 reviewer — not a target
 });
 
+test('buildStepperManifest: carries the feedback edges (self-cycle + cross-loop) on the manifest', () => {
+  const plan = {
+    id: 'wf_default', name: 'Default',
+    steps: [
+      [{ nodeId: 's0_0', key: 'planner',     uiPhase: 'plan' }],
+      [{ nodeId: 's1_0', key: 'refiner',     uiPhase: 'refine' }],
+      [{ nodeId: 's2_0', key: 'implementer', uiPhase: 'implement' }],
+      [{ nodeId: 's3_0', key: 'reviewer',    uiPhase: 'review' }],
+    ],
+    feedbacks: [
+      { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3, gate: 'hasBlocking' },
+      { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2, gate: 'hasBlocking' },
+    ],
+  };
+  const m = buildStepperManifest(plan, REG);
+  // The manifest now carries the loop edges, projected to {id,from,to,maxCycles}
+  // (the `gate` field is dropped — the UI never needs it).
+  assert.deepEqual(m.feedbacks, [
+    { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3 },
+    { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2 },
+  ]);
+  // Self-cycle vs cross-loop are distinguishable by from===to (the codebase convention).
+  const self = m.feedbacks.find((f) => f.id === 'fb_refine');
+  const cross = m.feedbacks.find((f) => f.id === 'fb_review');
+  assert.equal(self.from, self.to, 'fb_refine is a self-cycle');
+  assert.notEqual(cross.from, cross.to, 'fb_review is a cross-loop');
+  // The per-node cycles:boolean flag is unchanged (additive change, not a replacement).
+  // Manifest cells: [0]=preflight, [1..4]=agents, [5]=done. cycles is set when the
+  // node is a feedback TARGET (fb.to === nodeId): s1_0 (refine self), s2_0 (review->implement).
+  assert.equal(m.steps[2].nodes[0].cycles, true);  // s1_0 refiner — self-loop target
+  assert.equal(m.steps[3].nodes[0].cycles, true);  // s2_0 implementer — review→implement target
+  assert.equal(m.steps[4].nodes[0].cycles, false); // s3_0 reviewer — not a target
+});
+
+test('buildStepperManifest: missing/empty plan.feedbacks yields feedbacks:[] (no crash)', () => {
+  const noFb = { id: 'w', name: 'w', steps: [[{ nodeId: 'n', key: 'planner', uiPhase: 'plan' }]], feedbacks: [] };
+  assert.deepEqual(buildStepperManifest(noFb, REG).feedbacks, []);
+  // plan.feedbacks entirely absent must also be tolerated (fbs guard: Array.isArray(plan?.feedbacks)?…:[]).
+  const absent = { id: 'w', name: 'w', steps: [[{ nodeId: 'n', key: 'planner', uiPhase: 'plan' }]] };
+  assert.deepEqual(buildStepperManifest(absent, REG).feedbacks, []);
+});
+
+test('buildStepperManifest(resolveWorkflow): feedbacks carry resolved maxCycles incl. per-project override', async () => {
+  await freshHome();
+  const p = await freshProject();
+  await setFeedbackCycles(p, 'wf_default', 'fb_review', 2); // override the cross-loop
+  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  const m = buildStepperManifest(plan, REGISTRY);
+  const refine = m.feedbacks.find((f) => f.id === 'fb_refine');
+  const review = m.feedbacks.find((f) => f.id === 'fb_review');
+  assert.deepEqual(refine, { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3 }); // default
+  assert.deepEqual(review, { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2 }); // overridden
+});
+
 test('buildStepperManifest: carries per-node model + effort from the plan', () => {
   const plan = {
     id: 'wf_x', name: 'X',

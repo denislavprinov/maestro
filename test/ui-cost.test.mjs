@@ -88,7 +88,7 @@ test('expanding a card paints per-phase cost from saved steps (refine cycles sum
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .stage[data-node-id]')) byStep[s.dataset.nodeId] = s;
+  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.10');
   assert.equal(byStep.refine.querySelector('.cost').textContent, '$0.10', 'refine cycles summed');
   assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.07');
@@ -120,7 +120,7 @@ test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays b
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .stage[data-node-id]')) byStep[s.dataset.nodeId] = s;
+  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.00', 'executed zero shows $0.00');
   assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.00');
   assert.equal(byStep.refine.querySelector('.cost').textContent, '', 'never-run refine stays blank');

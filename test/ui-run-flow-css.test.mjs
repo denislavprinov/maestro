@@ -1,0 +1,126 @@
+// test/ui-run-flow-css.test.mjs — Running + History cards render the pipeline as
+// a composer-style node graph (.run-flow-wrap > .run-flow). Locks in the ported
+// stylesheet (scroll wrap, columns/strips, node sizing, per-status states + glow
+// keyframes, status badges, animated wire classes, the always-visible .nrun
+// duration · cost line, loop-badge text). jsdom has no layout -> assert on TEXT.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const css = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '../ui/public/style.css'),
+  'utf8',
+);
+
+function ruleBody(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+  return m ? m[1] : null;
+}
+
+test('.run-flow-wrap is a dotted-grid horizontal scroll container', () => {
+  const body = ruleBody('.run-flow-wrap');
+  assert.ok(body, '.run-flow-wrap rule missing');
+  assert.match(body, /position:\s*relative/);
+  assert.match(body, /overflow-x:\s*auto/, 'wide pipelines scroll horizontally');
+  assert.match(body, /border-radius:\s*18px/);
+  assert.match(body, /border:\s*1px solid var\(--line\)/);
+  assert.match(body, /radial-gradient/, 'dotted-grid background');
+  assert.match(body, /var\(--line-2\)/, 'grid dots use --line-2');
+});
+
+test('.run-flow is a max-content flex row with deep top/bottom padding', () => {
+  const body = ruleBody('.run-flow');
+  assert.ok(body, '.run-flow rule missing');
+  assert.match(body, /display:\s*flex/);
+  assert.match(body, /align-items:\s*center/);
+  assert.match(body, /padding:\s*66px 30px 52px/, 'deep padding for self-loop + col tags');
+  assert.match(body, /width:\s*max-content/);
+});
+
+test('.run-flow .strip / .col / .col-tag are scoped', () => {
+  assert.ok(ruleBody('.run-flow .strip'), '.run-flow .strip missing');
+  assert.ok(ruleBody('.run-flow .col'), '.run-flow .col missing');
+  const tag = ruleBody('.run-flow .col .col-tag');
+  assert.ok(tag, '.run-flow .col .col-tag missing');
+  assert.match(tag, /var\(--ink-3\)/);
+});
+
+test('.run-flow .node overrides width + cursor without re-declaring the base look', () => {
+  const body = ruleBody('.run-flow .node');
+  assert.ok(body, '.run-flow .node rule missing');
+  assert.match(body, /width:\s*198px/, 'run node is narrower than the composer node');
+  assert.match(body, /cursor:\s*default/);
+  assert.doesNotMatch(body, /::before/, 'accent bar must be inherited, not re-declared');
+});
+
+test('.run-flow node icon + meta are sized down', () => {
+  const nic = ruleBody('.run-flow .node .nic');
+  assert.ok(nic, '.run-flow .node .nic missing');
+  assert.match(nic, /width:\s*33px/);
+  assert.match(nic, /height:\s*33px/);
+});
+
+test('.nrun line: always-visible duration · cost, small monospace, --ink-3', () => {
+  const nrun = ruleBody('.run-flow .node .nrun');
+  assert.ok(nrun, '.run-flow .node .nrun rule missing');
+  assert.match(nrun, /font-family:\s*var\(--mono\)/, '.nrun must be monospace');
+  assert.match(nrun, /color:\s*var\(--ink-3\)/);
+  assert.match(nrun, /margin-top/, '.nrun sits below the meta block');
+  assert.doesNotMatch(nrun, /display:\s*none/);
+  assert.ok(
+    ruleBody('.run-flow .node .nrun .dur') || /\.run-flow \.node \.nrun \.dur/.test(css),
+    '.dur sub-span styled',
+  );
+  assert.ok(
+    ruleBody('.run-flow .node .nrun .cost') || /\.run-flow \.node \.nrun \.cost/.test(css),
+    '.cost sub-span styled',
+  );
+});
+
+test('per-status node states are present', () => {
+  assert.match(css, /\.run-flow \.node\.is-pending\s*\{[^}]*opacity:\s*\.5/);
+  assert.ok(ruleBody('.run-flow .node.is-done .nmeta small'), 'is-done small color');
+  assert.match(css, /\.run-flow \.node\.is-active\s*\{[^}]*animation:\s*nodeGlow/);
+  assert.match(css, /\.run-flow \.node\.is-paused\s*\{[^}]*animation:\s*nodeGlowAmber/);
+  assert.match(css, /\.run-flow \.node\.is-stopped\s*\{[^}]*color-mix\(in srgb, var\(--red\)/);
+});
+
+test('node glow keyframes defined', () => {
+  assert.match(css, /@keyframes nodeGlow\b/);
+  assert.match(css, /@keyframes nodeGlowAmber\b/);
+});
+
+test('.nstat status badge + done/paused/stopped variants', () => {
+  const base = ruleBody('.run-flow .nstat');
+  assert.ok(base, '.run-flow .nstat rule missing');
+  assert.match(base, /position:\s*absolute/);
+  assert.match(base, /border-radius:\s*50%/);
+  assert.match(css, /\.run-flow \.nstat\.done\s*\{[^}]*background:\s*var\(--green\)/);
+  assert.match(css, /\.run-flow \.nstat\.paused\s*\{[^}]*background:\s*var\(--amber\)/);
+  assert.match(css, /\.run-flow \.nstat\.stopped\s*\{[^}]*background:\s*var\(--red\)/);
+});
+
+test('animated wire classes + wireFlow keyframes', () => {
+  assert.match(css, /\.run-flow \.wires path\.wire-dim\s*\{[^}]*opacity:\s*\.26/);
+  const live = css.match(/\.run-flow \.wires path\.wire-live\s*\{([^}]*)\}/);
+  assert.ok(live, '.wire-live rule missing');
+  assert.match(live[1], /opacity:\s*1/);
+  assert.match(live[1], /stroke-width:\s*2\.4/);
+  assert.match(live[1], /animation:\s*wireFlow/);
+  assert.match(css, /@keyframes wireFlow\s*\{\s*to\s*\{\s*stroke-dashoffset:\s*-18/);
+});
+
+test('.loop-badge text uses the sans font (legible cycle count)', () => {
+  assert.ok(
+    ruleBody('.run-flow .loop-badge text') || ruleBody('.loop-badge text'),
+    '.loop-badge text rule missing',
+  );
+});
+
+test('prefers-reduced-motion disables node glow + marching-ants', () => {
+  assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node\.is-active/);
+  assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.wires path\.wire-live[\s\S]*animation:\s*none/);
+});

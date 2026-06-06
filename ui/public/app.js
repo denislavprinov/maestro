@@ -45,6 +45,7 @@ import {
   defaultTopologyFromTemplate,
   mergePalette,
   canConnect,
+  EMBEDDED_AGENTS,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
 
@@ -351,6 +352,7 @@ const CLIENT_DEFAULT_STEPPER = {
     { kind: 'agents', nodes: [{ id: 'review',    uiPhase: 'review',    label: 'Review',    color: 'blue',   cycles: true  }] },
     { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
   ],
+  feedbacks: [],
 };
 
 // Pick the manifest to render: prefer a persisted/emitted one, else the legacy
@@ -400,95 +402,196 @@ function advanceRun(r, msg) {
   const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
   if (cellIdx < 0 || !nodeId) return;
   if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
+  if (msg.cycle) r.nodeCycle[nodeId] = Math.max(r.nodeCycle[nodeId] || 0, Number(msg.cycle) || 0);
   r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
 }
 
 // Replace a live card's stepper DOM when the manifest first arrives/changes.
 function rebuildStepperDom(r) {
-  const host = r.el && r.el.querySelector('.stages.compact');
-  if (host) buildStepper(host, r.stepper);
+  const host = r.el && r.el.querySelector('.run-flow');
+  if (host) buildRunGraph(host, r.stepper);
 }
 
-// Build the stepper DOM into `host` (a .stages.compact container) from a
-// manifest. Each cell -> one .stage with a single visible number. A cell with
-// >1 node gets class .parallel and stacks each node as a .stage-node row.
-function buildStepper(host, manifest) {
-  host.innerHTML = '';
+// ---------------------------------------------------------------------------
+// Run/history node-graph (composer-style). buildRunGraph builds the static
+// .run-flow skeleton; paintRunGraph tints it + repaints wires via the shared
+// composerPaintWires. Walks the stepper manifest and emits composer .node markup.
+// ---------------------------------------------------------------------------
+
+// Resolve a manifest node to its agent meta (icon/displayName/description/color).
+// Manifest nodes carry .key (set by buildStepperManifest); bookends (preflight/
+// done) have no key -> a neutral cog so they still render an icon.
+//
+// IMPORTANT: read composer.agents[key] RAW (not composerAgent(key)). composerAgent
+// returns a non-undefined default {displayName:key,...} that would shadow the
+// EMBEDDED_AGENTS fallback. Raw access yields undefined when the live registry
+// isn't loaded yet, so the `|| EMBEDDED_AGENTS[key]` fallback fires. Do not simplify.
+const RUN_BOOKEND_ICON = '<circle cx="12" cy="12" r="3.2"/><path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2M6.6 6.6l1.4 1.4M16 16l1.4 1.4M17.4 6.6L16 8M8 16l-1.4 1.4" stroke-linecap="round"/>';
+function runNodeAgent(node) {
+  const key = node && node.key;
+  const live = key && composer.agents && composer.agents[key];
+  const embedded = key && EMBEDDED_AGENTS[key];
+  const meta = live || embedded || {};
+  return {
+    icon: meta.icon || RUN_BOOKEND_ICON,
+    color: node.color || meta.color || 'blue',
+    label: node.label || meta.displayName || node.id,
+    sub: node.sub || meta.description || '',
+  };
+}
+
+// Visible status caption under the node label. pending -> the node's description.
+const STAT_TEXT = { done: 'completed', active: 'running…', paused: 'awaiting input', stopped: 'stopped here', pending: '' };
+
+// Settled-status badge markup (check / two-bar / X). active+pending have none.
+const STAT_BADGE = {
+  done: '<div class="nstat done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>',
+  paused: '<div class="nstat paused"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="7" y="5" width="3.4" height="14" rx="1"/><rect x="13.6" y="5" width="3.4" height="14" rx="1"/></svg></div>',
+  stopped: '<div class="nstat stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></div>',
+};
+
+// Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
+// isSelf => the node is its own self-cycle target (gets the .iterates ring).
+function runNode(node, status, isSelf) {
+  const ag = runNodeAgent(node);
+  const d = document.createElement('div');
+  d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
+  d.dataset.id = node.id;
+  d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
+  // Hover tooltip = model · effort (visible meta carries label + live status).
+  const tip = [node.model, node.effort].filter(Boolean).join(' · ');
+  if (tip) d.setAttribute('title', tip);
+  const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
+  d.innerHTML =
+    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
+    `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
+      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small>` +
+      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div></div>` +
+    (STAT_BADGE[status] || '');
+  return d;
+}
+
+// The set of node ids in a manifest, in column order, as a stable signature.
+function runGraphNodeIds(manifest) {
+  const ids = [];
+  manifest.steps.forEach((cell) => cell.nodes.forEach((n) => ids.push(n.id)));
+  return ids;
+}
+
+// Build (or rebuild) the .run-flow skeleton into `host`. Idempotent: if the
+// host already holds a graph for the SAME ordered node-id set, leave the DOM
+// (and its running CSS animations) intact. Trailing <svg class="wires"> is the
+// shared renderer's target.
+function buildRunGraph(host, manifest) {
   const m = manifestFor(manifest);
+  const ids = runGraphNodeIds(m);
+  if (host.dataset.graphSig === ids.join('|') && host.querySelector('svg.wires')) return;
+  host.dataset.graphSig = ids.join('|');
+  host.dataset.wiresSig = ''; // force a wire repaint after a structural rebuild
+  host.innerHTML = '';
+
+  const selfTargets = new Set(
+    (Array.isArray(m.feedbacks) ? m.feedbacks : [])
+      .filter((fb) => fb && fb.from === fb.to)
+      .map((fb) => fb.from),
+  );
+
+  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
   m.steps.forEach((cell, i) => {
-    const stage = document.createElement('div');
-    stage.className = 'stage' + (cell.nodes.length > 1 ? ' parallel' : '');
-    stage.dataset.cellIdx = String(i);
-    // Single-node cells carry the node id directly for fast addressing.
-    if (cell.nodes.length === 1) stage.dataset.nodeId = cell.nodes[0].id;
-
-    const num = document.createElement('div');
-    num.className = 'num';
-    num.textContent = String(i + 1);
-    stage.appendChild(num);
-
-    if (cell.nodes.length === 1) {
-      stage.appendChild(buildStageLabel(cell.nodes[0]));
-    } else {
-      const wrap = document.createElement('div');
-      wrap.className = 'pnodes';
-      for (const node of cell.nodes) wrap.appendChild(buildParallelNode(node));
-      stage.appendChild(wrap);
-    }
-    host.appendChild(stage);
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.dataset.cellIdx = String(i);
+    const tag = document.createElement('div');
+    tag.className = 'col-tag';
+    tag.innerHTML = `Step ${i + 1}` + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
+    col.appendChild(tag);
+    for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
+    host.appendChild(col);
   });
+  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'wires');
+  host.appendChild(svg);
 }
 
-// Resolve a node's model·effort caption from the manifest. Maps model id -> label
-// via the globally-loaded state.models (fallback to the raw id); "default" when the
-// node has no explicit model (it runs on the pipeline's global default model).
-function nodeModelEffortLabel(node) {
-  const m = node && node.model ? modelById(node.model) : null;
-  const label = node && node.model ? (m ? m.label : node.model) : 'default';
-  return node && node.effort ? `${label} · ${node.effort}` : label;
+// Final per-node loop count the renderer consumes directly: a node that ran k
+// cycles fired its loop k-1 times. nodeCycle[id] = max cycle observed (default 1).
+function loopCounts(manifest, nodeCycle) {
+  const nc = nodeCycle || {};
+  const out = {};
+  runGraphNodeIds(manifestFor(manifest)).forEach((id) => {
+    out[id] = Math.max(0, (nc[id] || 1) - 1);
+  });
+  return out;
 }
 
-// The label column for a single-node cell: bold label, sub caption, and the
-// cycle/dur/cost <em> slots paint* fills. Color accent when the node has one.
-function buildStageLabel(node) {
-  const lbl = document.createElement('div');
-  lbl.className = 'lbl';
-  if (node.color) lbl.classList.add('acc-' + node.color);
-  const b = document.createElement('b');
-  b.textContent = node.label || node.id;
-  const sub = document.createElement('small');
-  sub.className = 'sub';
-  sub.textContent = node.sub || '';
-  lbl.append(b, sub);
-  if (node.uiPhase) { // agent node -> show model·effort; bookends keep just .sub
-    const me = document.createElement('small');
-    me.className = 'me';
-    me.textContent = nodeModelEffortLabel(node);
-    lbl.append(me);
-  }
-  const cycle = document.createElement('em'); cycle.className = 'cycle';
-  const dur = document.createElement('em'); dur.className = 'dur';
-  const cost = document.createElement('em'); cost.className = 'cost';
-  lbl.append(cycle, dur, cost);
-  return lbl;
+// manifest.steps (cells with .nodes) -> the [[{id}…]…] shape composerPaintWires
+// walks for sequential + feedback wires.
+function manifestStepsForWires(manifest) {
+  return manifestFor(manifest).steps.map((cell) => cell.nodes.map((n) => ({ id: n.id })));
 }
 
-// One stacked row inside a .parallel cell. Addressable by node id; carries its
-// own cycle/dur/cost slots.
-function buildParallelNode(node) {
-  const row = document.createElement('div');
-  row.className = 'stage-node pnode';
-  row.dataset.nodeId = node.id;
-  if (node.color) row.classList.add('acc-' + node.color);
-  const b = document.createElement('b');
-  b.textContent = node.label || node.id;
-  const sub = document.createElement('small'); sub.className = 'sub'; sub.textContent = node.sub || '';
-  const me = document.createElement('small'); me.className = 'me'; me.textContent = nodeModelEffortLabel(node);
-  const cycle = document.createElement('em'); cycle.className = 'cycle';
-  const dur = document.createElement('em'); dur.className = 'dur';
-  const cost = document.createElement('em'); cost.className = 'cost';
-  row.append(b, sub, me, cycle, dur, cost);
-  return row;
+// Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
+// view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
+//          live:boolean, durText(id)->str, costText(id)->str }.
+const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
+function paintRunGraph(host, manifest, view) {
+  const m = manifestFor(manifest);
+  const doneSet = new Set();
+  runGraphNodeIds(m).forEach((id) => {
+    const status = view.statusOf(id) || 'pending';
+    if (status === 'done') doneSet.add(id);
+    const el = host.querySelector(`.run-node[data-id="${id}"]`);
+    if (!el) return;
+
+    el.classList.remove(...RUN_STATUSES);
+    el.classList.add('is-' + status);
+
+    const statusEl = el.querySelector('.nstatus');
+    if (statusEl) {
+      const txt = STAT_TEXT[status];
+      statusEl.textContent = (txt != null && txt !== '') ? txt : (status === 'pending' ? (statusEl.dataset.sub || statusEl.textContent || '') : '');
+    }
+
+    // Swap the settled-status badge (.nstat). Remove any existing, then re-add.
+    const old = el.querySelector('.nstat');
+    if (old) old.remove();
+    if (STAT_BADGE[status]) el.insertAdjacentHTML('beforeend', STAT_BADGE[status]);
+
+    const durEl = el.querySelector('.dur');
+    if (durEl) durEl.textContent = view.durText(id) || '';
+    const costEl = el.querySelector('.cost');
+    if (costEl) costEl.textContent = view.costText(id) || '';
+  });
+
+  // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
+  // every tick. Repaint only when activeId, the done-set, the loop counts, or
+  // the topology change since the last paint.
+  const cycles = view.cycles || {};
+  const sig = JSON.stringify([
+    view.live ? (view.activeId || null) : null,
+    [...doneSet].sort(),
+    Object.keys(cycles).sort().map((k) => `${k}:${cycles[k]}`),
+    host.dataset.graphSig || '',
+  ]);
+  if (host.dataset.wiresSig === sig) return;
+  host.dataset.wiresSig = sig;
+
+  const svg = host.querySelector('svg.wires');
+  if (!svg) return;
+  const steps = manifestStepsForWires(m);
+  const feedbacks = Array.isArray(m.feedbacks) ? m.feedbacks : [];
+  const paint = (window.__np && window.__np.composerPaintWires) || composerPaintWires;
+  const ns = (host.dataset.ns ||= 'rg-' + Math.random().toString(36).slice(2, 8));
+  paint(host, svg, steps, feedbacks, {
+    ns,
+    runMode: true,
+    activeId: view.live ? (view.activeId || null) : null,
+    doneSet,
+    cycles,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +615,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     local,
     stepper: null,        // run's own stepper manifest (from 'state'); null => legacy default
     nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
+    nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
     maxCellIdx: -1,       // highest reached cell index (drives "earlier cells = done")
     phaseKey: 'preflight',
     cycle: 0,
@@ -566,6 +670,11 @@ function maybeResume(r) {
   r._answering = false;
   r.pendingQuestion = null;
   clearQpanel(r);
+}
+
+// Minimal HTML escape for text interpolated into node innerHTML.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
@@ -1009,6 +1118,14 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   opts = opts || {};
   const ns = opts.ns || 'main';
   if (flowEl.offsetParent === null) return; // view hidden — skip
+  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
+  // the renderer itself reads the finished count from opts.cycles[fb.from]).
+  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
+  const loopBadge = (cx, cy, color, n) =>
+    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
+    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
+    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
+    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
   const rect = (id) => {
     const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
     const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
@@ -1019,6 +1136,7 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
   let s = `<defs>` +
     `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
+    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
     `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
     `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
   for (let i = 0; i < steps.length - 1; i++) {
@@ -1027,7 +1145,10 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
         const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
         const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
         const dx = Math.max(36, (x2 - x1) * 0.5);
-        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${COMPOSER_SEQ}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#arrSeq-${ns})"/>`;
+        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
+        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
+        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
+        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
       });
     });
   }
@@ -1037,11 +1158,16 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   feedbacks.forEach((fb, idx) => {
     const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
     if (fb.from === fb.to) {
-      // same-node self-cycle: a small violet lobe hanging beneath the node. No
-      // delete-X — the node's top-left self-cycle toggle owns add/remove.
-      const cx = ra.x + ra.w / 2, baseY = ra.y + ra.h;
-      const sx = cx - 15, tx = cx + 11, rail = baseY + 34;
-      s += `<path d="M${sx} ${baseY} C ${sx - 22} ${rail}, ${tx + 22} ${rail}, ${tx} ${baseY}" fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
+      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
+      // toggle owns add/remove (composer); run/history pass cycles for the badge.
+      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
+      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      if (opts.cycles && !opts.del) {
+        const n = opts.cycles[fb.from] || 0;
+        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
+      }
       return;
     }
     const p = posOf(fb.from);
@@ -1057,11 +1183,15 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
       my = rail + (Math.min(sy, ty) - rail) * 0.18;
     }
     mx = (sx + tx) / 2;
-    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}" fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
+    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
     if (opts.del) {
       s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
         `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
         `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
+    } else if (opts.cycles) {
+      const n = opts.cycles[fb.from] || 0;
+      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
     }
   });
   wiresEl.innerHTML = s;
@@ -1326,10 +1456,15 @@ if (typeof window !== 'undefined') {
     renderNodeRows,
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
-    buildStepper,
     manifestFor,
     durByNode,
     costByNode,
+    composerPaintWires,
+    buildRunGraph,
+    runNode,
+    loopCounts,
+    paintRunGraph,
+    histNodeCycle,
   });
 }
 
@@ -4090,8 +4225,8 @@ async function loadHistDetail(projectDir, id, detail, record) {
     // alongside a stale error.
     const stale = detail.querySelector('.detail-error');
     if (stale) stale.remove();
-    const host = detail.querySelector('.stages.compact');
-    if (host) buildStepper(host, data.state.stepper); // null stepper -> legacy default
+    const host = detail.querySelector('.run-flow');
+    if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4118,53 +4253,47 @@ async function loadHistDetail(projectDir, id, detail, record) {
   }
 }
 
-// Tint a history card's stepper from saved state ({ phase, status, cycle, steps,
-// stepper }). Built DOM is addressed by node id; coloring is driven by the
-// reached cell, not live events.
+// Per-node max cycle from a saved run's steps[] (history's loop-count source).
+function histNodeCycle(st) {
+  const out = {};
+  for (const s of Array.isArray(st && st.steps) ? st.steps : []) {
+    if (!s) continue;
+    const key = stepBucketKey(s);
+    const c = Number(s.cycle);
+    if (key && Number.isFinite(c)) out[key] = Math.max(out[key] || 0, c);
+  }
+  return out;
+}
+
+// Tint a history card's graph from saved state. Reached cell drives coloring
+// (no live events). activeId=null, live=false -> no glow/marching-ants.
 function paintHistStepper(detail, st) {
+  const host = detail.querySelector('.run-flow');
+  if (!host) return;
   const manifest = manifestFor(st.stepper);
   const status = String(st.status || '').toLowerCase();
   const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed';
   const isDone = status === 'done' || status === 'complete' || status === 'completed';
-
   const reached = histReachedCell(manifest, st);
   const durs = durByNode(st.steps, 0, false);
   const costs = costByNode(st.steps);
 
-  const stages = detail.querySelectorAll('.stages.compact > .stage');
-  manifest.steps.forEach((cell, cellIdx) => {
-    const stage = stages[cellIdx];
-    if (!stage) return;
-    const numEl = stage.querySelector('.num');
-    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
-    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+  const cellOf = {};
+  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
 
-    let kind = null;
-    if (isDone) kind = 'done';
-    else if (cellIdx < reached) kind = 'done';
-    else if (cellIdx === reached) kind = halted ? 'stop' : 'done';
-
-    if (kind) {
-      const [sCls, nCls] = STAGE_NUM[kind];
-      stage.classList.add(sCls);
-      if (numEl) numEl.classList.add(nCls);
-    } else if (numEl) {
-      numEl.classList.add('n-grey');
-    }
-
-    for (const node of cell.nodes) {
-      const scope = stage.querySelector(`.stage-node[data-node-id="${node.id}"]`) || stage;
-      const cyEl = scope.querySelector('.cycle');
-      if (cyEl) cyEl.textContent = (node.cycles && st.cycle) ? `#${st.cycle}` : '';
-      const durEl = scope.querySelector('.dur');
-      if (durEl) { const d = durs[node.id]; durEl.textContent = d != null ? fmtDuration(d) : ''; }
-      const costEl = scope.querySelector('.cost');
-      if (costEl) {
-        const c = costs[node.id];
-        costEl.textContent = c != null ? fmtUsd(c) : '';
-        costEl.title = c != null ? estTitle(c) : '';
-      }
-    }
+  paintRunGraph(host, manifest, {
+    statusOf: (id) => {
+      const cellIdx = cellOf[id] != null ? cellOf[id] : -1;
+      if (isDone) return 'done';
+      if (cellIdx < reached) return 'done';
+      if (cellIdx === reached) return halted ? 'stopped' : 'done';
+      return 'pending';
+    },
+    activeId: null,
+    cycles: loopCounts(manifest, histNodeCycle(st)),
+    live: false,
+    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
+    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
   });
 }
 
@@ -4304,9 +4433,9 @@ function buildRunCard(r) {
   const node = tpl.content.firstElementChild.cloneNode(true);
   node.dataset.runId = r.runId;
 
-  // Build the stepper from the run's manifest. r.stepper may be null -> legacy default.
-  const stepHost = node.querySelector('.stages.compact');
-  if (stepHost) buildStepper(stepHost, r.stepper);
+  // Build the graph from the run's manifest. r.stepper may be null -> legacy default.
+  const stepHost = node.querySelector('.run-flow');
+  if (stepHost) buildRunGraph(stepHost, r.stepper);
 
   const titleEl = node.querySelector('.run-title');
   if (titleEl) titleEl.textContent = r.title;
@@ -4332,62 +4461,58 @@ function buildRunCard(r) {
   return node;
 }
 
-// Paint the stepper from the run model.
-const STAGE_NUM = { done: ['s-done', 'n-green'], now: ['s-now', 'n-peach'], pause: ['s-pause', 'n-amber'], stop: ['s-stop', 'n-red'] };
-
-// Aggregate kind for a cell from its nodes' live status + position. terminalDone
-// forces all-done; a cell strictly before the frontier is done; the frontier
-// cell takes its nodes' status (any 'now' wins, else 'done' when all settled).
-function cellKind(r, cell, cellIdx, terminalDone) {
+// Running -> graph status per node. done if its cell is behind the frontier or
+// nodeStatus says done; at the frontier: stop->stopped, pause->paused, now->active;
+// else pending. terminalDone (run status 'done') forces all-done.
+function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
   if (terminalDone) return 'done';
   if (cellIdx < r.maxCellIdx) return 'done';
-  if (cellIdx > r.maxCellIdx) return null; // pending
-  const kinds = cell.nodes.map((n) => r.nodeStatus[n.id]).filter(Boolean);
-  if (!kinds.length) return null;
-  if (kinds.includes('stop')) return 'stop';
-  if (kinds.includes('pause')) return 'pause';
-  if (kinds.includes('now')) return 'now';
-  return kinds.every((k) => k === 'done') ? 'done' : 'now';
+  if (cellIdx > r.maxCellIdx) return 'pending';
+  // Frontier cell.
+  const k = r.nodeStatus[nodeId];
+  if (k === 'done') return 'done';
+  // A halted run (stopped/error/aborted/failed) shows its frontier node as
+  // stopped even if the last live phase left it 'now' — the halt arrives as a
+  // bare state event with no node-level phase to mark the cell.
+  if (halted) return 'stopped';
+  if (k === 'stop') return 'stopped';
+  if (k === 'pause') return 'paused';
+  if (k === 'now') return 'active';
+  return 'pending';
 }
 
 function paintStepper(r) {
   if (!r.el) return;
+  const host = r.el.querySelector('.run-flow');
+  if (!host) return;
   const manifest = manifestFor(r.stepper);
   const terminalDone = r.status === 'done';
-  const durs = durByNode(r.steps, Date.now(), true);
-  const stages = r.el.querySelectorAll('.stages.compact > .stage');
+  const halted = ['stopped', 'error', 'aborted', 'failed'].includes(r.status);
+  const now = Date.now();
+  const durs = durByNode(r.steps, now, true);
+  const costs = r.costByNode || {};
 
-  manifest.steps.forEach((cell, cellIdx) => {
-    const stage = stages[cellIdx];
-    if (!stage) return;
-    const numEl = stage.querySelector('.num');
-    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
-    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+  // cellIdx per node id (for the frontier comparison).
+  const cellOf = {};
+  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
 
-    const kind = cellKind(r, cell, cellIdx, terminalDone);
-    if (kind) {
-      const [sCls, nCls] = STAGE_NUM[kind];
-      stage.classList.add(sCls);
-      if (numEl) numEl.classList.add(nCls);
-    } else if (numEl) {
-      numEl.classList.add('n-grey'); // pending
+  // The active node = the frontier node currently now/pause (drives the live loop).
+  let activeId = null;
+  const frontier = manifest.steps[r.maxCellIdx];
+  if (frontier && !terminalDone) {
+    for (const n of frontier.nodes) {
+      const k = r.nodeStatus[n.id];
+      if (k === 'now' || k === 'pause') { activeId = n.id; break; }
     }
+  }
 
-    // Per-node cycle / duration / cost. Single-node cells expose .cycle/.dur/.cost
-    // directly under .lbl; parallel cells expose them per .stage-node row.
-    for (const node of cell.nodes) {
-      const scope = stage.querySelector(`.stage-node[data-node-id="${node.id}"]`) || stage;
-      const cyEl = scope.querySelector('.cycle');
-      if (cyEl) cyEl.textContent = (node.cycles && r.cycle && cellIdx === r.maxCellIdx) ? `#${r.cycle}` : '';
-      const durEl = scope.querySelector('.dur');
-      if (durEl) { const d = durs[node.id]; durEl.textContent = d != null ? fmtDuration(d) : ''; }
-      const costEl = scope.querySelector('.cost');
-      if (costEl) {
-        const c = (r.costByNode || {})[node.id];
-        costEl.textContent = c != null ? fmtUsd(c) : '';
-        costEl.title = c != null ? estTitle(c) : '';
-      }
-    }
+  paintRunGraph(host, manifest, {
+    statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
+    activeId,
+    cycles: loopCounts(manifest, r.nodeCycle),
+    live: true,
+    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
+    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
   });
 }
 
@@ -4555,10 +4680,10 @@ const _timerTick = setInterval(() => {
     const timeEl = r.el.querySelector('.run-time');
     if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, now));
     const durs = durByNode(r.steps, now, true);
-    for (const el of r.el.querySelectorAll('.stage[data-node-id], .stage-node[data-node-id]')) {
+    for (const el of r.el.querySelectorAll('.run-node[data-id]')) {
       const durEl = el.querySelector('.dur');
       if (!durEl) continue;
-      const d = durs[el.dataset.nodeId];
+      const d = durs[el.dataset.id];
       durEl.textContent = d != null ? fmtDuration(d) : '';
     }
   }
