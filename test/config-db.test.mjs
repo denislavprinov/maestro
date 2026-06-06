@@ -91,3 +91,68 @@ test('resolveStepModels folds in the global fallback per role', async () => {
   const r = await resolveStepModels(p, 'claude-opus-4-8');
   assert.deepEqual(r.planner, { model: 'claude-opus-4-8', effort: undefined });
 });
+
+// ── Task 2.5: legacy write path (setStep / addCustomModel / removeCustomModel) ──
+
+test('setStep persists model+effort to project_config.steps (JSON), returns the legacy view', async () => {
+  const p = await freshProject();
+  const cfg = await setStep(p, 'planner', { model: 'claude-opus-4-8', effort: 'xhigh' });
+  assert.deepEqual(cfg.steps.planner, { model: 'claude-opus-4-8', effort: 'xhigh' });
+  assert.deepEqual(cfg.customModels, []);
+  // Persisted as JSON in the project_config row.
+  const key = projectKey(p);
+  const row = getDb().prepare('SELECT steps FROM project_config WHERE project_key = ?').get(key);
+  assert.equal(JSON.parse(row.steps).planner.effort, 'xhigh');
+});
+
+test('setStep validates step/model/effort (unchanged throws)', async () => {
+  const p = await freshProject();
+  await assert.rejects(() => setStep(p, 'preflight', { model: 'claude-opus-4-8' }), /unknown step/);
+  await assert.rejects(() => setStep(p, 'planner', { model: 'not-a-real-model' }), /unknown model/);
+  await assert.rejects(() => setStep(p, 'reviewer', { model: 'claude-haiku-4-5', effort: 'xhigh' }), /does not support/);
+});
+
+test('setStep fanOut preserve-on-undefined + explicit override (parity with file version)', async () => {
+  const p = await freshProject();
+  await setStep(p, 'planner', { fanOut: true });
+  assert.equal((await readConfig(p)).steps.planner.fanOut, true);
+  await setStep(p, 'planner', { model: 'claude-opus-4-8', effort: 'high' }); // omits fanOut
+  assert.deepEqual((await readConfig(p)).steps.planner, { model: 'claude-opus-4-8', effort: 'high', fanOut: true });
+  await setStep(p, 'planner', { fanOut: false });
+  assert.equal((await readConfig(p)).steps.planner.fanOut, false);
+});
+
+test('setStep clearing all fields removes the step entry', async () => {
+  const p = await freshProject();
+  await setStep(p, 'reviewer', { model: 'claude-opus-4-8', effort: 'high' });
+  await setStep(p, 'reviewer', { model: '', effort: '' }); // no fanOut stored -> remove
+  assert.equal((await readConfig(p)).steps.reviewer, undefined);
+});
+
+test('addCustomModel makes a model selectable; rejects empty/dup/shadow', async () => {
+  const p = await freshProject();
+  await addCustomModel(p, { id: 'my-fork-4-9', label: 'My Fork' });
+  assert.ok((await listModels(p)).some((m) => m.id === 'my-fork-4-9' && m.custom));
+  await assert.rejects(() => addCustomModel(p, { id: '' }), /required/);
+  await assert.rejects(() => addCustomModel(p, { id: 'my-fork-4-9' }), /already exists/);
+  await assert.rejects(() => addCustomModel(p, { id: 'claude-opus-4-8' }), /predefined/);
+});
+
+test('removeCustomModel clears legacy steps AND normalized node rows referencing it', async () => {
+  const p = await freshProject();
+  const key = projectKey(p);
+  await addCustomModel(p, { id: 'my-fork-4-9' });
+  await setStep(p, 'implementer', { model: 'my-fork-4-9', effort: 'max' });   // legacy ref
+  await setNodeModel(p, 'wf_x', 's2_0', { model: 'my-fork-4-9', effort: 'high' }); // normalized ref
+  // sanity: both refs exist
+  assert.equal((await resolveRunConfig(p, 'wf_x')).nodes.s2_0.model, 'my-fork-4-9');
+
+  const cfg = await removeCustomModel(p, 'My-Fork-4-9'); // case-insensitive
+  assert.ok(!(await listModels(p)).some((m) => m.id === 'my-fork-4-9'), 'model gone');
+  assert.equal(cfg.steps.implementer, undefined, 'dangling legacy step cleared');
+  // The normalized node row that pointed at the removed model is gone too.
+  const left = getDb().prepare(
+    'SELECT COUNT(*) AS n FROM config_workflow_nodes WHERE project_key = ? AND model = ? COLLATE NOCASE'
+  ).get(key, 'my-fork-4-9');
+  assert.equal(left.n, 0, 'normalized node refs to the removed model are deleted');
+});
