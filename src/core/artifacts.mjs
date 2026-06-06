@@ -878,69 +878,150 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
 }
 
 /**
- * Read a single pipeline by id, returning its parsed state and audit markdown.
- * Returns null when no pipeline with that id exists (so callers can map a
- * not-found to a 404 rather than a 500).
+ * Reconstruct one state.steps[] entry from a pipeline_steps row. Inverse of the
+ * step INSERT in writeState. running_since is stored as TEXT (epoch-ms) and comes
+ * back as a Number (null when paused); optional fields (phase/cycle/status/
+ * startedAt/updatedAt) collapse to undefined when null so the shape matches what
+ * the orchestrator emitted; nodeId/stepIndex are present only when set.
+ */
+function stepRowToStep(r) {
+  const step = {
+    key: r.key, phase: r.phase ?? undefined, cycle: r.cycle ?? undefined,
+    status: r.status ?? undefined, startedAt: r.started_at ?? undefined,
+    updatedAt: r.updated_at ?? undefined,
+    activeMs: r.active_ms ?? 0,
+    runningSince: r.running_since == null ? null : Number(r.running_since),
+    costUsd: r.cost_usd ?? 0,
+  };
+  if (r.node_id != null) step.nodeId = r.node_id;
+  if (r.step_index != null) step.stepIndex = r.step_index;
+  return step;
+}
+
+/**
+ * Reconstruct the full state object (the old state.json shape the UI consumed)
+ * from a pipelines row + its pipeline_steps rows. Inverse of toPipelineRow + the
+ * step INSERT. projectDir is recovered from the project's store_meta row (the old
+ * state carried state.projectDir; the server's PR route reads it). The workspace
+ * superset is spread back onto the top level from workspace_meta.
+ * @param {object|null} row
+ * @returns {object|null}
+ */
+function rowToState(row) {
+  if (!row) return null;
+  const state = {
+    id: row.id,
+    title: row.title ?? null,
+    projectKey: row.project_key ?? null,
+    status: row.status ?? 'unknown',
+    phase: row.phase ?? null,
+    cycle: row.cycle ?? 0,
+    startedAt: row.started_at ?? null,
+    updatedAt: row.updated_at ?? null,
+    totalCostUsd: row.total_cost_usd ?? 0,
+    totalActiveMs: row.total_active_ms ?? 0,
+    prompt: row.prompt ?? null,
+    baseName: row.base_name ?? null,
+    datePrefix: row.date_prefix ?? null,
+    branch: j(row.branch, null),
+    stepper: j(row.stepper, null),
+    tools: j(row.tools, null),
+    steps: getDb().prepare(`
+      SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
+             active_ms, running_since, cost_usd
+      FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
+    `).all(row.id).map(stepRowToStep),
+  };
+  const meta = readStoreMeta(row.project_key);
+  state.projectDir = meta?.path ?? null;
+  // Workspace superset: spread workspace_meta back onto the top level + target.
+  if (row.target === 'workspace') {
+    const wm = j(row.workspace_meta, {}) || {};
+    state.target = 'workspace';
+    state.workspaceKey = row.workspace_key ?? null;
+    state.workspaceId = wm.workspaceId ?? row.workspace_key ?? null;
+    state.workspaceName = wm.workspaceName ?? null;
+    state.workspaceDescription = wm.workspaceDescription ?? '';
+    state.projectKeys = wm.projectKeys ?? [];
+    state.projects = wm.projects ?? [];
+    state.checkpointRefs = wm.checkpointRefs ?? {};
+    state.branches = wm.branches ?? {};
+    // For a workspace run, the PR/branch route reads the primary projectDir from meta.
+    const wmeta = readStoreMeta(row.workspace_key);
+    if (!state.projectDir) state.projectDir = Array.isArray(wmeta?.projectPaths) ? (wmeta.projectPaths[0] ?? null) : null;
+  }
+  return state;
+}
+
+/**
+ * Rebuild the pipeline.md-format audit document from the row + pipeline_events,
+ * reproducing createPipeline's header (artifacts createPipeline) + appendAudit's
+ * "- `ts` text" timeline lines (A7), so a History detail view renders identically
+ * to today. The header's `## Prompt` body uses the DB prompt column (the same text
+ * fenceIfNeeded rendered); the `project` line uses the store_meta path.
+ * @param {object} row a pipelines row
+ * @returns {string}
+ */
+function buildAuditMarkdown(row) {
+  const events = getDb().prepare(
+    'SELECT ts, text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(row.id);
+  const header =
+    `# Pipeline: ${row.title ?? row.id}\n\n` +
+    `- **id**: ${row.id}\n` +
+    `- **project**: ${(readStoreMeta(row.project_key)?.path) ?? ''}\n` +
+    `- **started**: ${row.started_at ?? ''}\n` +
+    `- **prompt file**: prompt.md\n\n` +
+    `## Prompt\n\n` +
+    (row.prompt && row.prompt.trim() ? row.prompt.trim() + '\n' : '_(empty prompt)_\n') +
+    `\n## Timeline\n\n`;
+  const lines = events.map((e) => `- \`${e.ts}\` ${e.text}\n`).join('');
+  return header + lines;
+}
+
+/**
+ * Find a pipelines row by store key + (short id OR run-dir basename). Maps a store
+ * key back to the WHERE column: "workspaces/<wk>" -> workspace_key=<wk>; otherwise
+ * project_key=<key>. Tries a direct id hit first, then falls back to extracting the
+ * trailing 8-hex from a run-dir basename like "<DD-MM-YY>-<slug>-<id>".
+ * @param {string} key
+ * @param {string} id
+ * @returns {object|null}
+ */
+function lookupPipelineRow(key, id) {
+  const isWs = typeof key === 'string' && key.startsWith('workspaces/');
+  const col = isWs ? 'workspace_key' : 'project_key';
+  const val = isWs ? key.slice('workspaces/'.length) : key;
+  let row = getDb().prepare(`SELECT * FROM pipelines WHERE ${col} = ? AND id = ?`).get(val, id);
+  if (row) return row;
+  const m = DIR_ID_RE.exec(String(id));
+  if (m) row = getDb().prepare(`SELECT * FROM pipelines WHERE ${col} = ? AND id = ?`).get(val, m[1].toLowerCase());
+  return row || null;
+}
+
+/**
+ * Read a single pipeline by id, returning its reconstructed state and audit
+ * markdown (both rebuilt from the DB). Returns null when no pipeline with that id
+ * exists (so callers can map a not-found to a 404 rather than a 500). Resolves the
+ * project store key from projectDir and delegates to readPipelineByKey.
  * @param {string} projectDir
  * @param {string} id
  * @returns {Promise<{state:object|null, auditMarkdown:string}|null>}
  */
 export async function readPipeline(projectDir, id) {
-  const list = await listPipelines(projectDir);
-  const match = list.find((p) => p.id === id || basename(p.dir) === id);
-  if (!match) {
-    return null;
-  }
-  let state = null;
-  try {
-    state = JSON.parse(await readFile(join(match.dir, 'state.json'), 'utf8'));
-  } catch {
-    state = null;
-  }
-  let auditMarkdown = '';
-  try {
-    auditMarkdown = await readFile(join(match.dir, 'pipeline.md'), 'utf8');
-  } catch {
-    auditMarkdown = '';
-  }
-  return { state, auditMarkdown };
+  return readPipelineByKey(projectKey(projectDir), id);
 }
 
 /**
- * Read a single pipeline from an absolute pipelines/ directory, matching by
- * directory basename then by state.id. Returns the {state, auditMarkdown} pair, or
- * null when the dir or id is unknown. Shared by the project- and workspace-rooted
- * readers so the match/read logic stays identical.
- */
-async function readPipelineFromDir(pipelinesDir, id) {
-  let entries;
-  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
-  let matchDir = null;
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    if (ent.name === id) { matchDir = join(pipelinesDir, ent.name); break; }
-    try {
-      const st = JSON.parse(await readFile(join(pipelinesDir, ent.name, 'state.json'), 'utf8'));
-      if (st && st.id === id) { matchDir = join(pipelinesDir, ent.name); break; }
-    } catch { /* skip unreadable */ }
-  }
-  if (!matchDir) return null;
-  let state = null;
-  try { state = JSON.parse(await readFile(join(matchDir, 'state.json'), 'utf8')); } catch { state = null; }
-  let auditMarkdown = '';
-  try { auditMarkdown = await readFile(join(matchDir, 'pipeline.md'), 'utf8'); } catch { auditMarkdown = ''; }
-  return { state, auditMarkdown };
-}
-
-/**
- * Read a pipeline directly from a store key (project-agnostic). Matches by
- * pipeline short-id (state.id) or by directory basename. Returns null when the
- * key or id is unknown (so the API maps it to a 404). Accepts a workspace
- * composite key "workspaces/<workspaceKey>" as-is (projectStorePath joins it under
- * storeRoot()).
+ * Read a pipeline directly from a store key (project-agnostic), reconstructing
+ * { state, auditMarkdown } from the DB. Matches by pipeline short-id or by run-dir
+ * basename (the old readers matched both). Returns null when the key or id is
+ * unknown (so the API maps it to a 404). Accepts a workspace composite key
+ * "workspaces/<workspaceKey>".
  */
 export async function readPipelineByKey(key, id) {
-  return readPipelineFromDir(join(projectStorePath(key), 'pipelines'), id);
+  const row = lookupPipelineRow(key, id);
+  if (!row) return null;
+  return { state: rowToState(row), auditMarkdown: buildAuditMarkdown(row) };
 }
 
 /**
@@ -968,11 +1049,12 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
 }
 
 /**
- * Read a single workspace pipeline by id, rooted in the workspace store. Mirrors
- * readPipelineByKey but joins ONLY workspaceStorePath(workspaceKey) so there is no
+ * Read a single workspace pipeline by id, reconstructed from the DB. Resolves the
+ * composite "workspaces/<workspaceKey>" store key and delegates to
+ * readPipelineByKey (which filters on workspace_key), so there is no
  * path-traversal surface (the server validates the key against WORKSPACE_ID_RE).
  * Returns null when the workspace or id is unknown.
  */
 export async function readWorkspacePipeline(workspaceKey, id) {
-  return readPipelineFromDir(join(workspaceStorePath(workspaceKey), 'pipelines'), id);
+  return readPipelineByKey(`workspaces/${workspaceKey}`, id);
 }

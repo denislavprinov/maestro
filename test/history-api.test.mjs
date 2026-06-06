@@ -1,11 +1,18 @@
 // test/history-api.test.mjs
+// Phase 3.7 — the server's /api/history + /api/history/:key/:id routes now read
+// the DB (listAllPipelines / readPipelineByKey). Fixtures seed pipelines rows
+// (seedPipelineRow) + store_meta (writeStoreMeta) instead of state.json / meta.json
+// files. The response shapes are unchanged.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 let homeDir, srv, base, prevHome;
 
@@ -17,13 +24,10 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-histapi-'));
   prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
-  const store = join(homeDir, '.maestro', 'store', 'alpha-00000001', 'pipelines', 'p1');
-  await mkdir(store, { recursive: true });
-  await writeFile(join(store, 'state.json'),
-    JSON.stringify({ id: 'p1', title: 'Alpha run', status: 'done', startedAt: '2026-06-01T00:00:00Z' }), 'utf8');
-  await writeFile(join(homeDir, '.maestro', 'store', 'alpha-00000001', 'meta.json'),
-    JSON.stringify({ key: 'alpha-00000001', name: 'Alpha', path: '/x/alpha' }), 'utf8');
-  await writeFile(join(store, 'pipeline.md'), '# Alpha run\n', 'utf8');
+  _resetForTests(); // open the DB under this temp home
+  writeStoreMeta('alpha-00000001', 'project', { key: 'alpha-00000001', name: 'Alpha', path: '/x/alpha' });
+  seedPipelineRow({ id: 'p1', projectKey: 'alpha-00000001', title: 'Alpha run', status: 'done',
+    startedAt: '2026-06-01T00:00:00Z', updatedAt: '2026-06-01T00:00:00Z' });
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -32,6 +36,7 @@ before(async () => {
 
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(homeDir, { recursive: true, force: true });
 });
@@ -61,12 +66,9 @@ test('GET /api/history/:key/:id rejects a traversing/malformed key -> 404', asyn
 
 test('GET /api/history is PR-light: rows carry no `pr` field and `gh pr list` never runs', async () => {
   // Seed a surviving-branch pipeline so the OLD withPr:true path WOULD have run gh.
-  const dir = join(homeDir, '.maestro', 'store', 'alpha-00000001', 'pipelines', 'p-branch');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'p-branch', title: 'Branchy', status: 'done', startedAt: '2026-06-03T00:00:00Z',
-    branch: { source: 'main', feature: 'maestro/feat-x' },
-  }), 'utf8');
+  seedPipelineRow({ id: 'p-branch', projectKey: 'alpha-00000001', title: 'Branchy', status: 'done',
+    startedAt: '2026-06-03T00:00:00Z', updatedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'maestro/feat-x' } });
   let prListCalled = false;
   gitInfo.setRunner((cmd, args) => {
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') prListCalled = true;

@@ -1,27 +1,31 @@
 // test/pr-api.test.mjs
+// Phase 3.7 — the server's POST /api/pr + /api/runs routes read the DB: the
+// pipeline's branch + projectDir come back through rowToState (branch JSON column;
+// projectDir from the project's store_meta path). Fixtures seed pipelines rows
+// (seedPipelineRow) + store_meta (writeStoreMeta) instead of state.json/meta.json.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { projectKey } from '../src/core/store.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 let srv, base, home, prevHome;
 
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'maestro-pr-'));
   prevHome = process.env.MAESTRO_HOME; process.env.MAESTRO_HOME = home;
-  const dir = join(home, '.maestro', 'store', 'beta-00000002', 'pipelines', 'pp');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'pp', title: 'My feature', status: 'stopped', projectDir: '/repo/beta',
-    branch: { source: 'main', feature: 'maestro/my-feature-pp', branchKept: true, commit: 'abc' },
-  }), 'utf8');
-  await writeFile(join(home, '.maestro', 'store', 'beta-00000002', 'meta.json'),
-    JSON.stringify({ key: 'beta-00000002', name: 'Beta', path: '/repo/beta' }), 'utf8');
+  _resetForTests(); // open the DB under this temp home
+  writeStoreMeta('beta-00000002', 'project', { key: 'beta-00000002', name: 'Beta', path: '/repo/beta' });
+  seedPipelineRow({ id: 'pp', projectKey: 'beta-00000002', title: 'My feature', status: 'stopped',
+    startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'maestro/my-feature-pp', branchKept: true, commit: 'abc' } });
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -30,6 +34,7 @@ before(async () => {
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   gitInfo.reset();
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });
@@ -105,14 +110,10 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   // and must still attach pr inline. Seed under the real projectKey so the lookup hits.
   const repoDir = await mkdtemp(join(tmpdir(), 'maestro-runs-repo-'));
   const key = projectKey(repoDir);
-  const dir = join(home, '.maestro', 'store', key, 'pipelines', 'rp');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'rp', title: 'Runs feat', status: 'stopped', projectDir: repoDir,
-    branch: { source: 'main', feature: 'maestro/runs-rp', branchKept: true },
-  }), 'utf8');
-  await writeFile(join(home, '.maestro', 'store', key, 'meta.json'),
-    JSON.stringify({ key, name: 'RunsRepo', path: repoDir }), 'utf8');
+  writeStoreMeta(key, 'project', { key, name: 'RunsRepo', path: repoDir });
+  seedPipelineRow({ id: 'rp', projectKey: key, title: 'Runs feat', status: 'stopped',
+    startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'maestro/runs-rp', branchKept: true } });
   gitInfo.setRunner((cmd, args) => {
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')

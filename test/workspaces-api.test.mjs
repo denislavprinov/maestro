@@ -24,6 +24,8 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { writeStoreMeta } from '../src/core/artifacts.mjs';
 
 // Outer isolation that outlives the per-suite before/after: a fire-and-forget
 // orch.run() can write to the store after teardown restores MAESTRO_HOME.
@@ -409,16 +411,42 @@ test('summarizeRuns carries a kind discriminator + scanId/workspaceId fields', a
 // ?workspaceId= list / detail / delete (route through the M1 ws-store helpers)
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Seed a workspace + a finished pipeline directly in its store namespace. */
+/** Seed a workspace + a finished pipeline directly in its store namespace.
+ *  Phase 3.6/3.7: the list (listWorkspacePipelines) + detail (readWorkspacePipeline)
+ *  read the DB, so seed a pipelines row + the workspace store_meta. The FS files
+ *  (run dir, plans/reviews markdown) stay for the still-FS-based pipeline-delete
+ *  (Task 3.13) and the run-dir resolution (runDirIndex maps -<id> to the dir). */
+let _seedRunSeq = 0;
 async function seedWorkspaceWithPipeline(name) {
   const a = await freshRepo();
   const b = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name, projectPaths: [a, b] })).json();
+  // pipelines.id is a GLOBAL PK, so mint a unique 8-hex id per seed call (the run
+  // dir basename ends in -<id> so runDirIndex/lookupPipelineRow resolve it).
+  const runId = (++_seedRunSeq).toString(16).padStart(8, '0');
   const wsRoot = join(homeDir, '.maestro', 'store', 'workspaces', workspace.id);
-  const pdir = join(wsRoot, 'pipelines', '04-06-26-ws-feature-ww');
+  const pdir = join(wsRoot, 'pipelines', `04-06-26-ws-feature-${runId}`);
   await mkdir(pdir, { recursive: true });
+  // DB read path: a workspace pipelines row (workspace superset in workspace_meta)
+  // + the workspace store_meta row (name + projectPaths for primaryDir/projectDir).
+  writeStoreMeta(workspace.id, 'workspace', {
+    key: workspace.id, id: workspace.id, name,
+    projectKeys: workspace.projectKeys, projectPaths: workspace.projectPaths,
+  });
+  seedPipelineRow({
+    id: runId, workspaceKey: workspace.id, target: 'workspace', title: 'WS feature',
+    status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
+    baseName: 'ws-feature', datePrefix: '04-06-26',
+    workspaceMeta: {
+      workspaceId: workspace.id, workspaceName: name,
+      projectKeys: workspace.projectKeys,
+      projects: workspace.projectKeys.map((k, i) => ({ projectKey: k, projectDir: workspace.projectPaths[i], projectName: 'm' })),
+      branches: {}, checkpointRefs: {}, workspaceDescription: '',
+    },
+  });
+  // FS files: still written for pipeline-delete (Task 3.13, FS-based) + humans.
   await writeFile(join(pdir, 'state.json'), JSON.stringify({
-    id: 'ww', title: 'WS feature', status: 'done', target: 'workspace',
+    id: runId, title: 'WS feature', status: 'done', target: 'workspace',
     workspaceId: workspace.id, workspaceKey: workspace.id, workspaceName: name,
     baseName: 'ws-feature', datePrefix: '04-06-26',
     projectKeys: workspace.projectKeys,
@@ -432,16 +460,16 @@ async function seedWorkspaceWithPipeline(name) {
   await writeFile(join(wsRoot, 'plans', '04-06-26-ws-feature.md'), '# p', 'utf8');
   await writeFile(join(wsRoot, 'reviews', '04-06-26-ws-feature-impl-review.md'), '# r', 'utf8');
   await writeFile(join(wsRoot, 'meta.json'), JSON.stringify({ key: workspace.id, id: workspace.id, name }), 'utf8');
-  return { workspace, wsRoot };
+  return { workspace, wsRoot, runId, pdir };
 }
 
 test('GET /api/runs?workspaceId= lists workspace-store pipelines; bad/unknown id -> 404', async () => {
-  const { workspace } = await seedWorkspaceWithPipeline('List WS Runs');
+  const { workspace, runId } = await seedWorkspaceWithPipeline('List WS Runs');
   const r = await get(`/api/runs?workspaceId=${encodeURIComponent(workspace.id)}`);
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.ok(Array.isArray(j.pipelines));
-  assert.ok(j.pipelines.some((p) => p.id === 'ww'), 'lists the seeded workspace pipeline');
+  assert.ok(j.pipelines.some((p) => p.id === runId), 'lists the seeded workspace pipeline');
 
   // Malformed / unknown workspaceId -> 404.
   assert.equal((await get('/api/runs?workspaceId=not-a-ws-id')).status, 404);
@@ -465,23 +493,23 @@ test('GET /api/runs?workspaceId= includes live workspace runs filtered by worksp
 });
 
 test('GET /api/workspaces/:id/runs/:runId returns detail; unknown -> 404; bad key -> 404', async () => {
-  const { workspace } = await seedWorkspaceWithPipeline('Detail WS Runs');
-  const r = await get(`/api/workspaces/${workspace.id}/runs/ww`);
+  const { workspace, runId } = await seedWorkspaceWithPipeline('Detail WS Runs');
+  const r = await get(`/api/workspaces/${workspace.id}/runs/${runId}`);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).state.title, 'WS feature');
 
   // Unknown run id under a known workspace -> 404.
   assert.equal((await get(`/api/workspaces/${workspace.id}/runs/nope`)).status, 404);
   // Malformed workspace id -> 404 (no path-traversal surface; key validated).
-  assert.equal((await get('/api/workspaces/not-a-ws-id/runs/ww')).status, 404);
-  assert.equal((await get('/api/workspaces/wks-nope-00000000/runs/ww')).status, 404);
+  assert.equal((await get(`/api/workspaces/not-a-ws-id/runs/${runId}`)).status, 404);
+  assert.equal((await get(`/api/workspaces/wks-nope-00000000/runs/${runId}`)).status, 404);
 });
 
 test('DELETE /api/runs/:id?workspaceId= removes the workspace pipeline dir + shared files', async () => {
-  const { workspace, wsRoot } = await seedWorkspaceWithPipeline('Delete WS Run');
-  const r = await del(`/api/runs/ww?workspaceId=${encodeURIComponent(workspace.id)}`);
+  const { workspace, wsRoot, runId, pdir } = await seedWorkspaceWithPipeline('Delete WS Run');
+  const r = await del(`/api/runs/${runId}?workspaceId=${encodeURIComponent(workspace.id)}`);
   assert.equal(r.status, 200);
-  assert.equal(existsSync(join(wsRoot, 'pipelines', '04-06-26-ws-feature-ww')), false, 'pipeline dir removed');
+  assert.equal(existsSync(pdir), false, 'pipeline dir removed');
   assert.equal(existsSync(join(wsRoot, 'plans', '04-06-26-ws-feature.md')), false, 'shared plan removed');
   assert.equal(existsSync(join(wsRoot, 'reviews', '04-06-26-ws-feature-impl-review.md')), false, 'shared review removed');
 });
@@ -492,9 +520,9 @@ test('DELETE /api/runs/:id?workspaceId= with a malformed workspaceId -> 404', as
 });
 
 test('DELETE /api/runs/:id?workspaceId= is 409 while the workspace pipeline is live', async () => {
-  const { workspace } = await seedWorkspaceWithPipeline('Delete Live WS Run');
-  runs.set('uuid-ws', { id: 'uuid-ws', pipelineId: 'ww', status: 'running', workspaceId: workspace.id, kind: 'workspace-run' });
-  const r = await del(`/api/runs/ww?workspaceId=${encodeURIComponent(workspace.id)}`);
+  const { workspace, runId } = await seedWorkspaceWithPipeline('Delete Live WS Run');
+  runs.set('uuid-ws', { id: 'uuid-ws', pipelineId: runId, status: 'running', workspaceId: workspace.id, kind: 'workspace-run' });
+  const r = await del(`/api/runs/${runId}?workspaceId=${encodeURIComponent(workspace.id)}`);
   assert.equal(r.status, 409, 'a live workspace pipeline cannot be deleted');
   runs.clear();
 });
