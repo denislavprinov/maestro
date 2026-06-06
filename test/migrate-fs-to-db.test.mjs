@@ -288,3 +288,57 @@ test('maybeMigrateFromFs imports the full legacy tree into every table', () => {
     ['plans/06-06-26-history-rework-v2.md', 'plans/06-06-26-history-rework.md']);
   assert.deepEqual(byKind('review'), ['reviews/06-06-26-history-rework-impl-review.md']);
 });
+
+// ── Task 4.2 — the self-guard (idempotent + no-op on empty/corrupt tree) ─────────
+
+test('a second call is a no-op (idempotent) and does not duplicate rows', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const fx = buildFixture(home);
+  const db = getDb();
+
+  maybeMigrateFromFs(db);
+  const counts1 = tableCounts(db);
+  assert.equal(counts1.projects, 2, 'first run imported');
+
+  // Second call: the row-count self-guard must make it a no-op (no throw, no dupes).
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+  const counts2 = tableCounts(db);
+  assert.deepEqual(counts2, counts1, 'no table changed on the second call');
+  void fx;
+});
+
+test('no-op when there is no legacy JSON at all', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  // Only a settings.json (bootstrap) — NOT a consumable source.
+  writeJson(join(home, 'settings.json'), { root: '/x' });
+  const db = getDb();
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+  const counts = tableCounts(db);
+  assert.equal(counts.projects, 0);
+  assert.equal(counts.pipelines, 0);
+  // settings.json must still be present (never consumed).
+  assert.ok(existsSync(join(home, 'settings.json')), 'settings.json left in place');
+  // No backup dir created when nothing was migrated.
+  assert.equal(readdirSync(home).some((n) => n.startsWith('backup-')), false);
+});
+
+test('no-op when legacy JSON is present but only corrupt (no importable rows)', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  writeText(join(home, 'projects.json'), '{ this is not valid json');
+  const db = getDb();
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+  assert.equal(tableCounts(db).projects, 0, 'corrupt registry imported nothing');
+});
+
+// Sum helper used by the idempotency assertions.
+function tableCounts(db) {
+  const tables = ['projects', 'workspaces', 'workspace_projects', 'workflows',
+    'project_config', 'config_workflow_nodes', 'config_workflow_feedbacks', 'pipelines',
+    'pipeline_steps', 'pipeline_events', 'clarify', 'reviews', 'store_meta', 'artifacts'];
+  const out = {};
+  for (const t of tables) out[t] = db.prepare(`SELECT count(*) AS n FROM ${t}`).get().n;
+  return out;
+}
