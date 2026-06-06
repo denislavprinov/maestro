@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
 
+import { preflightNode } from '../core/preflight-node.mjs';
 import { createOrchestrator } from '../core/orchestrator.mjs';
 import {
   addProject,
@@ -21,6 +22,22 @@ import {
   removeProject,
   normalizeProjectPath,
 } from '../core/projects.mjs';
+
+// ── node:sqlite runtime guard + warning filter ──────────────────────────────────
+// Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
+// stable enough for our use but still flagged experimental). Everything else (deprec-
+// ations, etc.) is re-printed unchanged. Belt-and-suspenders with the npm scripts'
+// --disable-warning=ExperimentalWarning (the primary suppressor): this filter is the
+// direct-bin fallback. We removeAllListeners('warning') FIRST so Node's default
+// printer no longer fires (a bare listener would NOT suppress the warning and would
+// double-print every OTHER warning), then attach our single filtering listener.
+process.removeAllListeners('warning');
+process.on('warning', (w) => {
+  if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
+  process.stderr.write(`${w?.stack || w?.message || w}\n`);
+});
+// Fail fast on an unsupported Node / missing node:sqlite BEFORE any DB is opened.
+preflightNode();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

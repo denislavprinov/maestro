@@ -5,12 +5,37 @@
 // needed anywhere. The DB lives at <maestroHome>/maestro.db (WAL), resolved fresh
 // on first open via projects.mjs#maestroHome() (MAESTRO_HOME env > settings.json
 // root > OS home), exactly like every other module's data path.
+//
+// node:sqlite is loaded LAZILY (synchronous createRequire, like preflight-node.mjs)
+// inside databaseSyncCtor() rather than via a top-level `import`. A top-level import
+// is linked when the whole static ESM graph links — BEFORE any entry-point statement
+// runs — so node:sqlite's one-time ExperimentalWarning would fire before the entry
+// points (src/cli/maestro.mjs, ui/server.mjs) install their `process.on('warning')`
+// filter, leaking the warning on flagless direct-bin runs. Deferring the load to the
+// first getDb() (which only happens at runtime, after the filter is installed) lets
+// the filter suppress it. createRequire keeps the load SYNCHRONOUS — `await import`
+// would make getDb() async and break the synchronous data layer.
 
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { maestroHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+
+const _require = createRequire(import.meta.url);
+let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
+
+/**
+ * Lazily and SYNCHRONOUSLY resolve the node:sqlite DatabaseSync constructor. The
+ * load is deferred out of module-link time (see header) so the entry points can
+ * install their ExperimentalWarning filter first; node:sqlite is a builtin so
+ * createRequire resolves it synchronously even from this ESM module.
+ * @returns {typeof import('node:sqlite').DatabaseSync}
+ */
+function databaseSyncCtor() {
+  if (!_DatabaseSync) ({ DatabaseSync: _DatabaseSync } = _require('node:sqlite'));
+  return _DatabaseSync;
+}
 
 let _db = null; // the singleton handle, or null when closed/never-opened
 let _txDepth = 0; // guards against re-entrant tx(): node:sqlite has no nested BEGIN
@@ -37,7 +62,7 @@ export function getDb() {
   if (_db) return _db;
   const home = maestroHome();
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
-  const db = new DatabaseSync(dbPath());
+  const db = new (databaseSyncCtor())(dbPath());
   _configure(db);            // pragmas (WAL, FK, busy_timeout, synchronous)
   migrate(db);               // versioned, idempotent schema (Task 1.3)
   maybeMigrateFromFs(db);    // one-shot fs→db import (other phase; self-guarded)
