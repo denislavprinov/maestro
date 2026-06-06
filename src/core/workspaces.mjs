@@ -1,28 +1,33 @@
 // src/core/workspaces.mjs
 // Workspace registry: a small persistent list of named project sets (2+ onboarded
-// git repos sharing one editable interconnection description). Stored as a JSON
-// array at <maestroHome>/workspaces.json — a sibling of projects.json — reusing the
-// exact temp+rename / never-throw discipline of projects.mjs.
+// git repos sharing one editable interconnection description). Persisted in SQLite
+// (db.mjs) across two tables: workspaces (id, name, description, created/updated)
+// and workspace_projects (the ordered member set). The member's absolute PATH is
+// stored in the workspace_projects.project_key column (ordinal-ordered) — NOT a
+// projectKey: a projectKey is a one-way sha1 hash, so the path could not be
+// reconstructed from it. The real projectKey is recomputed on read via
+// store.projectKey(path) in annotate().
 //
-// A workspace is a thin record (six persisted fields) plus a derived store namespace
-// at store/workspaces/<workspaceKey>/. The key is derived ONCE at creation from the
+// A workspace is a thin record plus a derived store namespace at
+// store/workspaces/<workspaceKey>/. The key is derived ONCE at creation from the
 // name slug + a sorted-canonical-roots hash, then frozen: rename never recomputes it
 // (D1). projectKeys / exists[] are derived at read time and never persisted.
 //
-// Reads never throw: a missing or corrupt file yields []; per-entry filtering drops
-// malformed records. Writes are atomic (temp file + rename) and create ~/.maestro on
-// demand. Validation throws err(message, code) (mirrors pipeline-delete.mjs) so the
-// server can map codes -> HTTP (BAD_REQUEST->400, DUPLICATE_*->409, NOT_FOUND->404).
+// Reads never throw: a missing row yields []/null. Writes run inside one tx() and
+// keep their validation throws (err(message, code), mirrors pipeline-delete.mjs) so
+// the server can map codes -> HTTP (BAD_REQUEST->400, DUPLICATE_*->409,
+// NOT_FOUND->404). workspacesFile() is retained (vestigial) for import-compat.
 
-import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { statSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { randomBytes, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import { maestroHome, normalizeProjectPath } from './projects.mjs';
 import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
 import { slugify } from './artifacts.mjs';
+import { getDb, prepare, tx } from './db.mjs';
 
 /** Object-shaped error carrying a machine code (mirrors pipeline-delete.mjs). */
 function err(message, code) { return Object.assign(new Error(message), { code }); }
@@ -153,13 +158,44 @@ function annotate(entry) {
   };
 }
 
+/** Load the ordered member PATHS for a workspace (stored in the project_key column). */
+function memberPaths(id) {
+  return prepare(
+    'SELECT project_key AS path FROM workspace_projects WHERE workspace_id = ? ORDER BY ordinal'
+  ).all(id).map((r) => r.path);
+}
+
+/** Map a workspaces row (+ its member rows) to the persisted entry shape. */
+function rowToEntry(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    description: typeof r.description === 'string' ? r.description : '',
+    projectPaths: memberPaths(r.id),
+    createdAt: typeof r.created_at === 'string' ? r.created_at : '',
+    updatedAt: typeof r.updated_at === 'string' ? r.updated_at : '',
+  };
+}
+
+/** Read one workspace entry by id (persisted shape, pre-annotate). null when absent. */
+function readEntry(id) {
+  getDb();
+  const r = prepare(
+    'SELECT id, name, description, created_at, updated_at FROM workspaces WHERE id = ?'
+  ).get(id);
+  return r ? rowToEntry(r) : null;
+}
+
 /**
  * List saved workspaces, each annotated with derived projectKeys/exists.
  * @returns {Promise<Array<{id,name,description,projectPaths,projectKeys,exists:boolean[],createdAt,updatedAt}>>}
  */
 export async function listWorkspaces() {
-  const list = await readRaw();
-  return list.map(annotate);
+  getDb();
+  const rows = prepare(
+    'SELECT id, name, description, created_at, updated_at FROM workspaces ORDER BY created_at, name'
+  ).all();
+  return rows.map(rowToEntry).map(annotate);
 }
 
 /**
@@ -169,9 +205,8 @@ export async function listWorkspaces() {
  */
 export async function readWorkspace(id) {
   if (!id || typeof id !== 'string') return null;
-  const list = await readRaw();
-  const hit = list.find((e) => e.id === id);
-  return hit ? annotate(hit) : null;
+  const entry = readEntry(id);
+  return entry ? annotate(entry) : null;
 }
 
 /**
@@ -196,8 +231,10 @@ function normalizeMembers(projectPaths) {
 /**
  * Create a workspace. Validates name (non-empty + unique case-insensitive),
  * a 2+ distinct-git-repo member set (de-duped by canonical root), and a unique
- * project set (D1, by rootsHash). Persists EXACTLY the six fields; the id is the
- * derived workspaceKey, computed once and frozen. Returns the annotated entry.
+ * project set (D1, by rootsHash). Persists the workspaces row + ordered
+ * workspace_projects member rows (member PATH stored in the project_key column)
+ * in ONE tx(). id is the frozen workspaceKey, computed once. Returns the
+ * annotated entry.
  * @param {{name:string, projectPaths:string[], description?:string}} input
  * @throws err(code: BAD_REQUEST | DUPLICATE_NAME | DUPLICATE_SET)
  */
@@ -215,30 +252,34 @@ export async function createWorkspace(input = {}) {
     if (!isGitRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
   }
 
-  const list = await readRaw();
-  if (list.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
-    throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
-  }
+  const id = workspaceKey({ name, projectPaths: members });
   const hash = rootsHash(members);
-  if (list.some((e) => rootsHash(e.projectPaths) === hash)) {
-    throw err('a workspace over this exact project set already exists', 'DUPLICATE_SET');
-  }
-
   const now = new Date().toISOString();
-  // projectPaths is PERSISTED in input order; annotate() returns it sorted by
-  // projectKey (the canonical read-time view), so persisted vs returned order
-  // intentionally differ. The id is order-independent regardless (rootsHash sorts).
-  const entry = {
-    id: workspaceKey({ name, projectPaths: members }),
-    name,
-    description,
-    projectPaths: members,
-    createdAt: now,
-    updatedAt: now,
-  };
-  list.push(entry);
-  await writeRaw(list);
-  return annotate(entry);
+
+  getDb();
+  tx(() => {
+    // Case-insensitive duplicate-name guard (matches the legacy check + NOCASE index).
+    if (prepare('SELECT 1 FROM workspaces WHERE name = ? COLLATE NOCASE').get(name)) {
+      throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
+    }
+    // D1 duplicate-SET guard: compare rootsHash over existing members.
+    for (const row of prepare('SELECT id FROM workspaces').all()) {
+      if (rootsHash(memberPaths(row.id)) === hash) {
+        throw err('a workspace over this exact project set already exists', 'DUPLICATE_SET');
+      }
+    }
+    prepare(
+      'INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(id, name, description, now, now);
+    const insMember = prepare(
+      'INSERT INTO workspace_projects (workspace_id, project_key, ordinal) VALUES (?, ?, ?)'
+    );
+    // projectPaths persisted in input order (ordinal = index); annotate() re-sorts by key.
+    members.forEach((p, i) => insMember.run(id, p, i));
+  });
+
+  // Return the annotated entry (derived fields recomputed from the persisted paths).
+  return annotate({ id, name, description, projectPaths: members, createdAt: now, updatedAt: now });
 }
 
 /**
