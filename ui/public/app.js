@@ -401,13 +401,14 @@ function advanceRun(r, msg) {
   const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
   if (cellIdx < 0 || !nodeId) return;
   if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
+  if (msg.cycle) r.nodeCycle[nodeId] = Math.max(r.nodeCycle[nodeId] || 0, Number(msg.cycle) || 0);
   r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
 }
 
 // Replace a live card's stepper DOM when the manifest first arrives/changes.
 function rebuildStepperDom(r) {
-  const host = r.el && r.el.querySelector('.stages.compact');
-  if (host) buildStepper(host, r.stepper);
+  const host = r.el && r.el.querySelector('.run-flow');
+  if (host) buildRunGraph(host, r.stepper);
 }
 
 // Build the stepper DOM into `host` (a .stages.compact container) from a
@@ -696,6 +697,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     local,
     stepper: null,        // run's own stepper manifest (from 'state'); null => legacy default
     nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
+    nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
     maxCellIdx: -1,       // highest reached cell index (drives "earlier cells = done")
     phaseKey: 'preflight',
     cycle: 0,
@@ -4519,9 +4521,9 @@ function buildRunCard(r) {
   const node = tpl.content.firstElementChild.cloneNode(true);
   node.dataset.runId = r.runId;
 
-  // Build the stepper from the run's manifest. r.stepper may be null -> legacy default.
-  const stepHost = node.querySelector('.stages.compact');
-  if (stepHost) buildStepper(stepHost, r.stepper);
+  // Build the graph from the run's manifest. r.stepper may be null -> legacy default.
+  const stepHost = node.querySelector('.run-flow');
+  if (stepHost) buildRunGraph(stepHost, r.stepper);
 
   const titleEl = node.querySelector('.run-title');
   if (titleEl) titleEl.textContent = r.title;
@@ -4565,44 +4567,58 @@ function cellKind(r, cell, cellIdx, terminalDone) {
   return kinds.every((k) => k === 'done') ? 'done' : 'now';
 }
 
+// Running -> graph status per node. done if its cell is behind the frontier or
+// nodeStatus says done; at the frontier: stop->stopped, pause->paused, now->active;
+// else pending. terminalDone (run status 'done') forces all-done.
+function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
+  if (terminalDone) return 'done';
+  if (cellIdx < r.maxCellIdx) return 'done';
+  if (cellIdx > r.maxCellIdx) return 'pending';
+  // Frontier cell.
+  const k = r.nodeStatus[nodeId];
+  if (k === 'done') return 'done';
+  // A halted run (stopped/error/aborted/failed) shows its frontier node as
+  // stopped even if the last live phase left it 'now' — the halt arrives as a
+  // bare state event with no node-level phase to mark the cell.
+  if (halted) return 'stopped';
+  if (k === 'stop') return 'stopped';
+  if (k === 'pause') return 'paused';
+  if (k === 'now') return 'active';
+  return 'pending';
+}
+
 function paintStepper(r) {
   if (!r.el) return;
+  const host = r.el.querySelector('.run-flow');
+  if (!host) return;
   const manifest = manifestFor(r.stepper);
   const terminalDone = r.status === 'done';
-  const durs = durByNode(r.steps, Date.now(), true);
-  const stages = r.el.querySelectorAll('.stages.compact > .stage');
+  const halted = ['stopped', 'error', 'aborted', 'failed'].includes(r.status);
+  const now = Date.now();
+  const durs = durByNode(r.steps, now, true);
+  const costs = r.costByNode || {};
 
-  manifest.steps.forEach((cell, cellIdx) => {
-    const stage = stages[cellIdx];
-    if (!stage) return;
-    const numEl = stage.querySelector('.num');
-    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
-    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+  // cellIdx per node id (for the frontier comparison).
+  const cellOf = {};
+  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
 
-    const kind = cellKind(r, cell, cellIdx, terminalDone);
-    if (kind) {
-      const [sCls, nCls] = STAGE_NUM[kind];
-      stage.classList.add(sCls);
-      if (numEl) numEl.classList.add(nCls);
-    } else if (numEl) {
-      numEl.classList.add('n-grey'); // pending
+  // The active node = the frontier node currently now/pause (drives the live loop).
+  let activeId = null;
+  const frontier = manifest.steps[r.maxCellIdx];
+  if (frontier && !terminalDone) {
+    for (const n of frontier.nodes) {
+      const k = r.nodeStatus[n.id];
+      if (k === 'now' || k === 'pause') { activeId = n.id; break; }
     }
+  }
 
-    // Per-node cycle / duration / cost. Single-node cells expose .cycle/.dur/.cost
-    // directly under .lbl; parallel cells expose them per .stage-node row.
-    for (const node of cell.nodes) {
-      const scope = stage.querySelector(`.stage-node[data-node-id="${node.id}"]`) || stage;
-      const cyEl = scope.querySelector('.cycle');
-      if (cyEl) cyEl.textContent = (node.cycles && r.cycle && cellIdx === r.maxCellIdx) ? `#${r.cycle}` : '';
-      const durEl = scope.querySelector('.dur');
-      if (durEl) { const d = durs[node.id]; durEl.textContent = d != null ? fmtDuration(d) : ''; }
-      const costEl = scope.querySelector('.cost');
-      if (costEl) {
-        const c = (r.costByNode || {})[node.id];
-        costEl.textContent = c != null ? fmtUsd(c) : '';
-        costEl.title = c != null ? estTitle(c) : '';
-      }
-    }
+  paintRunGraph(host, manifest, {
+    statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
+    activeId,
+    cycles: loopCounts(manifest, r.nodeCycle),
+    live: true,
+    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
+    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
   });
 }
 

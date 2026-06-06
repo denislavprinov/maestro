@@ -154,7 +154,7 @@ test('buildStepper renders .sub + .me on parallel-cell nodes', async () => {
   assert.equal(b.querySelector('.me').textContent, 'default');
 });
 
-test('Running card renders the run\'s own manifest and paints by nodeId', async () => {
+test('Running card renders the run\'s graph (run-flow, not stages.compact) and tints by nodeId', async () => {
   const ctx = await bootLive();
   ctx.selectProject();
   await new Promise((r) => setTimeout(r, 0));
@@ -163,14 +163,14 @@ test('Running card renders the run\'s own manifest and paints by nodeId', async 
     version: 1,
     steps: [
       { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
-      { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
-      { kind: 'agents', nodes: [{ id: 's4_0', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', color: 'blue', cycles: false }] },
+      { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
+      { kind: 'agents', nodes: [{ id: 's1_0', key: 'refiner', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
+      { kind: 'agents', nodes: [{ id: 's4_0', key: 'manualTestsChecklist', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', color: 'blue', cycles: false }] },
       { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
     ],
+    feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }],
   };
   const RID = 'run-1';
-  // A state event carrying the manifest creates/updates the run; then a node phase.
   ctx.emit({ type: 'state', runId: RID, status: 'running', phase: 'refine', stepper: manifest, steps: [] });
   ctx.emit({ type: 'phase', runId: RID, phase: 'refine', status: 'start', nodeId: 's1_0' });
   ctx.showRunning();
@@ -178,11 +178,44 @@ test('Running card renders the run\'s own manifest and paints by nodeId', async 
 
   const card = ctx.window.document.querySelector('#run-list [data-run-id="run-1"]');
   assert.ok(card, 'run card exists');
-  const labels = [...card.querySelectorAll('.stage .lbl b, .stage .stage-node b')].map((e) => e.textContent);
+  assert.ok(card.querySelector('.run-flow'), 'graph host present');
+  assert.equal(card.querySelector('.stages.compact'), null, 'old flat stepper gone');
+
+  const labels = [...card.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
   assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine Plan', 'Manual Tests Checklist', 'Done']);
-  // s1_0 (Refine Plan, cell index 2) is the current step -> s-now.
-  assert.ok(card.querySelector('.stage[data-node-id="s1_0"]').classList.contains('s-now'));
-  // Earlier cells are done.
-  assert.ok(card.querySelector('.stage[data-node-id="s0_0"]').classList.contains('s-done'));
-  assert.ok(card.querySelector('.stage[data-node-id="preflight"]').classList.contains('s-done'));
+
+  // s1_0 (Refine Plan) is the frontier -> is-active; earlier nodes is-done.
+  assert.ok(card.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-active'));
+  assert.ok(card.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
+  assert.ok(card.querySelector('.run-node[data-id="preflight"]').classList.contains('is-done'));
+  // Self-cycle target carries the iterates ring.
+  assert.ok(card.querySelector('.run-node[data-id="s1_0"]').classList.contains('iterates'));
+});
+
+test('Running card frontier reflects pause/stop and tracks per-node cycle for the active loop', async () => {
+  const ctx = await bootLive();
+  ctx.selectProject();
+  await new Promise((r) => setTimeout(r, 0));
+  const manifest = {
+    version: 1,
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+      { kind: 'agents', nodes: [{ id: 's1_0', key: 'refiner', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
+      { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+    ],
+    feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }],
+  };
+  const RID = 'run-2';
+  ctx.emit({ type: 'state', runId: RID, status: 'running', phase: 'refine', stepper: manifest, steps: [] });
+  ctx.emit({ type: 'phase', runId: RID, phase: 'refine', status: 'start', nodeId: 's1_0', cycle: 1 });
+  ctx.emit({ type: 'phase', runId: RID, phase: 'refine', status: 'start', nodeId: 's1_0', cycle: 2 });
+  ctx.showRunning();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = ctx.window.document.querySelector('#run-list [data-run-id="run-2"]');
+  assert.ok(card.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-active'));
+
+  // A stop status forces the frontier node to is-stopped.
+  ctx.emit({ type: 'state', runId: RID, status: 'stopped' });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(card.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-stopped'));
 });
