@@ -111,7 +111,13 @@ test('Refresh re-fetches /api/history and keeps the active project filter', asyn
   let hits = 0;
   const { window, showHistory } = await boot({
     local: { 'maestro.history.project': 'beta-00000002' },
-    fetchHandler: (url) => { if (url.includes('/api/history')) { hits++; return histResp(HISTORY); } return null; },
+    // Count only the skeleton GET; the Phase-2 POST /api/history/pr is a separate
+    // trigger, not a refetch of the history list.
+    fetchHandler: (url) => {
+      if (url.endsWith('/api/history/pr')) return null;
+      if (url.includes('/api/history')) { hits++; return histResp(HISTORY); }
+      return null;
+    },
   });
   showHistory();
   await new Promise((r) => setTimeout(r, 0));
