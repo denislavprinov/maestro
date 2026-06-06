@@ -148,6 +148,58 @@ export function readClarifyRow(pipelineId) {
   return { questions: j(row.questions, null), answers: j(row.answers, null) };
 }
 
+/**
+ * Map a channels.allocate() review base name to the reviews-table `kind`. A2: the
+ * kind is a 5-value OPEN set {refine, impl, plan, ws, webui} derived by stripping the
+ * "-review-cycleN.json" suffix from the legacy filename; treat it as free text (an
+ * unknown base passes through unchanged so the mapping is lossless).
+ * @param {string} base e.g. 'impl-review' | 'plan-review' | 'refine-review' | 'ws-review' | 'webui-review'
+ * @returns {string}
+ */
+const REVIEW_KIND = {
+  'refine-review': 'refine', 'impl-review': 'impl', 'plan-review': 'plan',
+  'ws-review': 'ws', 'webui-review': 'webui',
+};
+export function reviewKindOf(base) { return REVIEW_KIND[base] || base; }
+
+/**
+ * Upsert a per-cycle review verdict. `kind` ∈ refine|impl|plan|ws|webui (free text,
+ * A2); `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary }
+ * object protocol.readReview returns. Replaces the per-cycle *-review-cycleN.json
+ * verdict as the durable history record (the agent still writes that json file, which
+ * protocol.readReview parses for the live review->fix loop). Re-running a cycle
+ * REPLACES its verdict (ON CONFLICT). Best-effort; the pipelines row must exist (FK).
+ * @param {string} pipelineId
+ * @param {string} kind
+ * @param {number} cycle
+ * @param {object} verdict
+ */
+export async function writeReview(pipelineId, kind, cycle, verdict) {
+  if (!pipelineId || !kind) return;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        INSERT INTO reviews (pipeline_id, kind, cycle, verdict) VALUES (?, ?, ?, ?)
+        ON CONFLICT(pipeline_id, kind, cycle) DO UPDATE SET verdict = excluded.verdict
+      `).run(pipelineId, kind, cycle, s(verdict));
+    });
+  } catch { /* best-effort mirror; never break a run */ }
+}
+
+/**
+ * Read a single per-cycle verdict (the parsed JSON object), or null when absent.
+ * @param {string} pipelineId
+ * @param {string} kind
+ * @param {number} cycle
+ * @returns {object|null}
+ */
+export function readReviewRow(pipelineId, kind, cycle) {
+  const row = getDb().prepare(
+    'SELECT verdict FROM reviews WHERE pipeline_id = ? AND kind = ? AND cycle = ?')
+    .get(pipelineId, kind, cycle);
+  return row ? j(row.verdict, null) : null;
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 

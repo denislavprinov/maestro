@@ -12,6 +12,7 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
 import { ensureArtifactDirs, writeState, appendAudit, createPipeline } from '../src/core/artifacts.mjs';
 import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
+import { writeReview, readReviewRow } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
@@ -360,4 +361,18 @@ test('a mock run indexes plan + checklist + review markdown in the artifacts tab
   assert.ok(kinds.includes('plan'), 'plan markdown indexed');
   assert.ok(kinds.includes('checklist'), 'checklist markdown indexed');
   assert.ok(kinds.includes('review'), 'review markdown indexed (A16(5))');
+});
+
+// ── Task 3.11 — reviews: per-cycle verdicts into the reviews table ──────────────
+
+test('writeReview upserts a per-cycle verdict keyed (kind,cycle)', async () => {
+  await writeState('/d-rrrr4444', fullState({ id: 'rrrr4444' }));
+  writeReview('rrrr4444', 'impl', 1, { issues: [{ severity: 'major', title: 'x', detail: '', location: '' }], summary: 's' });
+  writeReview('rrrr4444', 'impl', 2, { issues: [], summary: 'clean' });
+  assert.equal(readReviewRow('rrrr4444', 'impl', 1).summary, 's');
+  assert.equal(readReviewRow('rrrr4444', 'impl', 2).issues.length, 0);
+  // Re-running a cycle replaces its verdict.
+  writeReview('rrrr4444', 'impl', 1, { issues: [], summary: 'fixed' });
+  assert.equal(readReviewRow('rrrr4444', 'impl', 1).summary, 'fixed');
+  assert.equal(readReviewRow('rrrr4444', 'impl', 99), null);
 });

@@ -29,6 +29,8 @@ import {
   today,
   recordArtifact,
   writeClarify,
+  writeReview,
+  reviewKindOf,
 } from './artifacts.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
@@ -979,6 +981,15 @@ class Orchestrator extends EventEmitter {
     let stageNeeded = false;
     for (const { node, result, ctx } of results) {
       this._publishNodeIo(node, result, ctx.outputs, bus); // deterministic, node order
+      // Phase 3.11: mirror a verifier's parsed verdict into the reviews table (cycle
+      // is in scope). ctx.outputs.review.reviewKind is the allocate() base;
+      // result.review is the normalized { issues, summary } the verifier runner
+      // returns. The agent still writes *-review-cycleN.json (protocol.readReview
+      // parses it for the live loop); this is the durable history record. Best-effort.
+      if (this.pipeline && ctx.outputs?.review?.reviewKind && result?.review) {
+        writeReview(this.pipeline.id, reviewKindOf(ctx.outputs.review.reviewKind), cycle, result.review)
+          .catch(() => {});
+      }
       if ((node.produces || []).includes('code')) stageNeeded = true;
     }
     // CONV-6: stage ONCE, AWAITED, after the step's producers — so a following
