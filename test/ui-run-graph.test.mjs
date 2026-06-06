@@ -128,3 +128,34 @@ test('buildRunGraph is idempotent: same node-id set rebuilds nothing (node ident
   window.__np.buildRunGraph(host, MANIFEST); // same topology -> no rebuild
   assert.equal(host.querySelector('.run-node[data-id="s0_0"]').dataset.marker, 'keep', 'DOM reused when node-id set unchanged');
 });
+
+test('buildRunGraph tolerates a manifest with no feedbacks (old runs) — nodes only, no iterates', async () => {
+  const { window } = await bootLive();
+  const m = { version: 1, steps: MANIFEST.steps }; // no feedbacks key
+  const host = window.document.createElement('div');
+  host.className = 'run-flow';
+  assert.doesNotThrow(() => window.__np.buildRunGraph(host, m));
+  assert.equal(host.querySelectorAll('.run-node[data-id]').length, 6);
+  assert.equal(host.querySelectorAll('.run-node.iterates').length, 0, 'no self-loops without feedbacks');
+});
+
+test('buildRunGraph on the legacy default manifest renders the bookends + agents', async () => {
+  const { window } = await bootLive();
+  const host = window.document.createElement('div');
+  host.className = 'run-flow';
+  window.__np.buildRunGraph(host, window.__np.manifestFor(undefined));
+  const labels = [...host.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
+  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
+});
+
+test('paintRunGraph with no feedbacks does not throw and still tints', async () => {
+  const { window } = await bootLive();
+  const m = { version: 1, steps: MANIFEST.steps };
+  const host = window.document.createElement('div');
+  host.className = 'run-flow';
+  window.__np.buildRunGraph(host, m);
+  assert.doesNotThrow(() => window.__np.paintRunGraph(host, m, {
+    statusOf: () => 'done', activeId: null, cycles: {}, live: false, durText: () => '', costText: () => '',
+  }));
+  assert.ok(host.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
+});

@@ -352,6 +352,7 @@ const CLIENT_DEFAULT_STEPPER = {
     { kind: 'agents', nodes: [{ id: 'review',    uiPhase: 'review',    label: 'Review',    color: 'blue',   cycles: true  }] },
     { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
   ],
+  feedbacks: [],
 };
 
 // Pick the manifest to render: prefer a persisted/emitted one, else the legacy
