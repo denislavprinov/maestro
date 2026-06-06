@@ -101,6 +101,8 @@ const el = {
   workspaceSelect: $('#workspaceSelect'),
   wsMembers: $('#ws-members'),
   sourceBranchHint: $('#sourceBranchHint'),
+  sourceBranchWrap: $('#sourceBranchWrap'),
+  wsSourceBranches: $('#ws-source-branches'),
 
   // Workspaces management view
   wsCreateBtn: $('#ws-create-btn'),
@@ -2411,22 +2413,26 @@ function onProjectChanged() {
   }
 }
 
-// An empty option value means "let the server default to current HEAD". We
-// always seed one so the select is never blank (m3) and always communicates
+// Seed any branch <select> with a single placeholder option. Empty value === "let
+// the server default to current HEAD". Returns the option for in-place updates.
+// We always seed one so the select is never blank (m3) and always communicates
 // state — loading, the auto default, or an error (m2).
-function setBranchPlaceholder(text) {
-  el.sourceBranch.innerHTML = '';
+function seedBranchPlaceholder(select, text) {
+  if (!select) return null;
+  select.innerHTML = '';
   const opt = document.createElement('option');
   opt.value = '';
   opt.textContent = text;
-  el.sourceBranch.appendChild(opt);
+  select.appendChild(opt);
   return opt;
 }
 
-async function refreshBranches(projectDir) {
-  if (!el.sourceBranch) return;
-  if (!projectDir) { setBranchPlaceholder('current branch (auto)'); return; }
-  const placeholder = setBranchPlaceholder('Loading branches…');
+// Populate any branch <select> from /api/branches for `projectDir`, pre-selecting
+// the repo's current branch (HEAD). Empty value still falls back to HEAD on submit.
+async function populateBranchSelect(select, projectDir) {
+  if (!select) return;
+  if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); return; }
+  const placeholder = seedBranchPlaceholder(select, 'Loading branches…');
   try {
     const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -2434,12 +2440,12 @@ async function refreshBranches(projectDir) {
     const branches = Array.isArray(data.branches) ? data.branches : [];
     if (!branches.length) { placeholder.textContent = 'current branch (auto)'; return; }
     // Rebuild: explicit "auto" first, then every branch (current pre-selected).
-    setBranchPlaceholder('current branch (auto)');
+    seedBranchPlaceholder(select, 'current branch (auto)');
     for (const b of branches) {
       const opt = document.createElement('option');
       opt.value = b; opt.textContent = b;
       if (b === data.current) opt.selected = true;
-      el.sourceBranch.appendChild(opt);
+      select.appendChild(opt);
     }
   } catch {
     // m2: surface the failure instead of leaving a silently-empty select. The
@@ -2447,6 +2453,11 @@ async function refreshBranches(projectDir) {
     placeholder.textContent = 'current branch (auto — branch list unavailable)';
   }
 }
+
+// Back-compat shim for the single #sourceBranch (existing call sites in
+// onProjectChanged are unchanged). setBranchPlaceholder is no longer needed
+// (its callers move to seedBranchPlaceholder / are removed in setRunTarget).
+function refreshBranches(projectDir) { return populateBranchSelect(el.sourceBranch, projectDir); }
 
 el.projectSelect.addEventListener('change', () => {
   if (el.projectSelect.value === '__add__') {
@@ -2566,15 +2577,19 @@ function setRunTarget(target) {
   if (el.targetProjectPane) el.targetProjectPane.classList.toggle('hidden', t !== 'project');
   if (el.targetWorkspacePane) el.targetWorkspacePane.classList.toggle('hidden', t !== 'workspace');
 
-  // Source-branch field: in workspace mode the single dropdown is a per-project
-  // default; show an "auto" placeholder so an empty value falls back per project (D2).
+  // Source-branch field: in workspace mode swap the single dropdown for one
+  // per-project dropdown each defaulting to that project's current branch (HEAD).
   if (t === 'workspace') {
-    setBranchPlaceholder('default branch per project (auto)');
-    if (el.sourceBranchHint) el.sourceBranchHint.textContent = 'Each member project falls back to its own default branch.';
+    // Per-project source branches: hide the single dropdown, show one per member.
+    if (el.sourceBranchWrap) el.sourceBranchWrap.classList.add('hidden');
+    if (el.sourceBranchHint) el.sourceBranchHint.textContent = "Pick a source branch per project. Each defaults to that project's current branch.";
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
     loadConfig('');
     ensureWorkspaceOptions();
   } else {
+    // Restore the single project-driven dropdown; clear the per-project list.
+    if (el.sourceBranchWrap) el.sourceBranchWrap.classList.remove('hidden');
+    if (el.wsSourceBranches) { el.wsSourceBranches.classList.add('hidden'); el.wsSourceBranches.innerHTML = ''; }
     if (el.sourceBranchHint) el.sourceBranchHint.textContent = "The new worktree is created off this branch. Defaults to the project's current branch.";
     // Restore the project-driven branch list + config for the selected project.
     onProjectChanged();
@@ -2595,6 +2610,49 @@ function renderWorkspaceMembers() {
     if (missing) chip.classList.add('missing');
     chip.textContent = wsBasename(p) + (missing ? ' (missing)' : '');
     host.appendChild(chip);
+  });
+}
+
+// Render one source-branch dropdown per member of the selected workspace, each
+// keyed by projectKey and defaulted to that project's current branch (HEAD).
+function renderWorkspaceSourceBranches() {
+  const host = el.wsSourceBranches;
+  if (!host) return;
+  host.innerHTML = '';
+  const ws = state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId);
+  if (!ws || !Array.isArray(ws.projectPaths) || !ws.projectPaths.length) {
+    host.classList.add('hidden');
+    return;
+  }
+  host.classList.remove('hidden');
+  ws.projectPaths.forEach((p, i) => {
+    const key = (Array.isArray(ws.projectKeys) && ws.projectKeys[i]) || '';
+    const missing = Array.isArray(ws.exists) && ws.exists[i] === false;
+
+    const row = document.createElement('div');
+    row.className = 'ws-src-row';
+
+    const name = document.createElement('span');
+    name.className = 'ws-src-name';
+    name.textContent = wsBasename(p) + (missing ? ' (missing)' : '');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'select-wrap';
+    const sel = document.createElement('select');
+    sel.className = 'select ws-src-select';
+    sel.dataset.projectKey = key;
+    wrap.appendChild(sel);
+
+    row.appendChild(name);
+    row.appendChild(wrap);
+    host.appendChild(row);
+
+    if (missing) {
+      sel.disabled = true;
+      seedBranchPlaceholder(sel, 'current branch (auto)');
+    } else {
+      populateBranchSelect(sel, p); // async; defaults to HEAD per the clarification
+    }
   });
 }
 
@@ -2634,6 +2692,7 @@ async function ensureWorkspaceOptions() {
     placeholder.selected = true;
   }
   renderWorkspaceMembers();
+  renderWorkspaceSourceBranches();
 }
 
 if (el.targetSeg) {
@@ -2646,6 +2705,7 @@ if (el.workspaceSelect) {
     state.selectedWorkspaceId = el.workspaceSelect.value || '';
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     renderWorkspaceMembers();
+    renderWorkspaceSourceBranches();
   });
 }
 
@@ -3123,6 +3183,7 @@ if (typeof window !== 'undefined') {
     renderWorkspaces, buildWorkspaceCard, enterWizard, showWizardStep,
     renderWizardProjects, startWizardScan, saveWorkspace, abortWizardScan,
     onScanEvent, subscribeScan, setStatusText, resetWizard,
+    renderWorkspaceSourceBranches,
   };
 }
 
@@ -3161,8 +3222,26 @@ el.form.addEventListener('submit', async (e) => {
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
   };
-  if (target === 'workspace') body.workspaceId = workspaceId;
-  else body.projectDir = projectDir;
+  if (target === 'workspace') {
+    body.workspaceId = workspaceId;
+    // Per-project source branches: { [projectKey]: branch }. Omit empties (the
+    // "auto" placeholder) so the server falls back to each project's default.
+    const byKey = {};
+    if (el.wsSourceBranches) {
+      el.wsSourceBranches.querySelectorAll('select.ws-src-select').forEach((s) => {
+        const key = s.dataset.projectKey;
+        const val = (s.value || '').trim();
+        if (key && val) byKey[key] = val;
+      });
+    }
+    if (Object.keys(byKey).length) body.sourceBranchByKey = byKey;
+    // The single #sourceBranch is hidden in workspace mode — don't send it. (The
+    // body literal sets `sourceBranch: ... || undefined`, so the key still EXISTS
+    // with value undefined; delete it so `'sourceBranch' in body` is false.)
+    delete body.sourceBranch;
+  } else {
+    body.projectDir = projectDir;
+  }
 
   if (source === 'markdown') {
     if (!mdText) return setFormMsg('Provide markdown text or load a .md file.', 'err');

@@ -16,6 +16,7 @@ const IDS = [
   'nav-workspaces-count',
   'target-seg', 'target-project-pane', 'target-workspace-pane', 'workspaceSelect', 'ws-members',
   'sourceBranchHint',
+  'sourceBranchWrap', 'ws-source-branches',
   'ws-create-btn', 'ws-msg', 'ws-list', 'ws-card-tpl',
   'wiz-name', 'wiz-projects', 'wiz-step1-hint', 'wiz-start-scan', 'wiz-status', 'wiz-progress',
   'wiz-phases', 'wiz-abort', 'wiz-desc', 'wiz-graphify-note', 'wiz-msg', 'wiz-rescan', 'wiz-save',
