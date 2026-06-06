@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getDb, _resetForTests } from '../src/core/db.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { getDb, _resetForTests, migrate, dbPath } from '../src/core/db.mjs';
 import { maybeMigrateFromFs } from '../src/core/migrate-fs-to-db.mjs';
 import { maestroHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -537,4 +538,72 @@ test('m14: CI-name-colliding workspaces.json migrates without rolling back', () 
     'SELECT count(*) AS n FROM workspace_projects WHERE workspace_id = ?'
   ).get('wks-demo-bbbbbbbb').n;
   assert.equal(orphans, 0, 'dropped workspace contributed no member rows');
+});
+
+// ── Task 4.5 — rollback safety: a DB error leaves the DB empty AND the JSON intact ──
+//
+// A8 (crash-safety): the import is ONE transaction (A5) and the archive runs ONLY after
+// a clean COMMIT. A DB error mid-insert must (a) ROLLBACK + rethrow, leaving EVERY table
+// empty, and (b) leave the legacy JSON on disk (un-archived, no backup-<ts>/ dir), so a
+// later open retries cleanly.
+//
+// Forcing the error (A14 — observable effect, NOT namespace mocking): we add a real
+// BEFORE-INSERT trigger on pipeline_events that RAISE(ABORT)s. The fixture's pipeline.md
+// yields timeline rows, so insertAll() reaches the events insert — AFTER projects /
+// pipelines are already inserted in the SAME tx — and the FIRST event insert throws,
+// proving ROLLBACK discards even the rows written earlier in the transaction. We never
+// mock.method the importer or db.mjs; the trigger is a genuine schema constraint.
+//
+// Why a RAW handle (not getDb()): the Phase-1.6 wiring makes getDb() run the real
+// importer DURING open (db.mjs#getDb -> maybeMigrateFromFs). Since buildFixture() seeds
+// the legacy tree BEFORE we open, getDb() would already import + archive — leaving
+// nothing to roll back and the trigger un-armed. So we open a fresh DatabaseSync at the
+// SAME dbPath(), enable FKs, run migrate() (so the schema + user_version exist), arm the
+// trigger, and call maybeMigrateFromFs(db) on that handle via the seam the importer
+// already exposes (it takes `db`). This drives the identical single-transaction import.
+// The trigger is dropped in `finally`; the handle is closed at the end (each test reopens
+// a fresh DB at its own home regardless). A12: home + fixture dirs are throwaway temps.
+test('a DB error mid-import rolls back ALL rows and leaves the legacy JSON untouched', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const fx = buildFixture(home);
+
+  // Open a raw handle (NOT getDb(), whose open-time hook would import before we can arm
+  // the trigger) and prepare it exactly as getDb() does, up to but excluding the hook.
+  const db = new DatabaseSync(dbPath());
+  db.exec('PRAGMA foreign_keys = ON;'); // so a FK/constraint abort behaves like production
+  migrate(db);                          // schema + PRAGMA user_version = 1
+
+  // Force a transaction failure during insertAll(): pipeline_events is inserted AFTER
+  // projects/pipelines in the SAME tx, so the first event insert aborting proves the
+  // ROLLBACK discards the rows committed earlier in the transaction too.
+  db.exec("CREATE TRIGGER _force_fail BEFORE INSERT ON pipeline_events " +
+          "BEGIN SELECT RAISE(ABORT, 'forced'); END;");
+  try {
+    assert.throws(() => maybeMigrateFromFs(db), /forced/, 'the DB error propagates');
+  } finally {
+    db.exec('DROP TRIGGER _force_fail');
+  }
+
+  // Atomicity: the rollback discarded EVERY table the transaction touched.
+  const counts = tableCounts(db);
+  for (const [t, n] of Object.entries(counts)) {
+    assert.equal(n, 0, `table ${t} is empty after rollback`);
+  }
+
+  // The legacy JSON is STILL on disk (archive only runs after a successful commit),
+  // so nothing is lost and a retry is safe.
+  assert.ok(existsSync(join(home, 'projects.json')), 'projects.json not archived on failure');
+  assert.ok(existsSync(join(fx.runDir, 'state.json')), 'state.json not archived on failure');
+  assert.equal(readdirSync(home).some((n) => n.startsWith('backup-')), false,
+    'no backup dir created on a failed migration');
+
+  // A clean retry (trigger removed) now succeeds — the empty DB + intact JSON re-import.
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+  assert.equal(tableCounts(db).projects, 2, 'retry imports successfully');
+  // And NOW (after a clean commit) the archive ran exactly once.
+  assert.equal(readdirSync(home).filter((n) => n.startsWith('backup-')).length, 1,
+    'backup dir created only after the successful retry commit');
+
+  db.close();
 });
