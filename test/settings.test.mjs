@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maestroHome } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, settingsFile, defaultRoot } from '../src/core/settings.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 
 // Sandbox BOTH the home (so settingsFile + defaultRoot resolve into a temp dir)
 // and clear MAESTRO_HOME so the settings file is actually consulted. The whole
@@ -19,6 +20,10 @@ async function withSandbox(fn) {
   process.env.HOME = home; process.env.USERPROFILE = home; delete process.env.MAESTRO_HOME;
   try { return await fn(home); }
   finally {
+    // These tests delete MAESTRO_HOME + repoint HOME mid-suite. Reset the db.mjs
+    // singleton on the way OUT (Task 6.14) so the next file reopens cleanly at
+    // .maestro-test instead of against a stale/sandbox handle.
+    _resetForTests();
     for (const k of ['HOME', 'USERPROFILE', 'MAESTRO_HOME']) {
       if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
     }

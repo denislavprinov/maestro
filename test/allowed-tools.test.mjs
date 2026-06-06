@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { effectiveAllowedTools } from '../src/core/phases.mjs';
 import { resolveWorkflow, writeWorkflow } from '../src/core/workflows.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 
 // Declared ONCE for the whole module — both the unit and integration tests reuse it.
 const BASE = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill'];
@@ -71,6 +72,7 @@ test('resolved manualWebUiTesting node + base union grants browser tools AND kee
   const proj = await mkdtemp(join(tmpdir(), 'maestro-proj-'));
   const prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = home;            // writeWorkflow/resolveWorkflow store lives under MAESTRO_HOME (lazy read)
+  _resetForTests();                           // writeWorkflow/resolveWorkflow hit the DB workflows table; reopen at THIS home
   try {
     // Minimal registry; agentFile names resolve against the REAL repo agents/ dir
     // because resolveWorkflow's 4th arg defaults to DEFAULT_AGENTS_DIR (workflows.mjs:225).
@@ -97,6 +99,7 @@ test('resolved manualWebUiTesting node + base union grants browser tools AND kee
     assert.ok(allowed.includes(WEBUI_BROWSER_TOOL), 'browser tool is on the allow-list');
     assert.ok(allowed.includes('Write'), 'still allowed to write its verdict JSON');
   } finally {
+    _resetForTests();                         // next file reopens clean
     if (prevHome === undefined) delete process.env.MAESTRO_HOME;
     else process.env.MAESTRO_HOME = prevHome;
     await rm(home, { recursive: true, force: true });

@@ -5,11 +5,20 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
 
-let proj, srv, base;
+let proj, srv, base, homeDir, prevHome;
 const q = (o) => new URLSearchParams(o).toString();
 
 before(async () => {
+  // POST /api/config* drives setStep/addCustomModel/removeCustomModel, which now
+  // write the DB. Isolate that DB under a throwaway MAESTRO_HOME and reset the
+  // db.mjs singleton so its writes can't leak into / inherit from neighbours in
+  // the shared single-process `node --test` run.
+  homeDir = await mkdtemp(join(tmpdir(), 'maestro-cfgapi-home-'));
+  prevHome = process.env.MAESTRO_HOME;
+  process.env.MAESTRO_HOME = homeDir;
+  _resetForTests();
   proj = await mkdtemp(join(tmpdir(), 'maestro-cfgapi-'));
   const { app } = await import('../ui/server.mjs'); // imported => does not bind a port
   srv = http.createServer(app);
@@ -18,7 +27,10 @@ before(async () => {
 });
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
+  _resetForTests();
+  if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(proj, { recursive: true, force: true });
+  await rm(homeDir, { recursive: true, force: true });
 });
 
 test('GET /api/config returns predefined models + empty config + step defs', async () => {
