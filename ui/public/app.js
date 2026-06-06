@@ -450,6 +450,23 @@ const STAT_BADGE = {
   stopped: '<div class="nstat stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></div>',
 };
 
+// Visible "model · effort" sub-line for a run-graph node, mirroring the New-
+// pipeline config caption (.step-current): friendly model label + raw effort.
+// Bookend cells (Preflight/Done) have no uiPhase and run no model -> no line.
+// A step with neither model nor effort inherits the global default -> "default"
+// (per-field "default" when only one is set). The "·" is U+00B7, matching the
+// composer separator. NOTE: the blank wording is "default" (clarification Q1),
+// which intentionally differs from the composer's "default model"/"default effort".
+function nodeModelLine(node) {
+  if (!node || !node.uiPhase) return '';
+  const model = node.model || '';
+  const effort = node.effort || '';
+  if (!model && !effort) return 'default';
+  const m = modelById(model);
+  const modelLabel = model ? (m ? m.label : model) : 'default';
+  return `${modelLabel} · ${effort || 'default'}`;
+}
+
 // Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
 // isSelf => the node is its own self-cycle target (gets the .iterates ring).
 function runNode(node, status, isSelf) {
@@ -458,16 +475,17 @@ function runNode(node, status, isSelf) {
   d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
   d.dataset.id = node.id;
   d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  // Hover tooltip = model · effort (visible meta carries label + live status).
-  const tip = [node.model, node.effort].filter(Boolean).join(' · ');
-  if (tip) d.setAttribute('title', tip);
   const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
+  // model · effort is now a VISIBLE sub-line under cost/time (was a hover tooltip).
+  const meLine = nodeModelLine(node);
   d.innerHTML =
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
     `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
       `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small>` +
-      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div></div>` +
+      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div>` +
+      (meLine ? `<small class="nmodel">${escapeHtml(meLine)}</small>` : '') +
+    `</div>` +
     (STAT_BADGE[status] || '');
   return d;
 }
@@ -1462,6 +1480,7 @@ if (typeof window !== 'undefined') {
     composerPaintWires,
     buildRunGraph,
     runNode,
+    nodeModelLine,
     loopCounts,
     paintRunGraph,
     histNodeCycle,

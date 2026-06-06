@@ -88,6 +88,16 @@ test('per-status node states are present', () => {
   assert.match(css, /\.run-flow \.node\.is-stopped\s*\{[^}]*color-mix\(in srgb, var\(--red\)/);
 });
 
+test('.nmodel sub-line is pinned to neutral grey, placed after the per-status block', () => {
+  assert.match(css, /\.run-flow \.node \.nmeta small\.nmodel\{[^}]*color:var\(--ink-3\)[^}]*\}/,
+    '.nmodel sub-line is pinned to neutral grey');
+  // Guard the source-order win: the .nmodel rule must come AFTER the per-status small rules.
+  assert.ok(
+    css.indexOf('small.nmodel') > css.lastIndexOf('.is-stopped .nmeta small'),
+    '.nmodel rule must be placed after the per-status .nmeta small block',
+  );
+});
+
 test('node glow keyframes defined', () => {
   assert.match(css, /@keyframes nodeGlow\b/);
   assert.match(css, /@keyframes nodeGlowAmber\b/);
