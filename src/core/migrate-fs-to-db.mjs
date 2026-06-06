@@ -126,7 +126,16 @@ function alreadyMigrated(db) {
  */
 function collectLegacy(home) {
   const plan = {
-    projects: [], workspaces: [], workspaceProjects: [], workflows: [],
+    // m14: each workspaces entry is { row:[...], members:[[id,path,ordinal],...] }
+    // so insertAll can emit a workspace's member rows ONLY when its parent
+    // `workspaces` row actually inserted (changes===1). A hand-edited registry with
+    // two CI-name-colliding entries (distinct ids) makes `INSERT OR IGNORE` drop the
+    // 2nd `workspaces` row; emitting its `workspace_projects` children unconditionally
+    // would then FK-fail (parent absent) and — since INSERT OR IGNORE does NOT swallow
+    // a FOREIGN KEY violation — throw, rolling the WHOLE import back and re-attempting
+    // it on every getDb() open (an infinite re-migrate loop). Carrying members with
+    // their parent lets us gate them on the parent insert.
+    projects: [], workspaces: [], workflows: [],
     projectConfig: [], configNodes: [], configFeedbacks: [],
     storeMeta: [], pipelines: [], pipelineSteps: [], pipelineEvents: [],
     clarify: [], reviews: [], artifacts: [],
@@ -156,17 +165,20 @@ function collectLegacy(home) {
   if (Array.isArray(wsRegistry)) {
     for (const w of wsRegistry) {
       if (!isValidWorkspace(w)) continue;
-      plan.workspaces.push([
-        w.id, w.name, typeof w.description === 'string' ? w.description : '',
-        (typeof w.createdAt === 'string' && w.createdAt) || ts,
-        (typeof w.updatedAt === 'string' && w.updatedAt) || ts,
-      ]);
       // A1: workspace_projects.project_key stores the ABSOLUTE member PATH
       // (ordinal-ordered); the real projectKey is recomputed on read via
       // store.projectKey(path) in workspaces.mjs#annotate (a projectKey is a
       // one-way hash, so the path could not be recovered from it).
-      w.projectPaths.forEach((p, i) => {
-        plan.workspaceProjects.push([w.id, p, i]);
+      // m14: members ride WITH their parent so insertAll only emits them when the
+      // parent `workspaces` row inserts (changes===1) — never as FK-orphans.
+      const members = w.projectPaths.map((p, i) => [w.id, p, i]);
+      plan.workspaces.push({
+        row: [
+          w.id, w.name, typeof w.description === 'string' ? w.description : '',
+          (typeof w.createdAt === 'string' && w.createdAt) || ts,
+          (typeof w.updatedAt === 'string' && w.updatedAt) || ts,
+        ],
+        members,
       });
     }
     plan.consumed.push({ src: workspacesFile, rel: 'workspaces.json' });
@@ -509,8 +521,16 @@ function insertAll(db, plan) {
     artifact: db.prepare('INSERT OR IGNORE INTO artifacts (pipeline_id,kind,rel_path) VALUES (?,?,?)'),
   };
   for (const r of plan.projects) ins.project.run(...r);
-  for (const r of plan.workspaces) ins.workspace.run(...r);
-  for (const r of plan.workspaceProjects) ins.wsProj.run(...r);
+  // m14: emit a workspace's member rows ONLY when its parent `workspaces` row
+  // actually inserted (changes===1). When `INSERT OR IGNORE` drops the row (a
+  // CI-name or id collision → changes===0), skipping its members avoids the FK
+  // violation that `INSERT OR IGNORE` does NOT swallow (it throws), which would
+  // otherwise roll the whole import back and re-trigger it on every open.
+  for (const w of plan.workspaces) {
+    const inserted = ins.workspace.run(...w.row).changes === 1;
+    if (!inserted) continue;
+    for (const m of w.members) ins.wsProj.run(...m);
+  }
   for (const r of plan.workflows) ins.workflow.run(...r);
   for (const r of plan.projectConfig) ins.projectConfig.run(...r);
   for (const r of plan.configNodes) ins.configNode.run(...r);

@@ -400,3 +400,141 @@ test('archives consumed JSON into backup-<ts>/ mirroring layout; leaves md/extra
 import { relative as _relative } from 'node:path';
 function relativeToHome(home, p) { return _relative(home, p); }
 function projectConfigPath(projectDir) { return join(projectDir, '.maestro', 'config.json'); }
+
+// ── Task 4.4 — workspace runs: composite key, workspace_meta, ordered members ────
+
+test('imports a workspace registry + workspace-store pipeline correctly', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const a = tempGitRepo('wsa');
+  const b = tempGitRepo('wsb');
+  const ka = projectKey(a);
+  const kb = projectKey(b);
+  const wkey = 'wks-demo-12345678';
+
+  // registry (projects + workspaces)
+  writeJson(join(home, 'projects.json'), [
+    { name: 'A', path: a }, { name: 'B', path: b },
+  ]);
+  writeJson(join(home, 'workspaces.json'), [{
+    id: wkey, name: 'Demo WS', description: 'two repos',
+    projectPaths: [a, b],                 // PERSISTED input order -> ordinals 0,1
+    createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-02T00:00:00.000Z',
+  }]);
+
+  // workspace store: meta + a workspace pipeline (target:'workspace' superset)
+  const sortedKeys = [ka, kb].sort();
+  const wsKeyDir = join(home, 'store', 'workspaces', wkey);
+  writeJson(join(wsKeyDir, 'meta.json'), {
+    key: wkey, id: wkey, name: 'Demo WS',
+    projectKeys: sortedKeys, projectPaths: [a, b], firstSeenAt: '2026-06-01T00:00:00.000Z',
+  });
+  const runId = 'ws00ff11';
+  const runDir = join(wsKeyDir, 'pipelines', `06-06-26-add-pagination-${runId}`);
+  writeJson(join(runDir, 'state.json'), {
+    id: runId, title: 'add pagination', projectDir: a,
+    status: 'done', phase: 'done', cycle: 0,
+    startedAt: '2026-06-06T00:00:00.000Z', updatedAt: '2026-06-06T01:00:00.000Z',
+    steps: [{ key: 'preflight', phase: 'preflight', cycle: 0, status: 'done', activeMs: 1, runningSince: null }],
+    target: 'workspace', workspaceId: wkey, workspaceKey: wkey, workspaceName: 'Demo WS',
+    workspaceDescription: '# Workspace: Demo\nlots of detail',
+    projectKeys: sortedKeys,
+    projects: sortedKeys.map((k, i) => ({ projectKey: k, projectDir: i === 0 ? a : b, projectName: i === 0 ? 'A' : 'B' })),
+    checkpointRefs: {}, branches: {},
+    baseName: 'add-pagination', datePrefix: '06-06-26',
+  });
+  writeText(join(runDir, 'prompt.md'), 'add pagination\n');
+
+  const db = getDb();
+  maybeMigrateFromFs(db);
+
+  // workspaces + ordered members
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wkey);
+  assert.equal(ws.name, 'Demo WS');
+  assert.equal(ws.created_at, '2026-06-01T00:00:00.000Z');
+  const members = db.prepare(
+    'SELECT project_key, ordinal FROM workspace_projects WHERE workspace_id = ? ORDER BY ordinal'
+  ).all(wkey).map((r) => ({ project_key: r.project_key, ordinal: r.ordinal })); // node:sqlite rows are null-proto
+  assert.deepEqual(members, [
+    { project_key: a, ordinal: 0 },         // A1: stores the PATH (ordinal-ordered), not the key
+    { project_key: b, ordinal: 1 },
+  ]);
+
+  // store_meta keyed by the BARE workspace key, kind=workspace
+  const meta = db.prepare('SELECT * FROM store_meta WHERE key = ?').get(wkey);
+  assert.equal(meta.kind, 'workspace');
+
+  // the workspace pipeline: composite workspace_key, primary project_key, workspace_meta
+  const pl = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(runId);
+  assert.equal(pl.target, 'workspace');
+  assert.equal(pl.workspace_key, `workspaces/${wkey}`, 'composite workspace_key tag');
+  assert.equal(pl.project_key, sortedKeys[0], 'primary (first sorted) member key');
+  const wm = JSON.parse(pl.workspace_meta);
+  assert.equal(wm.workspaceName, 'Demo WS');
+  assert.equal(wm.workspaceDescription, '# Workspace: Demo\nlots of detail');
+  assert.deepEqual(wm.projectKeys, sortedKeys);
+  assert.equal(wm.projects.length, 2);
+  assert.deepEqual(wm.checkpointRefs, {});
+  // a single-project run elsewhere must still have null workspace_meta (sanity).
+});
+
+// m14 (CRITICAL correctness): a hand-corrupted workspaces.json with two
+// CI-name-colliding entries (distinct ids) must NOT roll the whole migration back.
+// `idx_workspaces_name COLLATE NOCASE` makes `INSERT OR IGNORE` drop the 2nd
+// `workspaces` row (changes===0); its `workspace_projects` children would then FK-
+// fail (parent absent) and — because `INSERT OR IGNORE` does NOT swallow a FOREIGN
+// KEY violation, it THROWS — abort+rollback the entire import. Since getDb() calls
+// the hook on every open, that rethrow makes every launch re-attempt the migration
+// forever (an infinite re-migrate loop). The importer must guard this: emit a
+// workspace's member rows ONLY when its `workspaces` row actually inserted
+// (changes===1), or pre-dedupe by id+CI-name. This test proves the migration
+// COMPLETES and the surviving workspace + its members import cleanly.
+test('m14: CI-name-colliding workspaces.json migrates without rolling back', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const a = tempGitRepo('m14a');
+  const b = tempGitRepo('m14b');
+  const c = tempGitRepo('m14c');
+
+  writeJson(join(home, 'projects.json'), [
+    { name: 'A', path: a }, { name: 'B', path: b }, { name: 'C', path: c },
+  ]);
+  // Two DISTINCT workspace ids whose names collide case-insensitively ("Demo"/"demo").
+  // The unique COLLATE NOCASE name index keeps only the first `workspaces` row.
+  writeJson(join(home, 'workspaces.json'), [
+    {
+      id: 'wks-demo-aaaaaaaa', name: 'Demo', description: 'first',
+      projectPaths: [a, b],
+      createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z',
+    },
+    {
+      id: 'wks-demo-bbbbbbbb', name: 'demo', description: 'collides on name',
+      projectPaths: [b, c],
+      createdAt: '2026-06-02T00:00:00.000Z', updatedAt: '2026-06-02T00:00:00.000Z',
+    },
+  ]);
+
+  const db = getDb();
+  // The whole import must COMPLETE — no FK-violation rollback, no rethrow.
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+
+  // The migration ran to completion: the projects (committed in the SAME tx) are present.
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, 3,
+    'all projects imported (proves the tx committed, not rolled back)');
+
+  // Exactly the FIRST workspace survived the unique-name index.
+  const wsRows = db.prepare('SELECT id, name FROM workspaces ORDER BY id').all();
+  assert.equal(wsRows.length, 1, 'only the first CI-name workspace inserted');
+  assert.equal(wsRows[0].id, 'wks-demo-aaaaaaaa');
+
+  // The surviving workspace keeps its members; the DROPPED workspace left NO orphan
+  // member rows (the guard suppressed them, so no FK violation could occur).
+  const survivors = db.prepare(
+    'SELECT ordinal FROM workspace_projects WHERE workspace_id = ? ORDER BY ordinal'
+  ).all('wks-demo-aaaaaaaa');
+  assert.equal(survivors.length, 2, 'surviving workspace has both members');
+  const orphans = db.prepare(
+    'SELECT count(*) AS n FROM workspace_projects WHERE workspace_id = ?'
+  ).get('wks-demo-bbbbbbbb').n;
+  assert.equal(orphans, 0, 'dropped workspace contributed no member rows');
+});
