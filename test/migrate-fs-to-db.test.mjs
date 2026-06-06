@@ -342,3 +342,61 @@ function tableCounts(db) {
   for (const t of tables) out[t] = db.prepare(`SELECT count(*) AS n FROM ${t}`).get().n;
   return out;
 }
+
+// ── Task 4.3 — archive: consumed JSON → backup-<ts>/; md/extras/settings stay ────
+
+test('archives consumed JSON into backup-<ts>/ mirroring layout; leaves md/extras/settings', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const fx = buildFixture(home);
+  const db = getDb();
+  maybeMigrateFromFs(db);
+
+  // Exactly one backup-<ts>/ dir was created.
+  const backups = readdirSync(home).filter((n) => n.startsWith('backup-'));
+  assert.equal(backups.length, 1, 'one backup dir created');
+  const backup = join(home, backups[0]);
+
+  // CONSUMED json moved OUT of their original locations...
+  assert.ok(!existsSync(join(home, 'projects.json')), 'projects.json moved');
+  assert.ok(!existsSync(join(fx.runDir, 'state.json')), 'state.json moved');
+  assert.ok(!existsSync(join(fx.runDir, 'pipeline.md')), 'pipeline.md moved (consumed)');
+  assert.ok(!existsSync(join(fx.runDir, 'clarify.json')), 'clarify.json moved');
+  assert.ok(!existsSync(join(fx.runDir, 'impl-review-cycle1.json')), 'review json moved');
+  assert.ok(!existsSync(join(fx.keyDir, 'meta.json')), 'meta.json moved');
+  assert.ok(!existsSync(projectConfigPath(fx.projA)), 'per-project config.json moved');
+
+  // ...and now live under backup-<ts>/ mirroring the home-relative layout.
+  assert.ok(existsSync(join(backup, 'projects.json')), 'projects.json mirrored');
+  assert.ok(existsSync(join(backup, 'workflows', 'wf_quick-fix.json')), 'workflow mirrored');
+  const relRun = relativeToHome(home, fx.runDir);
+  assert.ok(existsSync(join(backup, relRun, 'state.json')), 'state.json mirrored under store/.../');
+  assert.ok(existsSync(join(backup, relRun, 'pipeline.md')), 'pipeline.md mirrored');
+  assert.ok(existsSync(join(backup, relRun, 'clarify.json')), 'clarify.json mirrored');
+  assert.ok(existsSync(join(backup, relRun, 'impl-review-cycle1.json')), 'review mirrored');
+  // per-project config namespaced by projectKey under project-config/<key>/.
+  assert.ok(existsSync(join(backup, 'project-config', fx.keyA, 'config.json')),
+    'per-project config namespaced in backup');
+
+  // MARKDOWN + extras + settings + the run dir itself STAY in place.
+  assert.ok(existsSync(join(fx.runDir, 'prompt.md')), 'prompt.md stays');
+  assert.ok(existsSync(join(fx.runDir, 'manual-tests-checklist.md')), 'checklist md stays');
+  assert.ok(existsSync(join(fx.runDir, 'webui-review-cycle1.md')), 'webui review md stays');
+  assert.ok(existsSync(join(fx.runDir, 'DEVIATIONS.md')), 'stray md stays');
+  assert.ok(existsSync(join(fx.runDir, 'extras', 'attachment.txt')), 'extras stay');
+  assert.ok(existsSync(join(fx.keyDir, 'plans', '06-06-26-history-rework.md')), 'plan md stays');
+  assert.ok(existsSync(join(fx.keyDir, 'reviews', '06-06-26-history-rework-impl-review.md')),
+    'review md stays');
+  assert.ok(existsSync(join(home, 'settings.json')), 'settings.json NEVER moved');
+  // NONE of the kept markdown/extras leaked into the backup.
+  assert.ok(!existsSync(join(backup, relRun, 'prompt.md')), 'prompt.md not in backup');
+  assert.ok(!existsSync(join(backup, relRun, 'manual-tests-checklist.md')), 'checklist not in backup');
+  assert.ok(!existsSync(join(backup, relRun, 'extras', 'attachment.txt')), 'extras not in backup');
+  assert.ok(!existsSync(join(backup, 'settings.json')), 'settings.json not in backup');
+});
+
+// Path helpers for the archive assertions (kept local to the test file). join is
+// already imported at the top; relative is aliased here to avoid shadowing it.
+import { relative as _relative } from 'node:path';
+function relativeToHome(home, p) { return _relative(home, p); }
+function projectConfigPath(projectDir) { return join(projectDir, '.maestro', 'config.json'); }
