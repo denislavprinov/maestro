@@ -1009,6 +1009,14 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   opts = opts || {};
   const ns = opts.ns || 'main';
   if (flowEl.offsetParent === null) return; // view hidden — skip
+  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
+  // the renderer itself reads the finished count from opts.cycles[fb.from]).
+  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
+  const loopBadge = (cx, cy, color, n) =>
+    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
+    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
+    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
+    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
   const rect = (id) => {
     const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
     const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
@@ -1037,11 +1045,16 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   feedbacks.forEach((fb, idx) => {
     const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
     if (fb.from === fb.to) {
-      // same-node self-cycle: a small violet lobe hanging beneath the node. No
-      // delete-X — the node's top-left self-cycle toggle owns add/remove.
-      const cx = ra.x + ra.w / 2, baseY = ra.y + ra.h;
-      const sx = cx - 15, tx = cx + 11, rail = baseY + 34;
-      s += `<path d="M${sx} ${baseY} C ${sx - 22} ${rail}, ${tx + 22} ${rail}, ${tx} ${baseY}" fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
+      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
+      // toggle owns add/remove (composer); run/history pass cycles for the badge.
+      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
+      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      if (opts.cycles && !opts.del) {
+        const n = opts.cycles[fb.from] || 0;
+        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
+      }
       return;
     }
     const p = posOf(fb.from);
@@ -1330,6 +1343,7 @@ if (typeof window !== 'undefined') {
     manifestFor,
     durByNode,
     costByNode,
+    composerPaintWires,
   });
 }
 
