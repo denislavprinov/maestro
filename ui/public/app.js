@@ -123,6 +123,14 @@ const el = {
   wizSave: $('#wiz-save'),
   wizClose: $('#wiz-close'),
   wizTitle: $('#wiz-title'),
+  wizAddProjectOpen:    $('#wiz-add-project-open'),
+  wizAddProjectTrigger: $('.wiz-add-project-trigger'),
+  wizAddProject:        $('#wiz-add-project'),
+  wizNewProjectName:    $('#wizNewProjectName'),
+  wizNewProjectPath:    $('#wizNewProjectPath'),
+  wizAddProjectSave:    $('#wizAddProjectSave'),
+  wizAddProjectCancel:  $('#wizAddProjectCancel'),
+  wizAddProjectMsg:     $('#wizAddProjectMsg'),
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
@@ -2897,8 +2905,14 @@ function renderWizardProjects() {
 
   if (el.wizStep1Hint) {
     el.wizStep1Hint.textContent = usable.length < 2
-      ? 'Onboard at least two projects (in New Pipeline) to create a workspace.'
+      ? 'You need at least two projects. Use "+ Add project" to register one now.'
       : 'Select two or more projects to scan their interconnections.';
+  }
+
+  if (el.wizAddProjectTrigger) {
+    const editing = !!state.wizard.editingId;
+    el.wizAddProjectTrigger.classList.toggle('hidden', editing);
+    if (editing) hideWizAddProject();
   }
 
   projects.forEach((p) => {
@@ -2928,6 +2942,76 @@ function renderWizardProjects() {
 function syncWizardStartEnabled() {
   if (el.wizStartScan) el.wizStartScan.disabled = state.wizard.selectedPaths.length < 2;
 }
+
+function openWizAddProject() {
+  if (!el.wizAddProject) return;
+  el.wizAddProject.classList.remove('hidden');
+  if (el.wizNewProjectName) el.wizNewProjectName.value = '';
+  if (el.wizNewProjectPath) el.wizNewProjectPath.value = '';
+  setWizAddMsg('');
+  if (el.wizNewProjectName) el.wizNewProjectName.focus();
+}
+
+function hideWizAddProject() {
+  if (el.wizAddProject) el.wizAddProject.classList.add('hidden');
+}
+
+function setWizAddMsg(text, kind) {
+  if (!el.wizAddProjectMsg) return;
+  el.wizAddProjectMsg.textContent = text || '';
+  el.wizAddProjectMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+async function saveWizAddProject() {
+  const name = el.wizNewProjectName ? el.wizNewProjectName.value.trim() : '';
+  const projPath = el.wizNewProjectPath ? el.wizNewProjectPath.value.trim() : '';
+  if (!name) return setWizAddMsg('Name is required.', 'err');
+  if (!projPath) return setWizAddMsg('Path is required.', 'err');
+  if (el.wizAddProjectSave) el.wizAddProjectSave.disabled = true;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path: projPath }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      setWizAddMsg(data.error || `HTTP ${res.status}`, 'err');
+      return;
+    }
+    if (Array.isArray(data.projects)) {
+      state.projects = data.projects;
+    }
+
+    const added = state.projects.find(
+      (p) => p && typeof p.name === 'string' && p.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (added && added.path && added.exists
+        && !state.wizard.selectedPaths.includes(added.path)) {
+      state.wizard.selectedPaths = [...state.wizard.selectedPaths, added.path];
+    }
+
+    hideWizAddProject();
+    renderWizardProjects();
+
+    if (added && !added.exists) {
+      if (el.wizAddProject) el.wizAddProject.classList.remove('hidden');
+      setWizAddMsg(
+        `Added "${added.name}". The path does not exist yet — create the directory, then reopen the wizard to include it.`,
+        'warn',
+      );
+    }
+  } catch (e) {
+    setWizAddMsg(e && e.message ? e.message : String(e), 'err');
+  } finally {
+    if (el.wizAddProjectSave) el.wizAddProjectSave.disabled = false;
+  }
+}
+
+if (el.wizAddProjectOpen)   el.wizAddProjectOpen  .addEventListener('click', openWizAddProject);
+if (el.wizAddProjectCancel) el.wizAddProjectCancel.addEventListener('click', hideWizAddProject);
+if (el.wizAddProjectSave)   el.wizAddProjectSave  .addEventListener('click', saveWizAddProject);
 
 // Start (or restart) the scan. Validates name + 2+ projects, shows Step 2,
 // creates an AbortController, POSTs (pre-persist for new / :id/scan for re-scan),

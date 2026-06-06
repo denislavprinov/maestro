@@ -329,6 +329,95 @@ test('a duplicate scan-done for a PRIOR scanId is ignored after a new scan start
   assert.equal(doc.querySelector('#wiz-desc').value, 'SECOND');
 });
 
+test('wizard Step 1 exposes an Add project trigger and a hidden inline form', async () => {
+  const { window } = await boot();
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+
+  const trigger = doc.querySelector('#wiz-add-project-open');
+  const form    = doc.querySelector('#wiz-add-project');
+  const name    = doc.querySelector('#wizNewProjectName');
+  const path    = doc.querySelector('#wizNewProjectPath');
+  const save    = doc.querySelector('#wizAddProjectSave');
+  const cancel  = doc.querySelector('#wizAddProjectCancel');
+  const msg     = doc.querySelector('#wizAddProjectMsg');
+
+  assert.ok(trigger, 'open trigger exists');
+  assert.ok(form, 'inline form exists');
+  assert.ok(form.classList.contains('hidden'), 'form starts hidden');
+  for (const node of [name, path, save, cancel, msg]) assert.ok(node);
+});
+
+test('wizard Add project posts to /api/projects and auto-selects the new path', async () => {
+  const posts = [];
+  const initial = [{ name: 'alpha', path: '/abs/alpha', exists: true }];
+  const after   = [
+    { name: 'alpha', path: '/abs/alpha', exists: true },
+    { name: 'beta',  path: '/abs/beta',  exists: true },
+  ];
+  let projectsResponse = initial;
+
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/projects') && (!opts.method || opts.method === 'GET')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: projectsResponse }) });
+      }
+      if (u.endsWith('/api/projects') && opts.method === 'POST') {
+        posts.push(JSON.parse(opts.body));
+        projectsResponse = after;
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: after }) });
+      }
+      return null;
+    },
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+
+  doc.querySelector('#wiz-add-project-open').dispatchEvent(new window.Event('click', { bubbles: true }));
+  doc.querySelector('#wizNewProjectName').value = 'beta';
+  doc.querySelector('#wizNewProjectPath').value = '/abs/beta';
+  doc.querySelector('#wizAddProjectSave').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(posts.length, 1, 'one POST');
+  assert.deepEqual(posts[0], { name: 'beta', path: '/abs/beta' });
+
+  assert.ok(doc.querySelector('#wiz-add-project').classList.contains('hidden'),
+    'form re-hides on success');
+
+  const checked = [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')]
+    .filter((c) => c.checked).map((c) => c.value);
+  assert.ok(checked.includes('/abs/beta'), 'new project is pre-selected');
+});
+
+test('wizard Add project surfaces server validation errors and keeps the form open', async () => {
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/projects') && opts.method === 'POST') {
+        return Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'path is not a directory' }) });
+      }
+      return null;
+    },
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+
+  doc.querySelector('#wiz-add-project-open').dispatchEvent(new window.Event('click', { bubbles: true }));
+  doc.querySelector('#wizNewProjectName').value = 'gamma';
+  doc.querySelector('#wizNewProjectPath').value = '/not/a/dir';
+  doc.querySelector('#wizAddProjectSave').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(doc.querySelector('#wiz-add-project').classList.contains('hidden'), false,
+    'form stays open on error');
+  assert.match(doc.querySelector('#wizAddProjectMsg').textContent, /not a directory/);
+});
+
 test('#wiz-abort button returns to Step 1 and unsubscribes', async () => {
   const { window, ws } = await boot({
     fetchHandler: (u, opts) => u.endsWith('/api/workspaces/scan') && opts.method === 'POST'
