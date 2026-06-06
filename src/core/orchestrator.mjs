@@ -16,7 +16,7 @@
 
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
-import { join, basename, resolve, dirname } from 'node:path';
+import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
 
 import {
@@ -27,7 +27,9 @@ import {
   planPath,
   slugify,
   today,
+  recordArtifact,
 } from './artifacts.mjs';
+import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
@@ -318,6 +320,10 @@ class Orchestrator extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
+      // A11(b): carry the resolved prompt on the in-memory state too (createPipeline
+      // already INSERTs prompt and the curated UPSERT excludes it, so persistence is
+      // safe — this keeps the live state object self-consistent for any reader).
+      this.state.prompt = this.pipeline.promptText;
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -1050,6 +1056,17 @@ class Orchestrator extends EventEmitter {
     publish(node.produces || [], result, outputs || {}, bus);
     if (bus.plan && bus.plan !== beforePlan) this._artifact('plan', bus.plan.path);
     if (bus.checklist && bus.checklist !== beforeChecklist) this._artifact('checklist', bus.checklist.path);
+    // A16(5): index a published review's md path so the Task-3.13 index-based deleter
+    // can remove the shared reviews/<date>-<base>-(impl|plan|ws)-review.md. publish()
+    // only folds reviews that carry an md (refiner's md-less verdict is private), so
+    // the md is on result.reviewMdPath / outputs.review.mdPath. webui-review md is
+    // pipeline-dir-local -> index it under kind 'webui'; all other review md is the
+    // shared store-rooted file -> kind 'review'. (_artifact computes the rel_path.)
+    const reviewMd = result.reviewMdPath ?? outputs?.review?.mdPath;
+    if (reviewMd) {
+      const reviewKind = outputs?.review?.reviewKind === 'webui-review' ? 'webui' : 'review';
+      this._artifact(reviewKind, reviewMd);
+    }
   }
 
   /** True if the loop's `from` node returned a blocking verdict (CONV-3). */
@@ -1656,6 +1673,24 @@ class Orchestrator extends EventEmitter {
 
   _artifact(kind, path) {
     this._emit('artifact', { kind, path });
+    // Phase 3.9: ALSO index FS markdown/extra paths so pipeline-delete (Task 3.13)
+    // can unlink the EXACT files later (best-effort; never blocks a run). Skip the
+    // synthetic 'pipeline'/'clarify' kinds (clarify lives in the clarify table;
+    // 'pipeline' is the dir itself). plan/review markdown live under
+    // <store>/<key>/{plans,reviews} (store-root-relative); checklist/webui live in
+    // the pipeline dir (dir-relative).
+    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'clarify') return;
+    let relPath = null;
+    const pdir = this.pipeline.dir;
+    if (path.startsWith(pdir + sep)) {
+      relPath = relative(pdir, path);                 // dir-relative (checklist, webui)
+    } else {
+      const root = this.isWorkspace
+        ? workspaceStorePath(this.workspaceKey)
+        : projectStorePath(projectKey(this.projectDir));
+      if (path.startsWith(root + sep)) relPath = relative(root, path); // store-rel (plan/review)
+    }
+    if (relPath) recordArtifact(this.pipeline.id, kind, relPath);
   }
 
   _emit(event, payload) {

@@ -13,6 +13,8 @@ import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/arti
 import { ensureArtifactDirs, writeState, appendAudit, createPipeline } from '../src/core/artifacts.mjs';
 import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { writeWorkflow } from '../src/core/workflows.mjs';
 
 const homes = [];
 beforeEach(async () => {
@@ -329,4 +331,33 @@ test('recordArtifact indexes a (kind, relPath) and listArtifacts returns them', 
     arts.map((a) => `${a.kind}:${a.relPath}`).sort(),
     ['checklist:manual-tests-checklist.md', 'plan:plans/01-06-26-demo.md',
      'review:reviews/01-06-26-demo-impl-review.md']);
+});
+
+// ── Task 3.9 — a mock run indexes plan/review/checklist markdown via _artifact ──
+// Binding assertion (3.9 + A16): a REAL mock pipeline populates the artifacts table
+// with prompt + plan + checklist + review (the review row is the A16(5) fix — before
+// it, _publishNodeIo only indexed plan/checklist, leaking the shared review md on
+// delete). MAESTRO_HOME is the throwaway temp dir from beforeEach; the orchestrator
+// runs against that home's DB.
+
+test('a mock run indexes plan + checklist + review markdown in the artifacts table', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-art-proj-'));
+  homes.push(projectDir);
+  // planner -> refiner -> implementer -> reviewer -> manualTestsChecklist:
+  // produces plan (planner/refiner), code (implementer), review md (reviewer:
+  // impl-review), and checklist (manualTestsChecklist). prompt is indexed by
+  // createPipeline.
+  const steps = [['planner'], ['refiner'], ['implementer'], ['reviewer'], ['manualTestsChecklist']]
+    .map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
+  const feedbacks = [['s1_0', 's1_0'], ['s3_0', 's2_0']].map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
+  const tpl = await writeWorkflow({ name: 'art-index', steps, feedbacks });
+  const orch = createOrchestrator({ projectDir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: tpl.id });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', 'pipeline converges');
+  const id = orch.getState().id;
+  const kinds = (await listArtifacts(id)).map((a) => a.kind);
+  assert.ok(kinds.includes('prompt'), 'prompt indexed by createPipeline');
+  assert.ok(kinds.includes('plan'), 'plan markdown indexed');
+  assert.ok(kinds.includes('checklist'), 'checklist markdown indexed');
+  assert.ok(kinds.includes('review'), 'review markdown indexed (A16(5))');
 });
