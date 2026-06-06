@@ -1,8 +1,10 @@
 // test/history-api.test.mjs
 // Phase 3.7 — the server's /api/history + /api/history/:key/:id routes now read
-// the DB (listAllPipelines / readPipelineByKey). Fixtures seed pipelines rows
-// (seedPipelineRow) + store_meta (writeStoreMeta) instead of state.json / meta.json
-// files. The response shapes are unchanged.
+// the DB (listAllPipelines / readPipelineByKey). Fixtures seed pipelines rows via the
+// production writers (seedPipeline -> createPipeline + writeState) + store_meta
+// (writeStoreMeta) instead of state.json / meta.json files. The response shapes are
+// unchanged. Keys/ids are content-derived/minted (A15(3)) — assert on the RETURNED
+// key/id (kept in module vars), not the legacy literal labels.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -12,9 +14,9 @@ import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
-import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
 
-let homeDir, srv, base, prevHome;
+let homeDir, srv, base, prevHome, alphaKey, alphaId;
 
 // The server shares the git-info runner singleton; reset it (and the hasGh memo)
 // before each test so a stub from one test never bleeds into the next.
@@ -25,9 +27,14 @@ before(async () => {
   prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
   _resetForTests(); // open the DB under this temp home
-  writeStoreMeta('alpha-00000001', 'project', { key: 'alpha-00000001', name: 'Alpha', path: '/x/alpha' });
-  seedPipelineRow({ id: 'p1', projectKey: 'alpha-00000001', title: 'Alpha run', status: 'done',
+  // Seed via the production writer; pin the store_meta name to 'Alpha' so the
+  // projectName assertion is deterministic (createPipeline's ensureMeta would derive
+  // the temp-dir basename otherwise).
+  const proj = await mkdtemp(join(tmpdir(), 'maestro-histapi-proj-'));
+  const seeded = await seedPipeline(proj, { title: 'Alpha run', status: 'done',
     startedAt: '2026-06-01T00:00:00Z', updatedAt: '2026-06-01T00:00:00Z' });
+  alphaId = seeded.id; alphaKey = seeded.key;
+  writeStoreMeta(alphaKey, 'project', { key: alphaKey, name: 'Alpha', path: proj });
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -47,14 +54,14 @@ test('GET /api/history lists pipelines across the store', async () => {
   const j = await r.json();
   assert.equal(j.pipelines.length, 1);
   assert.equal(j.pipelines[0].projectName, 'Alpha');
-  assert.equal(j.pipelines[0].projectKey, 'alpha-00000001');
+  assert.equal(j.pipelines[0].projectKey, alphaKey);
 });
 
 test('GET /api/history/:key/:id returns detail; unknown -> 404', async () => {
-  const r = await fetch(`${base}/api/history/alpha-00000001/p1`);
+  const r = await fetch(`${base}/api/history/${alphaKey}/${alphaId}`);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).state.title, 'Alpha run');
-  assert.equal((await fetch(`${base}/api/history/alpha-00000001/nope`)).status, 404);
+  assert.equal((await fetch(`${base}/api/history/${alphaKey}/nope`)).status, 404);
 });
 
 test('GET /api/history/:key/:id rejects a traversing/malformed key -> 404', async () => {
@@ -66,7 +73,8 @@ test('GET /api/history/:key/:id rejects a traversing/malformed key -> 404', asyn
 
 test('GET /api/history is PR-light: rows carry no `pr` field and `gh pr list` never runs', async () => {
   // Seed a surviving-branch pipeline so the OLD withPr:true path WOULD have run gh.
-  seedPipelineRow({ id: 'p-branch', projectKey: 'alpha-00000001', title: 'Branchy', status: 'done',
+  const branchProj = await mkdtemp(join(tmpdir(), 'maestro-histapi-branch-'));
+  const { id: branchId } = await seedPipeline(branchProj, { title: 'Branchy', status: 'done',
     startedAt: '2026-06-03T00:00:00Z', updatedAt: '2026-06-03T00:00:00Z',
     branch: { source: 'main', feature: 'maestro/feat-x' } });
   let prListCalled = false;
@@ -79,7 +87,7 @@ test('GET /api/history is PR-light: rows carry no `pr` field and `gh pr list` ne
   const r = await fetch(`${base}/api/history`);
   assert.equal(r.status, 200);
   const j = await r.json();
-  const row = j.pipelines.find((p) => p.id === 'p-branch');
+  const row = j.pipelines.find((p) => p.id === branchId);
   assert.ok(row, 'branch pipeline present in the skeleton');
   assert.equal('pr' in row, false, 'Phase-1 skeleton omits the live `pr` field');
   assert.equal(prListCalled, false, '`gh pr list` must not run on /api/history');

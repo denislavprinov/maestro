@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { useTempHome } from './helpers/temp-home.mjs';
-import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { writeStoreMeta, recordArtifact } from '../src/core/artifacts.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
@@ -482,45 +482,40 @@ test('summarizeRuns carries a kind discriminator + scanId/workspaceId fields', a
 // ?workspaceId= list / detail / delete (route through the M1 ws-store helpers)
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Seed a workspace + a finished pipeline directly in its store namespace.
- *  Phase 3.6/3.7: the list (listWorkspacePipelines) + detail (readWorkspacePipeline)
- *  read the DB, so seed a pipelines row + the workspace store_meta. Phase 3.13: the
- *  delete is INDEX-BASED, so the shared plans/reviews markdown is recorded via
- *  recordArtifact (store-root-relative) — that is what deletePipeline unlinks. The
- *  run-dir markdown (prompt.md/pipeline.md) stays for the run-dir resolution
- *  (runDirIndex maps -<id> to the dir) + humans. */
-let _seedRunSeq = 0;
+/** Seed a workspace + a finished pipeline in its store namespace through the
+ *  PRODUCTION writers. Phase 3.6/3.7: the list (listWorkspacePipelines) + detail
+ *  (readWorkspacePipeline) read the DB; seedWorkspacePipeline -> createPipeline +
+ *  writeState inserts the workspace pipelines row, writes the REAL run dir (prompt.md
+ *  + workspace-description.md) under store/workspaces/<id>/pipelines, AND writes the
+ *  workspace store_meta. The run id is MINTED (A15(3)) — capture it; createPipeline's
+ *  dir basename ends in -<id> so runDirIndex/lookupPipelineRow resolve it. Phase 3.13:
+ *  the delete is INDEX-BASED, so we add the shared plans/reviews markdown on the FS +
+ *  recordArtifact (store-root-relative) — that is what deletePipeline unlinks. */
 async function seedWorkspaceWithPipeline(name) {
   const a = await freshRepo();
   const b = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name, projectPaths: [a, b] })).json();
-  // pipelines.id is a GLOBAL PK, so mint a unique 8-hex id per seed call (the run
-  // dir basename ends in -<id> so runDirIndex/lookupPipelineRow resolve it).
-  const runId = (++_seedRunSeq).toString(16).padStart(8, '0');
   const wsRoot = join(homeDir, '.maestro', 'store', 'workspaces', workspace.id);
-  const pdir = join(wsRoot, 'pipelines', `04-06-26-ws-feature-${runId}`);
-  await mkdir(pdir, { recursive: true });
-  // DB read path: a workspace pipelines row (workspace superset in workspace_meta)
-  // + the workspace store_meta row (name + projectPaths for primaryDir/projectDir).
+  // Production-writer seed: createPipeline mints the id + writes the run dir, writeState
+  // persists the workspace row. projects[] (index-aligned with the workspace) supplies
+  // the workspace superset. The returned dir IS the on-disk run dir (ends in -<id>).
+  const projects = workspace.projectKeys.map((k, i) => ({
+    projectKey: k, projectDir: workspace.projectPaths[i], projectName: 'm',
+  }));
+  const { id: runId, dir: pdir } = await seedWorkspacePipeline(a, workspace.id, {
+    title: 'WS feature', status: 'done', workspaceName: name,
+    baseName: 'ws-feature', datePrefix: '04-06-26',
+    startedAt: '2026-06-04T00:00:00Z',
+  }, projects);
+  // Pin the ws store_meta (createPipeline wrote one already) so name + projectPaths
+  // (the primaryDir / projectDir the list+detail routes resolve) are deterministic.
   writeStoreMeta(workspace.id, 'workspace', {
     key: workspace.id, id: workspace.id, name,
     projectKeys: workspace.projectKeys, projectPaths: workspace.projectPaths,
   });
-  seedPipelineRow({
-    id: runId, workspaceKey: workspace.id, target: 'workspace', title: 'WS feature',
-    status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
-    baseName: 'ws-feature', datePrefix: '04-06-26',
-    workspaceMeta: {
-      workspaceId: workspace.id, workspaceName: name,
-      projectKeys: workspace.projectKeys,
-      projects: workspace.projectKeys.map((k, i) => ({ projectKey: k, projectDir: workspace.projectPaths[i], projectName: 'm' })),
-      branches: {}, checkpointRefs: {}, workspaceDescription: '',
-    },
-  });
-  // FS run-dir files: human-facing + the -<id> run-dir resolution (runDirIndex).
-  await writeFile(join(pdir, 'prompt.md'), '# WS feature\n', 'utf8');
-  await writeFile(join(pdir, 'pipeline.md'), '# WS feature\n', 'utf8');
   // Shared markdown on the FS + indexed so the index-based delete (3.13) unlinks it.
+  // createPipeline does NOT write plan/review md (only the orchestrator does), so add
+  // them here at the paths the delete asserts, keyed on the MINTED run id.
   await mkdir(join(wsRoot, 'plans'), { recursive: true });
   await mkdir(join(wsRoot, 'reviews'), { recursive: true });
   await writeFile(join(wsRoot, 'plans', '04-06-26-ws-feature.md'), '# p', 'utf8');

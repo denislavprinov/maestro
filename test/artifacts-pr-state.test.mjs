@@ -1,7 +1,8 @@
 // test/artifacts-pr-state.test.mjs
 // Phase 3.6 — withPr enrichment is unchanged (still shells out via git-info), now
-// fed DB rows. Fixtures seed pipelines rows (seedPipelineRow) + store_meta instead
-// of state.json + meta.json.
+// fed DB rows. Fixtures seed pipelines rows via the production writers (seedPipeline
+// -> createPipeline + writeState) + store_meta instead of state.json + meta.json.
+// seedPipeline mints the id; look up by the RETURNED id (A15(3)).
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
-import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
 
 let home, prevHome, repo;
 
@@ -39,20 +40,21 @@ function stubGh({ state = 'OPEN', url = 'https://gh/x/pull/5', number = 5 } = {}
   });
 }
 
-async function seed(id) {
-  const { projectKey } = await import('../src/core/store.mjs');
-  seedPipelineRow({
-    id, projectKey: projectKey(repo), title: 'Feat', status: 'done',
-    startedAt: '2026-06-01T00:00:00Z',
+// Seed one finished pipeline (branch points at maestro/feat-1) via the production
+// writers and return its MINTED id for lookups (A15(3)).
+async function seed() {
+  const { id } = await seedPipeline(repo, {
+    title: 'Feat', status: 'done', startedAt: '2026-06-01T00:00:00Z',
     branch: { source: 'main', feature: 'maestro/feat-1', branchKept: true },
   });
+  return id;
 }
 
 test('withPr:true attaches the live PR state to each row', async () => {
   const { listPipelines } = await import('../src/core/artifacts.mjs');
   stubGh({ state: 'MERGED', url: 'https://gh/x/pull/5', number: 5 });
-  await seed('pp-merged');
-  const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === 'pp-merged');
+  const id = await seed();
+  const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
   assert.deepEqual(row.pr, { state: 'MERGED', url: 'https://gh/x/pull/5', number: 5 });
 });
 
@@ -63,8 +65,8 @@ test('withPr defaults off: no pr field, no gh call', async () => {
     if (cmd === 'gh') ghCalled = true;
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
-  await seed('pp-default');
-  const row = (await listPipelines(repo)).find((r) => r.id === 'pp-default');
+  const id = await seed();
+  const row = (await listPipelines(repo)).find((r) => r.id === id);
   assert.equal(row.pr, undefined);
   assert.equal(ghCalled, false);
 });
@@ -75,16 +77,16 @@ test('withPr:true but gh unavailable -> pr is null, never throws', async () => {
     Promise.resolve(cmd === 'gh' && args[0] === '--version'
       ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
       : { ok: true, stdout: '', stderr: '', code: 0 }));
-  await seed('pp-nogh');
-  const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === 'pp-nogh');
+  const id = await seed();
+  const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
   assert.equal(row.pr, null);
 });
 
 test('withPr:true with only a closed PR -> pr is null (button re-appears)', async () => {
   const { listPipelines } = await import('../src/core/artifacts.mjs');
   stubGh({ state: 'CLOSED', url: 'https://gh/x/pull/6', number: 6 });
-  await seed('pp-closed');
-  const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === 'pp-closed');
+  const id = await seed();
+  const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
   assert.equal(row.pr, null);
 });
 
@@ -92,15 +94,15 @@ test('enrichPipelinesPr emits {projectKey,id,pr} batches; pr has no mergeable; f
   const { enrichPipelinesPr, writeStoreMeta } = await import('../src/core/artifacts.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   stubGh({ state: 'OPEN', url: 'https://gh/x/pull/7', number: 7 });
-  await seed('pp-enrich-a');
-  await seed('pp-enrich-b');
-  // listAllPipelines derives each row's projectDir from the store_meta row; seed it
-  // so the rows are PR-enrich targets.
+  const idA = await seed();
+  await seed();
+  // listAllPipelines derives each row's projectDir from the store_meta row; pin it
+  // to the literal `repo` so the rows are PR-enrich targets.
   writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), path: repo, name: 'Repo' });
   const collected = [];
   let finalDone = null;
   await enrichPipelinesPr((items, done) => { collected.push(...items); finalDone = done; }, { batchSize: 1 });
-  const a = collected.find((x) => x.id === 'pp-enrich-a');
+  const a = collected.find((x) => x.id === idA);
   assert.ok(a, 'seeded branch row was enriched');
   assert.deepEqual(Object.keys(a).sort(), ['id', 'pr', 'projectKey'], 'only {projectKey,id,pr}');
   assert.equal(a.pr.state, 'OPEN');
@@ -114,7 +116,7 @@ test('enrichPipelinesPr with gh unavailable emits exactly one empty final batch'
     Promise.resolve(cmd === 'gh' && args[0] === '--version'
       ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
       : { ok: true, stdout: '', stderr: '', code: 0 }));
-  await seed('pp-enrich-nogh');
+  await seed();
   const batches = [];
   await enrichPipelinesPr((items, done) => batches.push({ items, done }));
   assert.equal(batches.length, 1, 'exactly one batch when gh is unavailable');
