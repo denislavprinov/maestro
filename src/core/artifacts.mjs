@@ -462,17 +462,117 @@ export async function appendAudit(pipelineDir, markdownLine) {
   await appendFile(join(pipelineDir, 'pipeline.md'), line, 'utf8');
 }
 
+/** Absolute pipelineDir -> 8-hex id cache; the appendAudit (Task 3.4) fast path. */
+const _dirIdCache = new Map();
+/** Seed the dir->id cache (called by writeState and, later, createPipeline). */
+function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id); }
+
 /**
- * Persist the full state object as state.json (pretty-printed), stamping
- * updatedAt. Returns the object actually written.
+ * Persist the full state object: UPSERT its pipelines row and REPLACE its
+ * pipeline_steps rows, in one transaction. The id is resolved from stateObj.id.
+ * `pipelineDir` is retained for signature stability + to seed the dir->id cache
+ * (appendAudit fast path). Returns the object actually persisted (updatedAt
+ * stamped), matching the legacy contract. node:sqlite is synchronous; the function
+ * stays async so every existing `await writeState(...)` call site is unchanged.
+ *
+ * A11(a): the ON CONFLICT(id) DO UPDATE clause SETs ONLY the columns that
+ * legitimately mutate during a run. It deliberately does NOT touch the
+ * creation-immutable identity columns (project_key, prompt, target, title,
+ * base_name, date_prefix, workspace_key, started_at) — the orchestrator's
+ * this.state omits several of them (orchestrator.mjs:174-191), so a blanket
+ * "SET <every column>=excluded.<column>" would null them on the first post-create
+ * persist (and _persist's catch{} would hide the loss). The INSERT arm still
+ * writes every column; only the UPDATE arm is curated.
  * @param {string} pipelineDir
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
 export async function writeState(pipelineDir, stateObj) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
-  await writeFile(join(pipelineDir, 'state.json'), JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  const id = obj.id;
+  if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
+  rememberDir(pipelineDir, id); // dir->id cache for appendAudit
+  tx(() => {
+    getDb().prepare(`
+      INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
+        date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
+        total_active_ms, prompt, branch, workspace_meta, stepper, tools)
+      VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
+        @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
+        @prompt,@branch,@workspace_meta,@stepper,@tools)
+      ON CONFLICT(id) DO UPDATE SET
+        status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
+        updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
+        total_active_ms=excluded.total_active_ms, branch=excluded.branch,
+        workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
+        tools=excluded.tools
+    `).run(toPipelineRow(obj));
+
+    getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
+    const ins = getDb().prepare(`
+      INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
+        status, started_at, updated_at, active_ms, running_since, cost_usd)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `);
+    for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
+      ins.run(
+        id, st.key, st.nodeId ?? null, st.phase ?? null,
+        st.stepIndex ?? null, st.cycle ?? null, st.status ?? null,
+        st.startedAt ?? null, st.updatedAt ?? null,
+        Number.isFinite(st.activeMs) ? st.activeMs : 0,
+        st.runningSince == null ? null : String(st.runningSince),
+        Number.isFinite(st.costUsd) ? st.costUsd : 0,
+      );
+    }
+  });
   return obj;
+}
+
+/**
+ * Map a live state object to the named params of the pipelines UPSERT. JSON columns
+ * are stringified here; the workspace superset collapses into workspace_meta.
+ *
+ * C1: the orchestrator's this.state carries projectDir but NOT projectKey
+ * (orchestrator.mjs:174-191), and _persist() writes this.state verbatim. Reading
+ * o.projectKey alone would write NULL on every post-creation persist → project_key
+ * NOT NULL violation (swallowed by _persist's catch) → the run would freeze at its
+ * 'created' snapshot. Derive from the always-present projectDir when the key is
+ * absent. (Single-project AND workspace runs both carry projectDir = the primary
+ * member dir.) projectKey is imported into artifacts.mjs from store.mjs.
+ */
+function toPipelineRow(o) {
+  const workspaceMeta = o.target === 'workspace'
+    ? s({
+        workspaceId: o.workspaceId ?? null,
+        workspaceName: o.workspaceName ?? null,
+        workspaceDescription: o.workspaceDescription ?? '',
+        projectKeys: Array.isArray(o.projectKeys) ? o.projectKeys : [],
+        projects: Array.isArray(o.projects) ? o.projects : [],
+        checkpointRefs: o.checkpointRefs ?? {},
+        branches: o.branches ?? {},
+      })
+    : null;
+  return {
+    id: o.id,
+    project_key: o.projectKey ?? (o.projectDir ? projectKey(o.projectDir) : null),
+    workspace_key: o.workspaceKey ?? null,
+    target: o.target ?? 'project',
+    title: o.title ?? null,
+    base_name: o.baseName ?? null,
+    date_prefix: o.datePrefix ?? null,
+    status: o.status ?? 'created',
+    phase: o.phase ?? 'created',
+    cycle: Number.isFinite(o.cycle) ? o.cycle : 0,
+    started_at: o.startedAt ?? null,
+    updated_at: o.updatedAt ?? null,
+    total_cost_usd: Number.isFinite(o.totalCostUsd) ? o.totalCostUsd : 0,
+    total_active_ms: Number.isFinite(o.totalActiveMs) ? o.totalActiveMs : 0,
+    prompt: o.prompt ?? null,
+    branch: s(o.branch),
+    workspace_meta: workspaceMeta,
+    stepper: s(o.stepper),
+    tools: s(o.tools),
+  };
 }
 
 /**
