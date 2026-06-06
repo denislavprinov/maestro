@@ -5,8 +5,9 @@ A **deterministic multi-agent pipeline** that drives Claude Code (headless) thro
 run the same pipeline: a **CLI**, an installable **`/maestro` skill**, and a **web
 UI**.
 
-Plain Node.js ESM (`.mjs`), Node `>=18`. Minimal dependencies: `express` + `ws` only.
-The frontend is vanilla HTML/CSS/JS — no framework, no build step.
+Plain Node.js ESM (`.mjs`), **Node `>=22.13.0`** — required by the built-in
+`node:sqlite` store (flag-free from Node v22.13 LTS / v23.4+). Minimal dependencies:
+`express` + `ws` only. The frontend is vanilla HTML/CSS/JS — no framework, no build step.
 
 > The full, binding contract for every module, event, and on-disk file lives in
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Read it before changing any signature.
@@ -31,10 +32,12 @@ clears quality gates:
    implementer to fix — looping Implement -> Review until only minor/suggestion issues
    remain (or you approve continuing past the cap).
 
-Everything is saved as markdown + JSON in a **machine-wide external store** (default
-`~/.maestro/store/<projectKey>/`), keyed by repo identity and kept **outside your
-project's working tree**, so history is never committed to your repo. See
-[Artifact layout](#artifact-layout) for details.
+Run state, history, and configuration are saved in a single **SQLite database**
+(`~/.maestro/maestro.db`, via the built-in `node:sqlite`), while the agents' **markdown**
+outputs (plans, reviews) and any attachments live alongside it in a **machine-wide
+external store** (default `~/.maestro/store/<projectKey>/`). Both are keyed by repo
+identity and kept **outside your project's working tree**, so nothing is ever committed to
+your repo. See [Artifact layout](#artifact-layout) for details.
 
 ### Preflight tooling
 
@@ -55,7 +58,8 @@ missing tool never breaks a run.
 npm install
 ```
 
-Requires Node `>=18` and the `claude` CLI on your `PATH` for real (non-mock) runs.
+Requires **Node `>=22.13.0`** (for the built-in `node:sqlite` store — run `nvm use` to
+pick up the bundled `.nvmrc`) and the `claude` CLI on your `PATH` for real (non-mock) runs.
 
 ---
 
@@ -187,9 +191,10 @@ agent's model/effort and each loop's cycle count.
 
 The engine is data-driven: it executes whatever workflow you select. The default
 workflow reproduces exactly the `Plan → Refine → Implement → Review` behavior
-described above, and **Reset to default** on the canvas redraws it. Workflow
-topology is saved globally under `~/.maestro/workflows/`; per-project
-model/effort/cycle choices live in `<projectDir>/.maestro/config.json`.
+described above, and **Reset to default** on the canvas redraws it. Workflow topology and
+per-project model/effort/cycle choices are stored in the central SQLite database
+(`~/.maestro/maestro.db`) — no longer in `~/.maestro/workflows/` or
+`<projectDir>/.maestro/config.json`.
 
 To add a new agent to the palette, see [`docs/ADDING-AGENTS.md`](docs/ADDING-AGENTS.md).
 
@@ -197,39 +202,52 @@ To add a new agent to the palette, see [`docs/ADDING-AGENTS.md`](docs/ADDING-AGE
 
 ## Artifact layout
 
-Plans, reviews, and pipeline history do **not** live in your project — they are written
-to a single **machine-wide external store** outside every project's working tree, so
-nothing is ever committed to your repo:
+Maestro keeps **structured state** (projects, workspaces, workflows, per-project config,
+run state + steps + audit events, clarify Q&A, review verdicts) in a single **SQLite
+database**, and the agents' **markdown** outputs (+ any attachments) in a machine-wide
+**external store**. Neither lives in your project's working tree, so nothing is ever
+committed to your repo:
 
 ```
-<maestroHome>/store/<projectKey>/
-  meta.json     project name + canonical path (for the "All projects" view)
-  plans/        <DD-MM-YY>-<name>.md, -v2.md, -v3.md ...   (plans + refinements)
-  reviews/      <DD-MM-YY>-<name>-impl-review.md           (implementation reviews)
-  pipelines/    <DD-MM-YY>-<slug>-<id>/                    (one folder per run)
-    prompt.md            the prompt text (or copied markdown brief)
-    extras/              any optional extra files you attached
-    clarify.json         planner's open questions (3 options + free text each)
-    clarify-answers.json your answers
-    refine-review-cycle1.json  per-cycle refiner review JSON (one per refine cycle)
-    impl-review-cycle1.json    per-cycle code-reviewer review JSON (one per review cycle)
-    state.json           machine-readable run state snapshot
-    pipeline.md          human-readable audit log (history view reads this)
+<maestroHome>/                          default ~/.maestro
+  settings.json                         { root } only — the bootstrap that locates the DB
+  maestro.db  (+ -wal, -shm)            ALL structured state (SQLite, WAL mode)
+  backup-<ts>/                          legacy JSON archived on first upgrade (see below)
+  store/<projectKey>/
+    plans/      <DD-MM-YY>-<name>.md, -v2.md, ...   (plan markdown + refinements)
+    reviews/    <DD-MM-YY>-<name>-impl-review.md     (review markdown)
+    pipelines/  <DD-MM-YY>-<slug>-<id>/              (one folder per run)
+      prompt.md          the prompt text (or copied markdown brief)
+      extras/            any optional extra files you attached
 ```
+
+Everything that used to be a per-run `.json`/`.md` control file —
+`clarify.json`, `clarify-answers.json`, `*-review-cycleN.json`, `state.json`,
+`pipeline.md`, plus `meta.json` and the per-project `config.json` and global
+`workflows/*.json` — is now a **row in `maestro.db`** instead. Only the plan/review
+**markdown**, `prompt.md`, and `extras/` remain on disk (their existence is indexed in the
+database).
 
 - **`<maestroHome>`** = `<base>/.maestro`, where `<base>` is `MAESTRO_HOME` if set, else
-  the persisted "Maestro root folder" from Settings, else your OS home. By default this
-  is `~/.maestro`, so the store lives at `~/.maestro/store/`.
+  the persisted "Maestro root folder" from Settings, else your OS home. By default this is
+  `~/.maestro`, so the DB is `~/.maestro/maestro.db` and the store is `~/.maestro/store/`.
 - **`<projectKey>`** = `<repo-basename-slug>-<sha1(canonicalRoot)[:8]>`, derived from the
   repository's identity (the parent of its shared `.git`). It is **stable across all git
   worktrees of the same repo**, so every worktree shares one history.
 
-Because history is machine-wide and keyed by repo identity, the web UI adds an **"All
-projects"** view (and `GET /api/history`) that lists runs across every project on the
-machine. There is **no migration**: any old `<projectDir>/ai-artifacts/` directories
-from before this change are simply left in place and no longer used.
+**First-launch migration.** The first time you run this version, Maestro automatically
+imports any pre-existing JSON state into `maestro.db` (in a single transaction) and moves
+the consumed files into a timestamped `~/.maestro/backup-<ts>/` directory (mirroring the
+old layout). This is one-way — the new version reads only the database. To roll back, stop
+Maestro, restore the files from `backup-<ts>/`, and downgrade. (Separately, any very old
+`<projectDir>/ai-artifacts/` directories from before the external-store change are still
+just left in place and ignored.)
 
-The exact JSON shapes are specified in `docs/ARCHITECTURE.md` §5.
+Because state is machine-wide and keyed by repo identity, the web UI has an **"All
+projects"** view (and `GET /api/history`) that lists runs across every project on the
+machine — now backed by indexed SQL queries instead of a directory scan.
+
+The exact table contracts are specified in `docs/ARCHITECTURE.md` §5.
 
 ---
 
