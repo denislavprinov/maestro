@@ -28,6 +28,7 @@ import {
   slugify,
   today,
   recordArtifact,
+  writeClarify,
 } from './artifacts.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
@@ -825,6 +826,9 @@ class Orchestrator extends EventEmitter {
       return [];
     }
     this._artifact('clarify', join(this.pipeline.dir, 'clarify.json'));
+    // Phase 3.10: mirror the normalized questions into the durable clarify row (the
+    // agent still wrote clarify.json; this is the history record). Best-effort.
+    await writeClarify(this.pipeline.id, { questions: { questions } }).catch(() => {});
     const answer = await this._ask({ id: 'clarify-1', kind: 'clarify', questions });
     this._checkAbort();
     const answers = normalizeClarifyAnswer(answer, questions);
@@ -1531,6 +1535,9 @@ class Orchestrator extends EventEmitter {
       choice: a.choice,
     }));
     await writeClarifyAnswers(this.pipeline.dir, { answers: enriched });
+    // Phase 3.10: mirror the enriched answers into the durable clarify row (history
+    // reads the DB; the live loop already consumed the FS file). Best-effort.
+    await writeClarify(this.pipeline.id, { answers: { answers: enriched } }).catch(() => {});
     return enriched;
   }
 

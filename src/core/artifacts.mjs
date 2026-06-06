@@ -108,6 +108,46 @@ export async function listArtifacts(pipelineId) {
     .all(pipelineId).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
 }
 
+/**
+ * Upsert the clarify row for a pipeline. Pass { questions } and/or { answers } (each
+ * the normalized payload protocol.normalizeClarify / writeClarifyAnswers produce). A
+ * partial call updates only the provided column, preserving the other. JSON-encoded
+ * TEXT columns. The agent still writes clarify.json (the live planner loop parses it
+ * via protocol.readClarify); this is the DURABLE mirror history reconstruction reads.
+ * Best-effort: a logging failure never breaks a run. The pipelines row must exist (FK).
+ * @param {string} pipelineId
+ * @param {{questions?:object, answers?:object}} payload
+ */
+export async function writeClarify(pipelineId, { questions, answers } = {}) {
+  if (!pipelineId) return;
+  try {
+    tx(() => {
+      getDb().prepare('INSERT INTO clarify (pipeline_id) VALUES (?) ON CONFLICT(pipeline_id) DO NOTHING')
+        .run(pipelineId);
+      if (questions !== undefined) {
+        getDb().prepare('UPDATE clarify SET questions = ? WHERE pipeline_id = ?')
+          .run(s(questions), pipelineId);
+      }
+      if (answers !== undefined) {
+        getDb().prepare('UPDATE clarify SET answers = ? WHERE pipeline_id = ?')
+          .run(s(answers), pipelineId);
+      }
+    });
+  } catch { /* best-effort mirror; never break a run */ }
+}
+
+/**
+ * Read the clarify row as { questions, answers } (each parsed JSON or null). When no
+ * row exists both are null. The history-side reader (the live loop reads the file).
+ * @param {string} pipelineId
+ * @returns {{questions:object|null, answers:object|null}}
+ */
+export function readClarifyRow(pipelineId) {
+  const row = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
+  if (!row) return { questions: null, answers: null };
+  return { questions: j(row.questions, null), answers: j(row.answers, null) };
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 

@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { buildClarifyPrompt, runPlannerClarify } from '../src/core/phases.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeClarify, readClarifyRow } from '../src/core/artifacts.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 
 useTempHome(after); // store writes -> isolated temp home, not real ~/.maestro
 
@@ -114,4 +117,23 @@ test('CLI no longer advertises --max-clarify in help', () => {
   const r = spawnSync(process.execPath, ['src/cli/maestro.mjs', '--help'], { encoding: 'utf8' });
   assert.equal(r.status, 0);
   assert.doesNotMatch(r.stdout, /--max-clarify/);
+});
+
+// ── Task 3.10 — clarify DB writer / history read ───────────────────────────────
+// The agent still writes clarify.json (protocol.readClarify parses it for the live
+// planner loop); the orchestrator MIRRORS the normalized questions + answers into
+// the clarify row so history has a durable record. MAESTRO_HOME is the file's temp
+// home (useTempHome); _resetForTests() gives a clean DB handle for this test.
+
+test('writeClarify upserts questions then answers into the clarify row', () => {
+  _resetForTests();
+  seedPipelineRow({ id: 'q1id0000', projectKey: 'proj-00000001', status: 'running' });
+  writeClarify('q1id0000', { questions: { questions: [{ id: 'q1', question: 'Which DB?', options: ['a', 'b', 'c'], allowFreeText: true }] } });
+  let row = readClarifyRow('q1id0000');
+  assert.equal(row.questions.questions[0].question, 'Which DB?');
+  assert.equal(row.answers, null);
+  writeClarify('q1id0000', { answers: { answers: [{ id: 'q1', question: 'Which DB?', choice: 'a' }] } });
+  row = readClarifyRow('q1id0000');
+  assert.equal(row.questions.questions[0].question, 'Which DB?', 'questions preserved on the answers upsert');
+  assert.equal(row.answers.answers[0].choice, 'a');
 });
