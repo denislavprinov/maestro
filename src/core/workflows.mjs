@@ -308,7 +308,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
  *
  * @param {object} plan  resolveWorkflow() output: { id, name, steps, feedbacks }
  * @param {Record<string,object>} registry  loadAgentRegistry() output
- * @returns {{version:1, steps:Array<{kind:string, nodes:object[]}>}}  node shape includes model, effort
+ * @returns {{version:1, steps:Array<{kind:string, nodes:object[]}>, feedbacks:Array<{id:string,from:string,to:string,maxCycles:number}>}}  node shape includes model, effort
  */
 export function buildStepperManifest(plan, registry) {
   const reg = registry && typeof registry === 'object' ? registry : {};
@@ -340,5 +340,8 @@ export function buildStepperManifest(plan, registry) {
       ...agentCells,
       { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
     ],
+    // Loop edges for the graph renderer (self-cycle = from===to, cross-loop = from!==to).
+    // Projected to the UI-facing shape; `gate` is intentionally dropped (UI never reads it).
+    feedbacks: fbs.map(({ id, from, to, maxCycles }) => ({ id, from, to, maxCycles })),
   };
 }
