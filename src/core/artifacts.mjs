@@ -128,13 +128,17 @@ export function artifactPaths(projectDir, workspaceKey) {
 }
 
 /**
- * Read or create the per-project meta.json. Returns the meta object either way.
- * Never throws: a failed write still returns the computed meta so callers
- * (createPipeline) get a project name without re-reading disk.
+ * Read or create the per-project meta (now a store_meta row, was meta.json).
+ * Returns the meta object either way. Never throws: a failed write still returns
+ * the computed meta so callers (createPipeline) get a project name without
+ * re-reading. `firstSeenAt` is preserved across re-runs because an existing row
+ * short-circuits. `_root` is retained for signature stability (now unused).
  */
-async function ensureMeta(projectDir, root) {
-  const metaPath = join(root, 'meta.json');
-  try { return JSON.parse(await readFile(metaPath, 'utf8')); } catch { /* not written yet */ }
+async function ensureMeta(projectDir, _root) {
+  void _root;
+  const key = projectKey(projectDir);
+  const existing = readStoreMeta(key);
+  if (existing) return existing;                       // firstSeenAt preserved
   const canonical = canonicalProjectRoot(projectDir);
   let name = basename(canonical) || 'project';
   try {
@@ -144,21 +148,22 @@ async function ensureMeta(projectDir, root) {
     });
     if (hit) name = hit.name;
   } catch { /* registry optional */ }
-  const meta = { key: projectKey(projectDir), path: canonical, name, firstSeenAt: new Date().toISOString() };
-  try { await writeFile(metaPath, JSON.stringify(meta, null, 2) + '\n', 'utf8'); } catch { /* never block a run */ }
+  const meta = { key, path: canonical, name, firstSeenAt: new Date().toISOString() };
+  try { writeStoreMeta(key, 'project', meta); } catch { /* never block a run */ }
   return meta;
 }
 
 /**
- * Workspace variant of ensureMeta. Writes the §5.2 workspace meta.json shape
- * ({key,id,name,projectKeys,projectPaths,firstSeenAt}) — distinct from the project
- * shape. Name resolution prefers the registry (readWorkspace(workspaceId).name) and
- * falls back to the primary canonical root basename. Never throws, never blocks a run.
- * `projectKeys`/`projectPaths` are index-aligned and sorted by projectKey ascending.
+ * Workspace variant of ensureMeta. Persists the §5.2 workspace meta shape
+ * ({key,id,name,projectKeys,projectPaths,firstSeenAt}) to a store_meta row —
+ * distinct from the project shape. Name resolution prefers the registry
+ * (readWorkspace(workspaceId).name) and falls back to the primary canonical root
+ * basename. Never throws, never blocks a run. `projectKeys`/`projectPaths` are
+ * index-aligned and sorted by projectKey ascending.
  */
 async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
-  const metaPath = join(workspaceStorePath(workspaceKey), 'meta.json');
-  try { return JSON.parse(await readFile(metaPath, 'utf8')); } catch { /* not written yet */ }
+  const existing = readStoreMeta(workspaceKey);
+  if (existing) return existing;
 
   const members = Array.isArray(opts.projects) ? opts.projects.slice() : [];
   members.sort((a, b) => {
@@ -184,7 +189,7 @@ async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
     projectPaths: members.map((m) => resolve(m.projectDir)),
     firstSeenAt: new Date().toISOString(),
   };
-  try { await writeFile(metaPath, JSON.stringify(meta, null, 2) + '\n', 'utf8'); } catch { /* never block a run */ }
+  try { writeStoreMeta(workspaceKey, 'workspace', meta); } catch { /* never block a run */ }
   return meta;
 }
 
@@ -593,8 +598,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  */
 async function workspaceRowTasks(wkey, opts) {
   const keyDir = join(workspacesStoreRoot(), wkey);
-  let meta = null;
-  try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; }
+  // Meta now lives in store_meta (Phase 3.2); fall back to a legacy meta.json file
+  // for stores written before the migration. (Task 3.6 formalizes the read path.)
+  let meta = readStoreMeta(wkey);
+  if (!meta) { try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; } }
   const primaryDir = Array.isArray(meta?.projectPaths) ? (meta.projectPaths[0] ?? null) : null;
   const pipelinesDir = join(keyDir, 'pipelines');
   let entries;
@@ -635,8 +642,10 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
       continue;
     }
     const keyDir = join(root, k.name);
-    let meta = null;
-    try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; }
+    // Meta now lives in store_meta (Phase 3.2); fall back to a legacy meta.json file
+    // for stores written before the migration. (Task 3.6 formalizes the read path.)
+    let meta = readStoreMeta(k.name);
+    if (!meta) { try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; } }
     const pipelinesDir = join(keyDir, 'pipelines');
     let entries;
     try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { continue; }

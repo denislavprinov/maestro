@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
+import { ensureArtifactDirs } from '../src/core/artifacts.mjs';
+import { projectKey } from '../src/core/store.mjs';
 
 const homes = [];
 beforeEach(async () => {
@@ -45,4 +47,18 @@ test('store_meta: delete removes the row', () => {
   writeStoreMeta('k1', 'workspace', { name: 'x' });
   deleteStoreMeta('k1');
   assert.equal(readStoreMeta('k1'), null);
+});
+
+// ── Task 3.2 — ensureMeta/ensureWorkspaceMeta back onto store_meta ──────────────
+
+test('ensureArtifactDirs persists project meta to store_meta and preserves firstSeenAt', async () => {
+  const proj = await mkdtemp(join(tmpdir(), 'maestro-proj-'));
+  homes.push(proj);
+  const p1 = await ensureArtifactDirs(proj);
+  assert.equal(p1.meta.key, projectKey(proj));
+  assert.ok(p1.meta.firstSeenAt);
+  // Row exists in the DB, not as a meta.json file.
+  assert.deepEqual(readStoreMeta(projectKey(proj)), p1.meta);
+  const p2 = await ensureArtifactDirs(proj); // re-run
+  assert.equal(p2.meta.firstSeenAt, p1.meta.firstSeenAt, 'firstSeenAt preserved');
 });

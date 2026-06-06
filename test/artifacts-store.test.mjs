@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { artifactPaths, ensureArtifactDirs, createPipeline, planPath, reviewPath } from '../src/core/artifacts.mjs';
+import { artifactPaths, ensureArtifactDirs, createPipeline, planPath, reviewPath, readStoreMeta } from '../src/core/artifacts.mjs';
 import { projectKey, storeRoot, workspaceStorePath } from '../src/core/store.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 
 test('artifactPaths resolves into the store, not the project dir', async () => {
   const home = await mkdtemp(join(tmpdir(), 'maestro-ah-'));
@@ -21,22 +22,27 @@ test('artifactPaths resolves into the store, not the project dir', async () => {
   } finally { if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev; }
 });
 
-test('ensureArtifactDirs creates dirs + writes+returns meta.json once', async () => {
+test('ensureArtifactDirs creates dirs + writes+returns project meta once (store_meta)', async () => {
   const home = await mkdtemp(join(tmpdir(), 'maestro-ah2-'));
   const proj = await mkdtemp(join(tmpdir(), 'maestro-proj2-'));
   const prev = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = home;
+  _resetForTests(); // reopen the DB singleton against this temp home
   try {
     const p = await ensureArtifactDirs(proj);
     await stat(p.pipelines); // throws if missing
     assert.equal(p.meta.key, projectKey(proj), 'ensureArtifactDirs returns the meta object');
-    const onDisk = JSON.parse(await readFile(join(p.root, 'meta.json'), 'utf8'));
+    // Meta now lives in the store_meta table, not a meta.json file.
+    const onDisk = readStoreMeta(projectKey(proj));
     assert.equal(onDisk.key, projectKey(proj));
     assert.ok(onDisk.firstSeenAt);
     const first = onDisk.firstSeenAt;
     const p2 = await ensureArtifactDirs(proj); // re-run
     assert.equal(p2.meta.firstSeenAt, first, 'firstSeenAt is preserved on re-run');
-  } finally { if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev; }
+  } finally {
+    _resetForTests();
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
 });
 
 test('createPipeline stamps projectKey + projectName into state', async () => {
@@ -95,12 +101,13 @@ test('planPath/reviewPath thread the optional workspaceKey into the workspace st
   } finally { if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev; }
 });
 
-test('ensureArtifactDirs writes the workspace meta.json shape under store/workspaces/<key>', async () => {
+test('ensureArtifactDirs writes the workspace meta shape under store/workspaces/<key> (store_meta)', async () => {
   const home = await mkdtemp(join(tmpdir(), 'maestro-wmeta-'));
   const a = await mkdtemp(join(tmpdir(), 'maestro-wmeta-a-'));
   const b = await mkdtemp(join(tmpdir(), 'maestro-wmeta-b-'));
   const prev = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = home;
+  _resetForTests(); // reopen the DB singleton against this temp home
   try {
     const p = await ensureArtifactDirs(a, WKEY, {
       workspaceId: WKEY,
@@ -112,7 +119,8 @@ test('ensureArtifactDirs writes the workspace meta.json shape under store/worksp
     });
     assert.equal(p.root, workspaceStorePath(WKEY));
     await stat(p.pipelines); // throws if missing
-    const meta = JSON.parse(await readFile(join(p.root, 'meta.json'), 'utf8'));
+    // Workspace meta now lives in store_meta keyed by the workspace key.
+    const meta = readStoreMeta(WKEY);
     assert.equal(meta.key, WKEY);
     assert.equal(meta.id, WKEY);
     assert.equal(meta.name, 'Demo WS');
@@ -121,7 +129,10 @@ test('ensureArtifactDirs writes the workspace meta.json shape under store/worksp
     assert.ok(meta.firstSeenAt);
     // The project-shape `path` field must NOT leak into a workspace meta.
     assert.equal(meta.path, undefined);
-  } finally { if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev; }
+  } finally {
+    _resetForTests();
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
 });
 
 test('createPipeline (workspace opts) stamps the state superset + workspace-description.md', async () => {
