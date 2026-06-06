@@ -1,6 +1,19 @@
 // test/helpers/db-seed.mjs
 // Insert a pipelines row (+ optional steps) directly, for history/list/delete tests
 // that previously seeded a state.json fixture. Mirrors what writeState() persists.
+//
+// ⚠️ TEMPORARY STOPGAP (Phase 3) — REPLACE IN PHASE 6 (Task 6.x / A6(2) + A15(3)).
+// The binding plan requires this shared helper to seed via the PRODUCTION writers
+// (createPipeline + writeState) so fixtures can't drift from the schema — NOT a
+// hand-maintained raw INSERT. The canonical design is `seedPipeline(projectDir, state)`
+// / `seedWorkspacePipeline(...)` (SQLITE-MIGRATION-PLAN-v3.md §"New shared helper:
+// test/helpers/db-seed.mjs"). Phase 6 must: (1) implement those production-writer helpers
+// with the A15(3) id contract (persisted id IS createPipeline's MINTED id; callers use
+// the RETURNED id; drop `id` from the seed state); (2) re-point all 9 call sites
+// (artifacts-cost/duration/branch-stats/pr-state, list-all-pipelines, read-pipeline-by-key,
+// history-api, pr-api, workspaces-api) to a real/throwaway projectDir + returned id/key;
+// (3) delete seedPipelineRow. The column list below is verified to match writeState/
+// toPipelineRow as of Phase 3 — keep it in sync if the row shape changes before Phase 6.
 import { getDb, tx } from '../../src/core/db.mjs';
 
 export function seedPipelineRow(row) {
