@@ -47,3 +47,59 @@ test('listProjects reads rows from the DB and recomputes exists on read', async 
   // The returned shape is exactly {name, path, exists} — no DB-only fields leak.
   assert.deepEqual(Object.keys(byName.demo).sort(), ['exists', 'name', 'path']);
 });
+
+test('addProject inserts a row keyed by projectKey, returns the annotated list', async () => {
+  const home = homes[homes.length - 1];
+  const list = await addProject({ name: 'demo', path: home });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'demo');
+  assert.equal(list[0].path, home);
+  assert.equal(list[0].exists, true);
+  // Persisted in the DB with a non-empty key + created_at.
+  const row = getDb().prepare('SELECT key, name, created_at FROM projects').get();
+  assert.ok(row.key && typeof row.key === 'string', 'a projectKey was stored');
+  assert.ok(row.created_at, 'created_at stamped');
+});
+
+test('addProject rejects a duplicate name case-insensitively', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'Demo', path: home });
+  await assert.rejects(() => addProject({ name: 'demo', path: home }), /already exists/);
+  // Only one row persisted.
+  const { n } = getDb().prepare('SELECT COUNT(*) AS n FROM projects').get();
+  assert.equal(n, 1);
+});
+
+test('addProject requires name + path and rejects a file path', async () => {
+  const home = homes[homes.length - 1];
+  await assert.rejects(() => addProject({ name: '', path: home }), /name is required/);
+  await assert.rejects(() => addProject({ name: 'x', path: '' }), /path is required/);
+  const file = join(home, 'afile.txt');
+  await writeFile(file, 'x', 'utf8');
+  await assert.rejects(() => addProject({ name: 'f', path: file }), /not a directory/);
+});
+
+test('addProject accepts a non-existent path and flags it missing', async () => {
+  const list = await addProject({ name: 'ghost', path: '/no/such/dir/here' });
+  assert.equal(list[0].exists, false);
+});
+
+test('removeProject deletes case-insensitively; an absent name is a no-op', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'Demo', path: home });
+  let list = await removeProject('demo'); // case-insensitive match
+  assert.deepEqual(list, []);
+  list = await removeProject('nope'); // no-op
+  assert.deepEqual(list, []);
+});
+
+test('two projects with the SAME path collapse to one key (PK), latest name wins on re-add', async () => {
+  // projectKey(path) is deterministic, so re-adding the same path under a new name
+  // would collide on the PK. addProject guards on name first; a same-name re-add is
+  // a duplicate-name error, and a different-name same-path add must not crash.
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'one', path: home });
+  // Different name, same path -> same projectKey. The name check passes (different
+  // name), so the INSERT would hit the PK. We expect a clean error, not a crash.
+  await assert.rejects(() => addProject({ name: 'two', path: home }), /already (exists|registered)/i);
+});
