@@ -95,3 +95,26 @@ test('NO badge in composer del-mode, and NO badge when count < 1', async () => {
   paint(steps, feedbacks, { ns: 'tst', runMode: true, cycles: { a: 0 } });
   assert.doesNotMatch(svg.innerHTML, /loop-badge/, 'count<1 draws no badge');
 });
+
+test('run-mode adds wire-live to the active originator loop and wire-dim to others', async () => {
+  const window = await boot();
+  const { svg, paint } = fixture(window, ['x', 'y', 'z']);
+  const steps = [[{ id: 'x', key: 'implementer' }], [{ id: 'y', key: 'reviewer' }], [{ id: 'z', key: 'refiner' }]];
+  const feedbacks = [{ from: 'y', to: 'x' }, { from: 'z', to: 'z' }];
+  paint(steps, feedbacks, { ns: 'tst', runMode: true, activeId: 'y', doneSet: new Set(), cycles: {} });
+  const html = svg.innerHTML;
+  // Path attr order is: d, class(fbCls), fill, stroke. amber=#E6962A, violet=#8C7FD6.
+  assert.match(html, /class="wire-live"[^>]*stroke="#E6962A"/, 'cross loop from active node is wire-live');
+  assert.match(html, /class="wire-dim"[^>]*stroke="#8C7FD6"/, 'self loop from inactive node is wire-dim');
+});
+
+test('composer (non-runMode) never adds wire-live / wire-dim classes', async () => {
+  const window = await boot();
+  const { svg, paint } = fixture(window, ['x', 'y']);
+  const steps = [[{ id: 'x', key: 'implementer' }], [{ id: 'y', key: 'reviewer' }]];
+  const feedbacks = [{ from: 'y', to: 'x' }, { from: 'x', to: 'x' }];
+  paint(steps, feedbacks, { ns: 'tst', del: true });
+  const html = svg.innerHTML;
+  assert.doesNotMatch(html, /wire-live/, 'no wire-live in composer');
+  assert.doesNotMatch(html, /wire-dim/, 'no wire-dim in composer');
+});
