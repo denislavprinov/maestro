@@ -607,3 +607,56 @@ test('a DB error mid-import rolls back ALL rows and leaves the legacy JSON untou
 
   db.close();
 });
+
+// ── Task 4.6 — integration: getDb() triggers the migration on first open (e2e) ──────
+//
+// Proves the WHOLE Phase-1.6 wiring (getDb -> migrate -> maybeMigrateFromFs) now drives
+// the REAL Phase-4 importer, not a stub no-op: a fresh getDb() against a temp home with a
+// legacy fixture must, as part of the single open, import every table AND archive the
+// consumed JSON — with NO explicit maybeMigrateFromFs() call. A12: the home + the two
+// registered projects are throwaway temp dirs (buildFixture/tempGitRepo), so the real
+// <repo>/.maestro is never touched. We also prove the count-guard makes a reopen a no-op.
+test('getDb() runs the fs->db migration automatically on first open', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const fx = buildFixture(home);
+
+  // No explicit maybeMigrateFromFs() call — getDb() must invoke it as part of open.
+  const db = getDb();
+
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, 2,
+    'projects imported during getDb() open');
+  assert.ok(db.prepare('SELECT 1 FROM pipelines WHERE id = ?').get(fx.runId),
+    'pipeline imported during getDb() open');
+
+  // The binding 4.6 contract: EVERY table the legacy fixture seeds is populated by the
+  // single open. buildFixture() is a SINGLE-PROJECT tree, so the two workspace tables are
+  // legitimately empty (the dedicated workspace import — composite key + ordered members +
+  // workspace_meta — is proven exhaustively by the Task 4.4 test above); the OTHER 12
+  // tables must all have rows after open. This asserts the whole 14-table importer ran as
+  // part of getDb(), not a stub no-op.
+  const counts = tableCounts(db);
+  const seededTables = Object.keys(counts).filter(
+    (t) => t !== 'workspaces' && t !== 'workspace_projects');
+  for (const t of seededTables) {
+    assert.ok(counts[t] > 0, `table ${t} populated during getDb() open (got ${counts[t]})`);
+  }
+  assert.equal(counts.workspaces, 0, 'single-project fixture seeds no workspaces (see Task 4.4)');
+  assert.equal(counts.workspace_projects, 0, 'single-project fixture seeds no workspace members');
+
+  // And the consumed JSON was archived as part of the same open.
+  assert.ok(!existsSync(join(home, 'projects.json')), 'projects.json archived on open');
+  assert.equal(readdirSync(home).filter((n) => n.startsWith('backup-')).length, 1,
+    'exactly one backup-<ts>/ created on open');
+
+  // Reopen no-op: drop the cached handle and getDb() AGAIN against the SAME home. The
+  // legacy JSON is now archived (gone), but even if it lingered the count-guard
+  // (projects/pipelines > 0) makes the second open import nothing and create no second
+  // backup dir — the DB is authoritative.
+  _resetForTests();
+  const db2 = getDb();
+  const counts2 = tableCounts(db2);
+  assert.deepEqual(counts2, counts, 'reopen imported nothing (count-guard no-op)');
+  assert.equal(readdirSync(home).filter((n) => n.startsWith('backup-')).length, 1,
+    'reopen created no second backup dir');
+});
