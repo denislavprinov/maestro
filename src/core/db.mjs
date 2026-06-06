@@ -16,6 +16,9 @@ let _db = null; // the singleton handle, or null when closed/never-opened
 /** WAL busy-timeout: wait up to 5s for a competing writer (CLI + UI). */
 const BUSY_TIMEOUT_MS = 5000;
 
+/** Latest schema version. Bump + append a new migration step when the DDL grows. */
+const SCHEMA_VERSION = 1;
+
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
   return join(maestroHome(), 'maestro.db');
@@ -33,6 +36,7 @@ export function getDb() {
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
   const db = new DatabaseSync(dbPath());
   _configure(db);
+  migrate(db);
   _db = db;
   return _db;
 }
@@ -49,6 +53,223 @@ function _configure(db) {
     PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};
     PRAGMA synchronous = NORMAL;
   `);
+}
+
+/**
+ * The FULL, FINAL v1 schema (SQLITE-MIGRATION-SPEC §3). Applied in one transaction
+ * by migrate(). All "JSON" columns are TEXT holding a JSON string (SQLite has no
+ * JSON type); the owning service modules (de)serialize at their API boundary.
+ * COLLATE NOCASE is applied where the spec requires case-insensitive uniqueness
+ * (projects.name, workspaces.name), matching the existing duplicate checks.
+ */
+const SCHEMA_V1 = `
+-- projects: the named project registry (was projects.json: [{name,path}]).
+-- key is the stable projectKey (store.mjs). name is case-insensitively unique.
+CREATE TABLE projects (
+  key        TEXT PRIMARY KEY,
+  name       TEXT NOT NULL COLLATE NOCASE,
+  path       TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_projects_name ON projects (name COLLATE NOCASE);
+
+-- workspaces: named sets of 2+ projects (was workspaces.json header fields).
+-- id is the frozen workspaceKey (wks-<slug>-<sha1[:8]>). name is CI-unique.
+CREATE TABLE workspaces (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL COLLATE NOCASE,
+  description TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_workspaces_name ON workspaces (name COLLATE NOCASE);
+
+-- workspace_projects: the ordered projectPaths[] of a workspace (was the array).
+-- ordinal preserves the PERSISTED member order; (workspace_id, ordinal) is the PK.
+-- project_key holds the ABSOLUTE member PATH (ordinal-ordered), NOT a key (A1);
+-- the real projectKey is recomputed on read via store.projectKey(path) (one-way
+-- hash). projectKeys/exists are derived on read (not stored), per
+-- workspaces.mjs#annotate.
+CREATE TABLE workspace_projects (
+  workspace_id TEXT NOT NULL,
+  project_key  TEXT NOT NULL,
+  ordinal      INTEGER NOT NULL,
+  PRIMARY KEY (workspace_id, ordinal),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE
+);
+
+-- workflows: user workflow templates (was workflows/<id>.json). DEFAULT_WORKFLOW
+-- stays built-in (not a row). steps/feedbacks are JSON (topology arrays).
+CREATE TABLE workflows (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  version    INTEGER NOT NULL DEFAULT 1,
+  steps      TEXT NOT NULL DEFAULT '[]',  -- JSON: [[ {id,key} ]]
+  feedbacks  TEXT NOT NULL DEFAULT '[]',  -- JSON: [ {id,from,to} ]
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- project_config: per-project model/effort selection (was <projectDir>/.maestro/
+-- config.json). steps/custom_models are JSON (the legacy {steps,customModels}
+-- view). active_workflow_id remembers the last New-Pipeline choice. extra is JSON
+-- preserving unknown top-level keys (e.g. webUiTesting).
+CREATE TABLE project_config (
+  project_key        TEXT PRIMARY KEY,
+  steps              TEXT NOT NULL DEFAULT '{}',  -- JSON: { role: {model?,effort?,fanOut?} }
+  custom_models      TEXT NOT NULL DEFAULT '[]',  -- JSON: [ {id,label} ]
+  active_workflow_id TEXT,
+  extra              TEXT NOT NULL DEFAULT '{}'   -- JSON: unknown top-level keys
+);
+
+-- config_workflow_nodes: normalized per-node overrides (was config.json
+-- workflows[wf].nodes[nodeId] = {model?,effort?,fanOut?}). One row per node.
+CREATE TABLE config_workflow_nodes (
+  project_key TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  node_id     TEXT NOT NULL,
+  model       TEXT,
+  effort      TEXT,
+  fan_out     INTEGER,  -- nullable boolean (0/1); NULL = inherit
+  PRIMARY KEY (project_key, workflow_id, node_id)
+);
+
+-- config_workflow_feedbacks: normalized feedback cycle counts (was config.json
+-- workflows[wf].feedbacks[fbId] = {maxCycles}). max_cycles is an integer >= 1.
+CREATE TABLE config_workflow_feedbacks (
+  project_key TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  fb_id       TEXT NOT NULL,
+  max_cycles  INTEGER NOT NULL,
+  PRIMARY KEY (project_key, workflow_id, fb_id)
+);
+
+-- pipelines: one run = one row (was state.json, scalar fields). workspace_key is
+-- the composite "workspaces/<key>" tag for workspace runs (NULL for single-project).
+-- target is 'project' | 'workspace'. date_prefix/base_name link plan/review md
+-- files (pipeline-delete.mjs#deriveNames). branch/workspace_meta/stepper/tools are
+-- JSON (objects/manifests). prompt is the resolved prompt body.
+CREATE TABLE pipelines (
+  id              TEXT PRIMARY KEY,
+  project_key     TEXT NOT NULL,
+  workspace_key   TEXT,
+  target          TEXT NOT NULL DEFAULT 'project',
+  title           TEXT,
+  base_name       TEXT,
+  date_prefix     TEXT,
+  status          TEXT NOT NULL DEFAULT 'created',
+  phase           TEXT NOT NULL DEFAULT 'created',
+  cycle           INTEGER NOT NULL DEFAULT 0,
+  started_at      TEXT,
+  updated_at      TEXT,
+  total_cost_usd  REAL NOT NULL DEFAULT 0,
+  total_active_ms INTEGER NOT NULL DEFAULT 0,
+  prompt          TEXT,
+  branch          TEXT,  -- JSON: { source, feature, worktreeDir, reusedExisting, ... }
+  workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
+  stepper         TEXT,  -- JSON: buildStepperManifest() snapshot
+  tools           TEXT   -- JSON: detectTools()/resolved tool descriptor
+);
+CREATE INDEX idx_pipelines_project_started   ON pipelines (project_key, started_at);
+CREATE INDEX idx_pipelines_workspace_started ON pipelines (workspace_key, started_at);
+CREATE INDEX idx_pipelines_status            ON pipelines (status);
+
+-- pipeline_steps: one row per state.steps[] entry (orchestrator _nodeStep/
+-- _recordStep). key is the stable step key "<stepIndex>:<nodeId>[#cycle]".
+-- running_since is the resume timestamp (null when paused); active_ms accumulates.
+CREATE TABLE pipeline_steps (
+  pipeline_id   TEXT NOT NULL,
+  key           TEXT NOT NULL,
+  node_id       TEXT,
+  phase         TEXT,
+  step_index    INTEGER,
+  cycle         INTEGER,
+  status        TEXT,
+  started_at    TEXT,
+  updated_at    TEXT,
+  active_ms     INTEGER NOT NULL DEFAULT 0,
+  running_since TEXT,
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (pipeline_id, key),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+
+-- pipeline_events: append-only audit trail (was pipeline.md timeline lines, one
+-- "- \`<ISO ts>\` <text>" per appendAudit call). id AUTOINCREMENT preserves order.
+CREATE TABLE pipeline_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_id TEXT NOT NULL,
+  ts          TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX idx_pipeline_events_pipeline ON pipeline_events (pipeline_id, id);
+
+-- clarify: one row per pipeline (was clarify.json + clarify-answers.json).
+-- questions/answers are JSON ({questions:[...]} / {answers:[...]} payloads).
+CREATE TABLE clarify (
+  pipeline_id TEXT PRIMARY KEY,
+  questions   TEXT,  -- JSON: { questions: [ {id,question,options[3],allowFreeText} ] }
+  answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+
+-- reviews: per-cycle review verdicts (was *-review-cycleN.json). kind is one of
+-- refine|impl|plan|ws|webui (5-value open set, A2); verdict is JSON {issues:[...],summary}.
+CREATE TABLE reviews (
+  pipeline_id TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  cycle       INTEGER NOT NULL,
+  verdict     TEXT,  -- JSON: { issues:[{severity,title,detail,location}], summary }
+  PRIMARY KEY (pipeline_id, kind, cycle),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+
+-- store_meta: per-project / per-workspace meta.json (artifacts.mjs ensureMeta/
+-- ensureWorkspaceMeta). key is the store key; kind is 'project' | 'workspace';
+-- data is the full meta JSON ({key,path,name,firstSeenAt} or the workspace shape).
+CREATE TABLE store_meta (
+  key  TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL  -- JSON: the meta.json object
+);
+
+-- artifacts: NEW index of the FS markdown + extras paths kept on disk after the
+-- migration. kind is e.g. plan|review|manual-checklist|webui-review|extra; rel_path
+-- is relative to the pipeline/store dir. Replaces baseName-derivation in
+-- pipeline-delete.mjs with an exact lookup.
+CREATE TABLE artifacts (
+  pipeline_id TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  rel_path    TEXT NOT NULL,
+  PRIMARY KEY (pipeline_id, kind, rel_path),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+`;
+
+/**
+ * Idempotent, versioned schema migration. Reads PRAGMA user_version; when it is
+ * already at SCHEMA_VERSION this is a no-op. Otherwise applies the pending DDL in
+ * a single transaction and stamps the new user_version. node:sqlite is sync, so
+ * this runs inline on the calling thread.
+ *
+ * NOTE: PRAGMA user_version cannot be parameterized, so the version is inlined as
+ * a literal integer (SCHEMA_VERSION is module-controlled, never user input).
+ * @param {DatabaseSync} db
+ */
+export function migrate(db) {
+  const current = db.prepare('PRAGMA user_version').get().user_version;
+  if (current >= SCHEMA_VERSION) return;
+
+  db.exec('BEGIN');
+  try {
+    if (current < 1) db.exec(SCHEMA_V1);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 /** Close the singleton handle (no-op when already closed). */

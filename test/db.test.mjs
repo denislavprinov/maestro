@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getDb, closeDb, _resetForTests, prepare, tx } from '../src/core/db.mjs';
+import { getDb, closeDb, _resetForTests, prepare, tx, migrate as _migrateForTest } from '../src/core/db.mjs';
 import { maestroHome } from '../src/core/projects.mjs';
 
 // Each test gets its own MAESTRO_HOME so the singleton DB path is fresh and
@@ -65,4 +65,88 @@ test('first open sets the required pragmas', () => {
 
   const sy = db.prepare('PRAGMA synchronous').get();
   assert.equal(sy.synchronous, 1, 'synchronous=NORMAL (1)');
+});
+
+// The full set of tables the spec's schema (§3) requires.
+const EXPECTED_TABLES = [
+  'projects',
+  'workspaces',
+  'workspace_projects',
+  'workflows',
+  'project_config',
+  'config_workflow_nodes',
+  'config_workflow_feedbacks',
+  'pipelines',
+  'pipeline_steps',
+  'pipeline_events',
+  'clarify',
+  'reviews',
+  'store_meta',
+  'artifacts',
+];
+
+// Every index the spec mandates (pipelines fan-out indexes, append-only event
+// index). Names are stable contracts other phases' EXPLAIN-tuning may rely on.
+const EXPECTED_INDEXES = [
+  'idx_pipelines_project_started',
+  'idx_pipelines_workspace_started',
+  'idx_pipelines_status',
+  'idx_pipeline_events_pipeline',
+];
+
+function tableNames(db) {
+  return db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    .all()
+    .map((r) => r.name);
+}
+
+function indexNames(db) {
+  return db
+    .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    .all()
+    .map((r) => r.name);
+}
+
+test('migrate creates all 14 spec tables', () => {
+  const db = getDb();
+  const present = new Set(tableNames(db));
+  for (const t of EXPECTED_TABLES) {
+    assert.ok(present.has(t), `table "${t}" is present`);
+  }
+  assert.equal(EXPECTED_TABLES.length, 14, 'the spec defines exactly 14 tables');
+});
+
+test('migrate creates every required index', () => {
+  const db = getDb();
+  const present = new Set(indexNames(db));
+  for (const ix of EXPECTED_INDEXES) {
+    assert.ok(present.has(ix), `index "${ix}" is present`);
+  }
+});
+
+test('migrate stamps user_version = 1', () => {
+  const db = getDb();
+  const { user_version } = db.prepare('PRAGMA user_version').get();
+  assert.equal(user_version, 1, 'schema version is 1 after migrate');
+});
+
+test('migrate() is idempotent — second run is a no-op, version stable', () => {
+  const db = getDb();
+  const before = db.prepare('PRAGMA user_version').get().user_version;
+  const tablesBefore = tableNames(db).length;
+  // Re-import migrate and run it again directly on the same handle.
+  assert.doesNotThrow(() => _migrateForTest(db), 'second migrate() does not throw');
+  const after = db.prepare('PRAGMA user_version').get().user_version;
+  assert.equal(after, before, 'user_version is unchanged by a second migrate()');
+  assert.equal(tableNames(db).length, tablesBefore, 'no duplicate/extra tables');
+});
+
+test('foreign keys enforce referential integrity (pipeline_steps -> pipelines)', () => {
+  const db = getDb();
+  // No such pipeline row -> inserting a child step must be rejected by the FK.
+  const stmt = db.prepare(
+    'INSERT INTO pipeline_steps (pipeline_id, key, status) VALUES (?, ?, ?)'
+  );
+  assert.throws(() => stmt.run('no-such-pipeline', '0:s0_0', 'start'), /FOREIGN KEY/i);
 });
