@@ -156,3 +156,73 @@ test('removeCustomModel clears legacy steps AND normalized node rows referencing
   ).get(key, 'my-fork-4-9');
   assert.equal(left.n, 0, 'normalized node refs to the removed model are deleted');
 });
+
+// ── Task 2.6: run-config write path (setNodeModel / setFeedbackCycles / setActiveWorkflow) ──
+
+test('setNodeModel upserts a normalized config_workflow_nodes row', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_quickfix', 's1_0', { model: 'claude-opus-4-8', effort: 'high' });
+  const rc = await readRunConfig(p);
+  assert.deepEqual(rc.workflows.wf_quickfix.nodes.s1_0, { model: 'claude-opus-4-8', effort: 'high' });
+  // Stored as a real row, not nested JSON.
+  const key = projectKey(p);
+  const row = getDb().prepare(
+    'SELECT model, effort FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+  ).get(key, 'wf_quickfix', 's1_0');
+  assert.equal(row.model, 'claude-opus-4-8');
+  assert.equal(row.effort, 'high');
+});
+
+test('setNodeModel clears the row when model+effort are both blank', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 's0_0', { model: 'claude-opus-4-8', effort: 'high' });
+  await setNodeModel(p, 'wf_x', 's0_0', { model: '', effort: '' });
+  assert.equal((await readRunConfig(p)).workflows.wf_x?.nodes?.s0_0, undefined);
+});
+
+test('setNodeModel fanOut: stored, preserved across a model-only change, explicit override', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 's0_0', { fanOut: true });
+  assert.equal((await resolveRunConfig(p, 'wf_x')).nodes.s0_0.fanOut, true);
+  await setNodeModel(p, 'wf_x', 's0_0', { model: 'claude-opus-4-8', effort: '' }); // omits fanOut
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s0_0, { model: 'claude-opus-4-8', fanOut: true });
+  await setNodeModel(p, 'wf_x', 's0_0', { fanOut: false });
+  assert.equal((await resolveRunConfig(p, 'wf_x')).nodes.s0_0.fanOut, false);
+});
+
+test('setNodeModel with only fanOut=false keeps the row', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 's2_0', { fanOut: false });
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s2_0, { fanOut: false });
+});
+
+test('setFeedbackCycles upserts maxCycles coerced to an integer >= 1', async () => {
+  const p = await freshProject();
+  const cyc = async (v) => {
+    await setFeedbackCycles(p, 'wf_x', 'fb_0', v);
+    return (await readRunConfig(p)).workflows.wf_x.feedbacks.fb_0.maxCycles;
+  };
+  assert.equal(await cyc(0), 1);
+  assert.equal(await cyc(-3), 1);
+  assert.equal(await cyc(2.7), 2);
+  assert.equal(await cyc(5), 5);
+});
+
+test('setActiveWorkflow records the id and PRESERVES legacy steps + extra', async () => {
+  const p = await freshProject();
+  await setStep(p, 'planner', { model: 'claude-opus-4-8', effort: 'xhigh' }); // legacy first
+  await setActiveWorkflow(p, 'wf_quickfix');
+  const rc = await readRunConfig(p);
+  assert.equal(rc.activeWorkflowId, 'wf_quickfix');
+  assert.deepEqual(rc.steps.planner, { model: 'claude-opus-4-8', effort: 'xhigh' }, 'legacy survived');
+});
+
+test('run-config writes do NOT clobber legacy steps/customModels and vice-versa', async () => {
+  const p = await freshProject();
+  await setStep(p, 'planner', { model: 'claude-opus-4-8', effort: 'xhigh' });
+  await setNodeModel(p, 'wf_x', 's0_0', { model: 'claude-sonnet-4-6', effort: 'high' });
+  assert.deepEqual((await readConfig(p)).steps.planner, { model: 'claude-opus-4-8', effort: 'xhigh' });
+  const rc = await readRunConfig(p);
+  assert.equal(rc.workflows.wf_x.nodes.s0_0.model, 'claude-sonnet-4-6');
+  assert.deepEqual(rc.steps.planner, { model: 'claude-opus-4-8', effort: 'xhigh' });
+});
