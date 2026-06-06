@@ -138,3 +138,11 @@ test('sequential wire stays gray when an endpoint is NOT done', async () => {
   assert.match(html, /stroke="#B7B7BC"[^>]*marker-end="url\(#arrSeq-tst\)"/, 'partial -> gray seq wire (COMPOSER_SEQ)');
   assert.doesNotMatch(html, /stroke="#5BAE5B"[^>]*marker-end="url\(#arrSeqDone/, 'no green wire when not both done');
 });
+
+test('hidden view (offsetParent null) is a no-op — guard preserved', async () => {
+  const window = await boot();
+  const { flow, svg, paint } = fixture(window, ['a']);
+  Object.defineProperty(flow, 'offsetParent', { get() { return null; }, configurable: true });
+  paint([[{ id: 'a', key: 'refiner' }]], [{ from: 'a', to: 'a' }], { ns: 'tst', del: true });
+  assert.equal(svg.innerHTML, '', 'hidden flow paints nothing');
+});
