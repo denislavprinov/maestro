@@ -1070,11 +1070,15 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
       my = rail + (Math.min(sy, ty) - rail) * 0.18;
     }
     mx = (sx + tx) / 2;
-    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}" fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
+    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
     if (opts.del) {
       s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
         `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
         `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
+    } else if (opts.cycles) {
+      const n = opts.cycles[fb.from] || 0;
+      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
     }
   });
   wiresEl.innerHTML = s;
