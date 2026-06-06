@@ -13,6 +13,7 @@ import { maestroHome } from './projects.mjs';
 
 let _db = null; // the singleton handle, or null when closed/never-opened
 let _txDepth = 0; // guards against re-entrant tx(): node:sqlite has no nested BEGIN
+let _stmtCache = new Map(); // sql text -> cached StatementSync (per open handle)
 
 /** WAL busy-timeout: wait up to 5s for a competing writer (CLI + UI). */
 const BUSY_TIMEOUT_MS = 5000;
@@ -279,6 +280,8 @@ export function closeDb() {
     _db.close();
     _db = null;
   }
+  _stmtCache = new Map();
+  _txDepth = 0;
 }
 
 /**
@@ -310,6 +313,27 @@ export function tx(fn) {
   }
 }
 
-// ── placeholder, fully implemented in Task 1.5 ─────────────────────────────────
-export function prepare(sql) { void sql; throw new Error('prepare(): implemented in Task 1.5'); }
-export function _resetForTests() { closeDb(); }
+/**
+ * Prepare (and cache) a StatementSync by exact SQL text. Re-preparing the same
+ * SQL returns the cached statement — node:sqlite statements are reusable across
+ * runs (bind fresh params each .run()/.get()/.all()). The cache is keyed to the
+ * current handle and cleared by closeDb()/_resetForTests().
+ * @param {string} sql
+ * @returns {import('node:sqlite').StatementSync}
+ */
+export function prepare(sql) {
+  const hit = _stmtCache.get(sql);
+  if (hit) return hit;
+  const stmt = getDb().prepare(sql);
+  _stmtCache.set(sql, stmt);
+  return stmt;
+}
+
+/**
+ * TEST-ONLY: drop the cached handle, prepared-statement cache, and transaction
+ * guard so the next getDb() reopens against the current MAESTRO_HOME. Lets each
+ * test run on a pristine DB at its own home.
+ */
+export function _resetForTests() {
+  closeDb();
+}

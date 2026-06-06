@@ -187,3 +187,26 @@ test('tx() is not nestable by default (single-level transaction)', () => {
     });
   }, /transaction already active|nested/i);
 });
+
+test('prepare() caches by SQL text — same statement instance', () => {
+  const sql = 'SELECT key FROM store_meta WHERE key = ?';
+  const a = prepare(sql);
+  const b = prepare(sql);
+  assert.equal(a, b, 'identical SQL returns the cached StatementSync');
+});
+
+test('prepare() returns a usable statement', () => {
+  const db = getDb();
+  db.prepare("INSERT INTO store_meta (key, kind, data) VALUES (?, ?, ?)")
+    .run('k-prep', 'workspace', '{}');
+  const row = prepare('SELECT kind FROM store_meta WHERE key = ?').get('k-prep');
+  assert.equal(row.kind, 'workspace', 'the cached statement executes');
+});
+
+test('_resetForTests() clears the statement cache and closes the handle', () => {
+  const sql = 'SELECT 1 AS one';
+  const first = prepare(sql);
+  _resetForTests();
+  const second = prepare(sql);
+  assert.notEqual(first, second, 'a fresh statement is prepared after reset');
+});
