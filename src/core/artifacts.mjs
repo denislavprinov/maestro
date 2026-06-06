@@ -14,6 +14,60 @@ import { realpathSync } from 'node:fs';
 import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot, workspaceStorePath, workspacesStoreRoot } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
+import { getDb, tx } from './db.mjs';
+
+// ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
+// JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
+// a null/empty/corrupt column yields the fallback, never a throw.
+
+/** Parse a TEXT JSON column to an object/array, or `fallback` on null/empty/bad. */
+function j(text, fallback = null) {
+  if (text == null || text === '') return fallback;
+  try { return JSON.parse(text); } catch { return fallback; }
+}
+/** Stringify a value for a TEXT JSON column, or null when the value is null/undefined. */
+function s(value) {
+  return value == null ? null : JSON.stringify(value);
+}
+
+/** The 8-hex pipeline id embedded as the final "-<id>" segment of a run dir name. */
+const DIR_ID_RE = /-([0-9a-f]{8})$/i;
+
+/**
+ * Read a store_meta row's JSON payload by key, or null when absent. Replaces the
+ * per-project / per-workspace meta.json file read. Fail-safe: a corrupt/empty
+ * payload reads as null rather than throwing.
+ * @param {string} key
+ * @returns {object|null}
+ */
+export function readStoreMeta(key) {
+  const row = getDb().prepare('SELECT data FROM store_meta WHERE key = ?').get(key);
+  return row ? j(row.data, null) : null;
+}
+
+/**
+ * Upsert a store_meta row. `kind` is 'project' | 'workspace'; `data` is the full
+ * meta object (stored as a JSON string). Replaces writing meta.json.
+ * @param {string} key
+ * @param {'project'|'workspace'} kind
+ * @param {object} data
+ */
+export function writeStoreMeta(key, kind, data) {
+  tx(() => {
+    getDb().prepare(`
+      INSERT INTO store_meta (key, kind, data) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, data = excluded.data
+    `).run(key, kind, JSON.stringify(data ?? {}));
+  });
+}
+
+/**
+ * Delete a store_meta row (used by workspace delete in Phase 2). No-op when absent.
+ * @param {string} key
+ */
+export function deleteStoreMeta(key) {
+  tx(() => { getDb().prepare('DELETE FROM store_meta WHERE key = ?').run(key); });
+}
 
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
