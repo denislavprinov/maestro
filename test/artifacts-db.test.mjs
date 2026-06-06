@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
-import { ensureArtifactDirs, writeState } from '../src/core/artifacts.mjs';
+import { ensureArtifactDirs, writeState, appendAudit } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
 const homes = [];
@@ -179,4 +179,46 @@ test('writeState with an id-less state is a no-op (returns the stamped object, i
   assert.ok(out.updatedAt, 'still returns the stamped object');
   const after = getDb().prepare('SELECT COUNT(*) c FROM pipelines').get().c;
   assert.equal(after, before, 'no row inserted for an id-less state');
+});
+
+// ── Task 3.4 — appendAudit -> pipeline_events ──────────────────────────────────
+
+test('appendAudit inserts a pipeline_events row resolved from the dir basename id', async () => {
+  // Seed a pipelines row the event can FK to.
+  await writeState('/whatever-aaaa1111', fullState()); // id aaaa1111
+  // A dir whose basename ends in -aaaa1111; the cache is cold for this exact path,
+  // so resolution falls back to the basename regex.
+  await appendAudit('/x/store/k/pipelines/01-06-26-demo-aaaa1111', 'Pipeline created.');
+  await appendAudit('/x/store/k/pipelines/01-06-26-demo-aaaa1111', 'Workflow: default.');
+  const rows = getDb().prepare(
+    'SELECT ts, text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all('aaaa1111');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].text, 'Pipeline created.');
+  assert.equal(rows[1].text, 'Workflow: default.');
+  assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(rows[0].ts), 'ts is an ISO timestamp');
+});
+
+test('appendAudit uses the dir->id cache fast path seeded by writeState', async () => {
+  // writeState seeds rememberDir(resolve('/run/01-06-26-x-aaaa1111'), 'aaaa1111').
+  await writeState('/run/01-06-26-x-aaaa1111', fullState());
+  // Same path: a cache hit (no regex needed) inserts against the seeded id.
+  await appendAudit('/run/01-06-26-x-aaaa1111', 'cached line');
+  const rows = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all('aaaa1111');
+  assert.deepEqual(rows.map((r) => r.text), ['cached line']);
+});
+
+test('appendAudit no-ops when no id can be resolved (no throw)', async () => {
+  await appendAudit('/no/id/here', 'orphan line'); // basename has no -<8hex>
+  // Nothing inserted, and it did not throw.
+  const n = getDb().prepare('SELECT COUNT(*) c FROM pipeline_events').get().c;
+  assert.equal(typeof n, 'number');
+  assert.equal(n, 0, 'no event row inserted for an unresolvable dir');
+});
+
+test('appendAudit trims the line and stores ISO ts (reproduces old audit semantics)', async () => {
+  await writeState('/d-eeee5555', fullState({ id: 'eeee5555' }));
+  await appendAudit('/d-eeee5555', '   spaced line   ');
+  const row = getDb().prepare('SELECT ts, text FROM pipeline_events WHERE pipeline_id = ?').get('eeee5555');
+  assert.equal(row.text, 'spaced line', 'leading/trailing whitespace trimmed');
+  assert.ok(/^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.ts), 'ISO 8601 timestamp');
 });

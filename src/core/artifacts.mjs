@@ -7,7 +7,7 @@
 // self-describing: each gets a directory containing the prompt, any extra files,
 // a human-readable audit log (pipeline.md), and machine state (state.json).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, stat, appendFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir, stat } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -450,16 +450,38 @@ function fenceIfNeeded(text) {
 }
 
 /**
- * Append a single markdown line (timeline entry) to the pipeline audit file.
- * Each line is timestamped and rendered as a list item.
+ * Append a timeline entry to the pipeline's audit trail (was a markdown line in
+ * pipeline.md). Now inserts a pipeline_events row {ts, text}. The pipeline id is
+ * resolved from the dir: a dir->id cache fast path (seeded by createPipeline/
+ * writeState), falling back to parsing the trailing 8-hex id from the dir basename
+ * (createPipeline names dirs "<DD-MM-YY>-<slug>-<id>", id = 8 lowercase hex). When
+ * no id can be resolved the call is a safe no-op (audit is best-effort, exactly as
+ * the old appendFile could fail silently). Signature + async-ness unchanged so the
+ * ~20 orchestrator call sites need no edit (A4).
  * @param {string} pipelineDir
  * @param {string} markdownLine
  * @returns {Promise<void>}
  */
 export async function appendAudit(pipelineDir, markdownLine) {
+  const id = resolvePipelineId(pipelineDir);
+  if (!id) return;
   const ts = new Date().toISOString();
-  const line = `- \`${ts}\` ${String(markdownLine ?? '').trim()}\n`;
-  await appendFile(join(pipelineDir, 'pipeline.md'), line, 'utf8');
+  const text = String(markdownLine ?? '').trim();
+  try {
+    tx(() => {
+      getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
+        .run(id, ts, text);
+    });
+  } catch { /* audit is best-effort; never break a run on a logging failure */ }
+}
+
+/** Resolve the 8-hex pipeline id for a run dir: cache hit, else parse the basename. */
+function resolvePipelineId(pipelineDir) {
+  if (!pipelineDir) return null;
+  const hit = _dirIdCache.get(resolve(pipelineDir));
+  if (hit) return hit;
+  const m = DIR_ID_RE.exec(basename(pipelineDir));
+  return m ? m[1].toLowerCase() : null;
 }
 
 /** Absolute pipelineDir -> 8-hex id cache; the appendAudit (Task 3.4) fast path. */
