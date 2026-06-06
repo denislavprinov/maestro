@@ -150,3 +150,40 @@ test('foreign keys enforce referential integrity (pipeline_steps -> pipelines)',
   );
   assert.throws(() => stmt.run('no-such-pipeline', '0:s0_0', 'start'), /FOREIGN KEY/i);
 });
+
+test('tx() commits on success', () => {
+  const db = getDb();
+  // store_meta has no FK, so it is a clean target for a standalone write.
+  const out = tx(() => {
+    db.prepare("INSERT INTO store_meta (key, kind, data) VALUES (?, ?, ?)")
+      .run('k-commit', 'project', '{"name":"x"}');
+    return 'done';
+  });
+  assert.equal(out, 'done', 'tx() returns the callback result');
+  const row = db.prepare('SELECT kind FROM store_meta WHERE key = ?').get('k-commit');
+  assert.equal(row.kind, 'project', 'the inserted row is committed');
+});
+
+test('tx() rolls back on throw', () => {
+  const db = getDb();
+  assert.throws(() => {
+    tx(() => {
+      db.prepare("INSERT INTO store_meta (key, kind, data) VALUES (?, ?, ?)")
+        .run('k-rollback', 'project', '{}');
+      throw new Error('boom');
+    });
+  }, /boom/, 'the original error propagates');
+  const row = db.prepare('SELECT key FROM store_meta WHERE key = ?').get('k-rollback');
+  assert.equal(row, undefined, 'the partial write was rolled back');
+});
+
+test('tx() is not nestable by default (single-level transaction)', () => {
+  const db = getDb();
+  // A nested tx() would attempt a second BEGIN; assert tx() guards against it
+  // rather than corrupting the outer transaction.
+  assert.throws(() => {
+    tx(() => {
+      tx(() => {});
+    });
+  }, /transaction already active|nested/i);
+});

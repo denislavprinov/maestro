@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { maestroHome } from './projects.mjs';
 
 let _db = null; // the singleton handle, or null when closed/never-opened
+let _txDepth = 0; // guards against re-entrant tx(): node:sqlite has no nested BEGIN
 
 /** WAL busy-timeout: wait up to 5s for a competing writer (CLI + UI). */
 const BUSY_TIMEOUT_MS = 5000;
@@ -280,7 +281,35 @@ export function closeDb() {
   }
 }
 
-// ── placeholders, fully implemented in Tasks 1.4–1.5 ───────────────────────────
+/**
+ * Run `fn` inside a single SQLite transaction on the singleton handle. Commits
+ * when `fn` returns, rolls back if it throws (re-throwing the original error).
+ * Returns whatever `fn` returns. node:sqlite is synchronous, so `fn` must be
+ * synchronous too — do all DB work inside it and return a value.
+ *
+ * Not re-entrant: SQLite has no nested BEGIN, so a tx() inside a tx() throws
+ * rather than silently joining (or corrupting) the outer transaction. Compose by
+ * passing data between calls, not by nesting.
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+export function tx(fn) {
+  if (_txDepth > 0) throw new Error('tx(): a transaction is already active (nested tx is not supported)');
+  const db = getDb();
+  db.exec('BEGIN');
+  _txDepth = 1;
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    _txDepth = 0;
+    return result;
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } finally { _txDepth = 0; }
+    throw err;
+  }
+}
+
+// ── placeholder, fully implemented in Task 1.5 ─────────────────────────────────
 export function prepare(sql) { void sql; throw new Error('prepare(): implemented in Task 1.5'); }
-export function tx(fn) { void fn; throw new Error('tx(): implemented in Task 1.4'); }
 export function _resetForTests() { closeDb(); }
