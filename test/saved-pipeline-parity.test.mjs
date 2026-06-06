@@ -51,9 +51,15 @@ async function runShapeUnderMock(shape) {
     // has no .artifacts. Subscribe BEFORE run().
     const artifacts = [];
     orch.on('artifact', (e) => artifacts.push(e));
+    let lastState = null;
+    orch.on('state', (s) => { lastState = s; });
     const res = await orch.run();
     assert.equal(res.status, 'done', 'pipeline converges');
-    return { modes, artifacts, planReads };
+    let persistedState = null;
+    try {
+      persistedState = JSON.parse(await readFile(join(orch.getState().pipelineDir, 'state.json'), 'utf8'));
+    } catch { /* some shapes may not persist; assert per-test */ }
+    return { modes, artifacts, planReads, state: lastState, persistedState };
   } finally {
     if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   }
@@ -119,4 +125,18 @@ test('default (planner-first) does NOT seed — no prompt-seed banner in the pla
   const { planReads } = await runShapeUnderMock(SHAPES['default']);
   assert.ok(planReads.length >= 1);
   assert.doesNotMatch(planReads[0].content || '', /No upstream agent produced this artifact/);
+});
+
+test('stepper.feedbacks flows through the emitted state AND the persisted state.json (no whitelist)', async () => {
+  const { state, persistedState } = await runShapeUnderMock(SHAPES['default']);
+  // (1) Emitted state (getState() deep-clone -> _emit('state', ...)) carries the loop edges.
+  assert.ok(state && state.stepper, 'a state event with a stepper was emitted');
+  assert.deepEqual(state.stepper.feedbacks, [
+    { id: 'fb_0', from: 's1_0', to: 's1_0', maxCycles: 3 }, // self-cycle (refiner)
+    { id: 'fb_1', from: 's3_0', to: 's2_0', maxCycles: 3 }, // cross-loop (review->implement)
+  ]);
+  // (2) Persisted state.json (writeState writes the whole state object) carries them identically.
+  assert.ok(persistedState && persistedState.stepper, 'state.json persisted a stepper');
+  assert.deepEqual(persistedState.stepper.feedbacks, state.stepper.feedbacks,
+    'persisted feedbacks === emitted feedbacks (no field stripped on the way to disk)');
 });

@@ -386,6 +386,18 @@ test('buildStepperManifest: missing/empty plan.feedbacks yields feedbacks:[] (no
   assert.deepEqual(buildStepperManifest(absent, REG).feedbacks, []);
 });
 
+test('buildStepperManifest(resolveWorkflow): feedbacks carry resolved maxCycles incl. per-project override', async () => {
+  await freshHome();
+  const p = await freshProject();
+  await setFeedbackCycles(p, 'wf_default', 'fb_review', 2); // override the cross-loop
+  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  const m = buildStepperManifest(plan, REGISTRY);
+  const refine = m.feedbacks.find((f) => f.id === 'fb_refine');
+  const review = m.feedbacks.find((f) => f.id === 'fb_review');
+  assert.deepEqual(refine, { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3 }); // default
+  assert.deepEqual(review, { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2 }); // overridden
+});
+
 test('buildStepperManifest: carries per-node model + effort from the plan', () => {
   const plan = {
     id: 'wf_x', name: 'X',
