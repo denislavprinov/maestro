@@ -45,6 +45,7 @@ import {
   defaultTopologyFromTemplate,
   mergePalette,
   canConnect,
+  EMBEDDED_AGENTS,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
 
@@ -492,6 +493,111 @@ function buildParallelNode(node) {
 }
 
 // ---------------------------------------------------------------------------
+// Run/history node-graph (composer-style). buildRunGraph builds the static
+// .run-flow skeleton; paintRunGraph (next task) tints it + repaints wires via
+// the shared composerPaintWires. Mirrors buildStepper's manifest walk but emits
+// composer .node markup instead of the flat .stages.compact strip.
+// ---------------------------------------------------------------------------
+
+// Resolve a manifest node to its agent meta (icon/displayName/description/color).
+// Manifest nodes carry .key (set by buildStepperManifest); bookends (preflight/
+// done) have no key -> a neutral cog so they still render an icon.
+//
+// IMPORTANT: read composer.agents[key] RAW (not composerAgent(key)). composerAgent
+// returns a non-undefined default {displayName:key,...} that would shadow the
+// EMBEDDED_AGENTS fallback. Raw access yields undefined when the live registry
+// isn't loaded yet, so the `|| EMBEDDED_AGENTS[key]` fallback fires. Do not simplify.
+const RUN_BOOKEND_ICON = '<circle cx="12" cy="12" r="3.2"/><path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2M6.6 6.6l1.4 1.4M16 16l1.4 1.4M17.4 6.6L16 8M8 16l-1.4 1.4" stroke-linecap="round"/>';
+function runNodeAgent(node) {
+  const key = node && node.key;
+  const live = key && composer.agents && composer.agents[key];
+  const embedded = key && EMBEDDED_AGENTS[key];
+  const meta = live || embedded || {};
+  return {
+    icon: meta.icon || RUN_BOOKEND_ICON,
+    color: node.color || meta.color || 'blue',
+    label: node.label || meta.displayName || node.id,
+    sub: node.sub || meta.description || '',
+  };
+}
+
+// Visible status caption under the node label. pending -> the node's description.
+const STAT_TEXT = { done: 'completed', active: 'running…', paused: 'awaiting input', stopped: 'stopped here', pending: '' };
+
+// Settled-status badge markup (check / two-bar / X). active+pending have none.
+const STAT_BADGE = {
+  done: '<div class="nstat done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>',
+  paused: '<div class="nstat paused"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="7" y="5" width="3.4" height="14" rx="1"/><rect x="13.6" y="5" width="3.4" height="14" rx="1"/></svg></div>',
+  stopped: '<div class="nstat stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></div>',
+};
+
+// Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
+// isSelf => the node is its own self-cycle target (gets the .iterates ring).
+function runNode(node, status, isSelf) {
+  const ag = runNodeAgent(node);
+  const d = document.createElement('div');
+  d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
+  d.dataset.id = node.id;
+  d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
+  // Hover tooltip = model · effort (visible meta carries label + live status).
+  const tip = [node.model, node.effort].filter(Boolean).join(' · ');
+  if (tip) d.setAttribute('title', tip);
+  const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
+  d.innerHTML =
+    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
+    `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
+      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small></div>` +
+    `<div class="nrun"><span class="dur"></span> · <span class="cost"></span></div>` +
+    (STAT_BADGE[status] || '');
+  return d;
+}
+
+// The set of node ids in a manifest, in column order, as a stable signature.
+function runGraphNodeIds(manifest) {
+  const ids = [];
+  manifest.steps.forEach((cell) => cell.nodes.forEach((n) => ids.push(n.id)));
+  return ids;
+}
+
+// Build (or rebuild) the .run-flow skeleton into `host`. Idempotent: if the
+// host already holds a graph for the SAME ordered node-id set, leave the DOM
+// (and its running CSS animations) intact. Trailing <svg class="wires"> is the
+// shared renderer's target.
+function buildRunGraph(host, manifest) {
+  const m = manifestFor(manifest);
+  const ids = runGraphNodeIds(m);
+  if (host.dataset.graphSig === ids.join('|') && host.querySelector('svg.wires')) return;
+  host.dataset.graphSig = ids.join('|');
+  host.dataset.wiresSig = ''; // force a wire repaint after a structural rebuild
+  host.innerHTML = '';
+
+  const selfTargets = new Set(
+    (Array.isArray(m.feedbacks) ? m.feedbacks : [])
+      .filter((fb) => fb && fb.from === fb.to)
+      .map((fb) => fb.from),
+  );
+
+  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+  m.steps.forEach((cell, i) => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.dataset.cellIdx = String(i);
+    const tag = document.createElement('div');
+    tag.className = 'col-tag';
+    tag.innerHTML = `Step ${i + 1}` + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
+    col.appendChild(tag);
+    for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
+    host.appendChild(col);
+  });
+  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'wires');
+  host.appendChild(svg);
+}
+
+// ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
 // Running view; events are fanned out by handleServerMessage.
 // ---------------------------------------------------------------------------
@@ -566,6 +672,11 @@ function maybeResume(r) {
   r._answering = false;
   r.pendingQuestion = null;
   clearQpanel(r);
+}
+
+// Minimal HTML escape for text interpolated into node innerHTML.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
@@ -1352,6 +1463,8 @@ if (typeof window !== 'undefined') {
     durByNode,
     costByNode,
     composerPaintWires,
+    buildRunGraph,
+    runNode,
   });
 }
 
