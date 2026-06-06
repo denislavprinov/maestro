@@ -69,6 +69,31 @@ export function deleteStoreMeta(key) {
   tx(() => { getDb().prepare('DELETE FROM store_meta WHERE key = ?').run(key); });
 }
 
+/**
+ * Index a markdown / extras path kept on the FS after the migration, so the
+ * pipeline-delete (Task 3.13) can unlink the EXACT files instead of re-deriving
+ * names. `kind` is e.g. prompt | workspace-description | extra | plan | review |
+ * checklist | webui; `relPath` is relative to the pipeline dir for pipeline-local
+ * files (prompt.md, extras/*, manual-tests-checklist.md, webui-review-cycleN.md)
+ * and relative to the store root for the shared plan/review markdown (which live
+ * in plans//reviews/, siblings of pipelines/). Idempotent (INSERT OR IGNORE on the
+ * (pipeline_id, kind, rel_path) PK), best-effort: a logging failure never breaks a
+ * run. A null/empty path is a no-op. The pipelines row must already exist (FK).
+ * @param {string} pipelineId
+ * @param {string} kind
+ * @param {string} relPath
+ */
+export function recordArtifact(pipelineId, kind, relPath) {
+  if (!pipelineId || !kind || !relPath) return;
+  try {
+    tx(() => {
+      getDb().prepare(
+        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path) VALUES (?, ?, ?)',
+      ).run(pipelineId, kind, relPath);
+    });
+  } catch { /* artifact indexing is best-effort; never break a run on it */ }
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 
@@ -286,11 +311,14 @@ function resolveAgainst(base, p) {
 }
 
 /**
- * Create a new pipeline directory and seed it with the prompt, extras, an audit
- * header (pipeline.md) and initial state (state.json).
+ * Create a new pipeline directory and seed it with the prompt, extras and an audit
+ * header (pipeline.md). The structured run state is INSERTed as a pipelines row
+ * (Task 3.3/3.5) — there is no state.json. The prompt (and workspace-description /
+ * extras) markdown is indexed in the artifacts table.
  *
  * When `opts.workspaceKey` is set the pipeline is written to the WORKSPACE store
- * (store/workspaces/<key>/), state.json carries the §5.2 workspace superset
+ * (store/workspaces/<key>/), the pipelines row carries the §5.2 workspace superset
+ * (collapsed into workspace_meta)
  * (target:'workspace', workspaceId/Key/Name, frozen workspaceDescription, sorted
  * projectKeys, projects[], empty checkpointRefs/branches), and a frozen
  * workspace-description.md snapshot is written into the pipeline dir. The frozen
@@ -359,7 +387,10 @@ export async function createPipeline(projectDir, opts = {}) {
     await writeFile(promptDest, promptText, 'utf8');
   }
 
-  // Copy optional extra files.
+  // Copy optional extra files. Each successfully-copied extra is indexed in the
+  // artifacts table (dir-relative "extras/<name>") AFTER writeState INSERTs the
+  // pipelines row (FK) — collect them here, record below.
+  const copiedExtras = [];
   if (Array.isArray(extras) && extras.length) {
     const extrasDir = join(dir, 'extras');
     await mkdir(extrasDir, { recursive: true });
@@ -368,6 +399,7 @@ export async function createPipeline(projectDir, opts = {}) {
       const src = resolveAgainst(projectDir, ex);
       try {
         await copyFile(src, join(extrasDir, basename(src)));
+        copiedExtras.push(join('extras', basename(src)));
       } catch {
         // Skip unreadable extras; never fail pipeline creation on a bad path.
       }
@@ -386,6 +418,7 @@ export async function createPipeline(projectDir, opts = {}) {
     cycle: 0,
     startedAt,
     updatedAt: startedAt,
+    prompt: promptText, // persisted to the pipelines.prompt column (was prompt.md only)
     artifacts: [],
   };
 
@@ -418,8 +451,17 @@ export async function createPipeline(projectDir, opts = {}) {
     await writeFile(join(dir, 'workspace-description.md'), frozenDescription, 'utf8');
   }
 
+  // Persist the run state by INSERTing the pipelines row (writeState, Task 3.3) —
+  // no more state.json on disk. writeState also seeds the dir->id cache
+  // (rememberDir) so appendAudit resolves this run without any call-site change
+  // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
   await writeState(dir, state);
+  recordArtifact(id, 'prompt', 'prompt.md');
+  if (workspaceKey) recordArtifact(id, 'workspace-description', 'workspace-description.md');
+  for (const rel of copiedExtras) recordArtifact(id, 'extra', rel);
 
+  // Human-facing audit header. No longer the audit source (timeline lines now go
+  // to pipeline_events via appendAudit); kept because other code/humans open it.
   const header =
     `# Pipeline: ${resolvedTitle}\n\n` +
     `- **id**: ${id}\n` +
@@ -500,11 +542,23 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * A11(a): the ON CONFLICT(id) DO UPDATE clause SETs ONLY the columns that
  * legitimately mutate during a run. It deliberately does NOT touch the
  * creation-immutable identity columns (project_key, prompt, target, title,
- * base_name, date_prefix, workspace_key, started_at) — the orchestrator's
- * this.state omits several of them (orchestrator.mjs:174-191), so a blanket
- * "SET <every column>=excluded.<column>" would null them on the first post-create
- * persist (and _persist's catch{} would hide the loss). The INSERT arm still
- * writes every column; only the UPDATE arm is curated.
+ * workspace_key, started_at) — the orchestrator's this.state omits several of
+ * them (orchestrator.mjs:174-191), so a blanket "SET <every column>=excluded.
+ * <column>" would null them on the first post-create persist (and _persist's
+ * catch{} would hide the loss). The INSERT arm still writes every column; only
+ * the UPDATE arm is curated.
+ *
+ * 3.5 fix: base_name/date_prefix are the one exception that must still be in the
+ * UPDATE arm — createPipeline's INSERT leaves them NULL (state has neither field,
+ * §0.2) and the orchestrator sets this.state.baseName/datePrefix only at
+ * orchestrator.mjs:351-352, just before the first _persist(). If they were
+ * EXCLUDED from UPDATE (as the literal A11a list said) they would persist as
+ * permanent NULL and Task 3.7's reader + the Task 3.13 delete (keyed on
+ * <datePrefix>-<base>) would fail to find the shared plans/reviews markdown. So
+ * they are updated with a COALESCE guard: COALESCE(excluded.col, col) fills
+ * NULL->value once and NEVER clobbers a set value back to NULL — preserving the
+ * A11a anti-clobber guarantee (a NULL excluded never overwrites a set value)
+ * while closing the dead-NULL bug.
  * @param {string} pipelineDir
  * @param {object} stateObj
  * @returns {Promise<object>}
@@ -527,7 +581,9 @@ export async function writeState(pipelineDir, stateObj) {
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
         total_active_ms=excluded.total_active_ms, branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
-        tools=excluded.tools
+        tools=excluded.tools,
+        base_name=COALESCE(excluded.base_name, base_name),
+        date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
 
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
