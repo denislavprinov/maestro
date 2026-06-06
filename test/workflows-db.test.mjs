@@ -73,3 +73,54 @@ test('readWorkflow rejects path-traversal / unsafe ids (returns null)', async ()
     assert.equal(await readWorkflow(bad), null, `must reject "${bad}"`);
   }
 });
+
+test('writeWorkflow stamps id/version/createdAt/updatedAt and roundtrips through readWorkflow', async () => {
+  const saved = await writeWorkflow({
+    name: 'Quick Fix',
+    steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'implementer' }]],
+    feedbacks: [],
+  });
+  assert.match(saved.id, /^wf_quick-fix/);
+  assert.equal(saved.name, 'Quick Fix');
+  assert.equal(saved.version, 1);
+  assert.ok(saved.createdAt && saved.updatedAt, 'timestamps stamped');
+  // Persisted as a row with JSON columns.
+  const row = getDb().prepare('SELECT name, steps FROM workflows WHERE id = ?').get(saved.id);
+  assert.equal(row.name, 'Quick Fix');
+  assert.equal(JSON.parse(row.steps).length, 2);
+  // Roundtrip.
+  const got = await readWorkflow(saved.id);
+  assert.deepEqual(got.steps, saved.steps);
+  assert.deepEqual(got.feedbacks, saved.feedbacks);
+});
+
+test('writeWorkflow derives a wf_<slug> id from the name when id is missing', async () => {
+  const saved = await writeWorkflow({ name: 'My Cool Flow', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  assert.match(saved.id, /^wf_my-cool-flow/);
+});
+
+test('writeWorkflow preserves createdAt but bumps updatedAt on re-save', async () => {
+  const first = await writeWorkflow({ id: 'wf_x', name: 'X', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  await new Promise((r) => setTimeout(r, 5));
+  const second = await writeWorkflow({ ...first, name: 'X2', updatedAt: undefined });
+  assert.equal(second.createdAt, first.createdAt, 'createdAt preserved on re-save');
+  assert.equal(second.name, 'X2');
+  assert.notEqual(second.updatedAt, first.updatedAt, 'updatedAt advanced');
+  // Still a single row (upsert, not duplicate).
+  const { n } = getDb().prepare('SELECT COUNT(*) AS n FROM workflows WHERE id = ?').get('wf_x');
+  assert.equal(n, 1);
+});
+
+test('deleteWorkflow removes a saved row and returns true; missing id => false', async () => {
+  const saved = await writeWorkflow({ id: 'wf_del', name: 'Del', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  assert.equal(await deleteWorkflow(saved.id), true);
+  assert.equal(await readWorkflow(saved.id), null);
+  assert.equal(await deleteWorkflow('wf_ghost'), false);
+});
+
+test('deleteWorkflow refuses the built-in default and unsafe ids (returns false)', async () => {
+  assert.equal(await deleteWorkflow('wf_default'), false);
+  assert.equal((await readWorkflow('wf_default')).id, 'wf_default', 'default still readable');
+  assert.equal(await deleteWorkflow('../SENTINEL'), false);
+  assert.equal(await deleteWorkflow('a/b'), false);
+});

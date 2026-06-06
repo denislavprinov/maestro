@@ -8,10 +8,8 @@
 //
 // Reads never throw: a missing/corrupt store yields []/null.
 
-import { readFile, mkdir, writeFile, rename, unlink } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { maestroHome } from './projects.mjs';
@@ -96,24 +94,10 @@ export function workflowsDir() {
   return join(maestroHome(), 'workflows');
 }
 
-/** A workflow id is a filename stem; reject anything that could escape the store
+/** A workflow id is a stem; reject anything that could escape a path-built store
  *  (path separators, "..", dots, spaces). Valid ids are wf_<slug> / wf_default. */
 const SAFE_WORKFLOW_ID = /^[A-Za-z0-9_-]+$/;
 function isSafeWorkflowId(id) { return typeof id === 'string' && SAFE_WORKFLOW_ID.test(id); }
-
-/** Absolute path to a single template file. */
-function workflowFile(id) {
-  return join(workflowsDir(), `${id}.json`);
-}
-
-/** Atomically write the JSON store file. Creates ~/.maestro/workflows on demand. */
-async function writeRaw(id, tpl) {
-  await mkdir(workflowsDir(), { recursive: true });
-  const file = workflowFile(id);
-  const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(tpl, null, 2) + '\n', 'utf8');
-  await rename(tmp, file);
-}
 
 /** Fail-safe JSON.parse to an array; returns [] on any error. */
 function parseArr(text) {
@@ -147,32 +131,40 @@ function readRaw(id) {
 }
 
 /**
- * Persist a template atomically. Stamps a wf_<slug> id (from the name) when
- * missing, version 1, createdAt (preserved across re-saves) and a fresh
- * updatedAt. Returns the stored object. Never mutates the input.
- * @param {object} tpl { id?, name, steps, feedbacks }
+ * Persist a template. Stamps a wf_<slug> id (from the name) when missing, version 1,
+ * createdAt (preserved across re-saves), and a fresh updatedAt. steps/feedbacks are
+ * stored as JSON. Returns the stored object. Never mutates the input.
+ * @param {object} tpl { id?, name, steps, feedbacks, createdAt? }
  * @returns {Promise<object>}
  */
 export async function writeWorkflow(tpl) {
   const now = new Date().toISOString();
   const name = (tpl && typeof tpl.name === 'string' && tpl.name.trim()) || 'Untitled';
   const id = (tpl && typeof tpl.id === 'string' && tpl.id.trim()) || `wf_${slugify(name)}`;
+  const steps = Array.isArray(tpl?.steps) ? tpl.steps : [];
+  const feedbacks = Array.isArray(tpl?.feedbacks) ? tpl.feedbacks : [];
+
+  getDb();
   // Preserve the original createdAt if this id already exists (re-save).
-  const existing = await readRaw(id);
+  const existing = isSafeWorkflowId(id)
+    ? prepare('SELECT created_at FROM workflows WHERE id = ?').get(id)
+    : null;
   const createdAt =
     (tpl && typeof tpl.createdAt === 'string' && tpl.createdAt) ||
-    existing?.createdAt ||
+    (existing && existing.created_at) ||
     now;
-  const stored = {
-    id,
-    name,
-    version: 1,
-    steps: Array.isArray(tpl?.steps) ? tpl.steps : [],
-    feedbacks: Array.isArray(tpl?.feedbacks) ? tpl.feedbacks : [],
-    createdAt,
-    updatedAt: now,
-  };
-  await writeRaw(id, stored);
+
+  const stored = { id, name, version: 1, steps, feedbacks, createdAt, updatedAt: now };
+  tx(() => {
+    prepare(`
+      INSERT INTO workflows (id, name, version, steps, feedbacks, created_at, updated_at)
+      VALUES (?, ?, 1, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name, version = 1,
+        steps = excluded.steps, feedbacks = excluded.feedbacks,
+        updated_at = excluded.updated_at
+    `).run(id, name, JSON.stringify(steps), JSON.stringify(feedbacks), createdAt, now);
+  });
   return stored;
 }
 
@@ -201,22 +193,20 @@ export async function listWorkflows() {
 }
 
 /**
- * Delete a saved template by id. Refuses to delete the built-in DEFAULT_WORKFLOW
- * (returns false). Returns false when the file does not exist; true on removal.
+ * Delete a saved template by id. Refuses the built-in DEFAULT_WORKFLOW (false) and
+ * unsafe ids (false). Returns false when no row exists; true on removal.
  * @param {string} id
  * @returns {Promise<boolean>}
  */
 export async function deleteWorkflow(id) {
   if (id === DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
-  if (!isSafeWorkflowId(id)) return false; // SECURITY: reject path-traversal / unsafe ids
-  const file = workflowFile(id);
-  if (!existsSync(file)) return false;
-  try {
-    await unlink(file);
-    return true;
-  } catch {
-    return false;
-  }
+  if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
+  getDb();
+  let changed = 0;
+  tx(() => {
+    changed = prepare('DELETE FROM workflows WHERE id = ?').run(id).changes;
+  });
+  return changed > 0;
 }
 /**
  * Merge a workflow template + the project's run-config + the agent registry into
