@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { writeStoreMeta, recordArtifact } from '../src/core/artifacts.mjs';
 
 // Outer isolation that outlives the per-suite before/after: a fire-and-forget
 // orch.run() can write to the store after teardown restores MAESTRO_HOME.
@@ -413,9 +413,11 @@ test('summarizeRuns carries a kind discriminator + scanId/workspaceId fields', a
 
 /** Seed a workspace + a finished pipeline directly in its store namespace.
  *  Phase 3.6/3.7: the list (listWorkspacePipelines) + detail (readWorkspacePipeline)
- *  read the DB, so seed a pipelines row + the workspace store_meta. The FS files
- *  (run dir, plans/reviews markdown) stay for the still-FS-based pipeline-delete
- *  (Task 3.13) and the run-dir resolution (runDirIndex maps -<id> to the dir). */
+ *  read the DB, so seed a pipelines row + the workspace store_meta. Phase 3.13: the
+ *  delete is INDEX-BASED, so the shared plans/reviews markdown is recorded via
+ *  recordArtifact (store-root-relative) — that is what deletePipeline unlinks. The
+ *  run-dir markdown (prompt.md/pipeline.md) stays for the run-dir resolution
+ *  (runDirIndex maps -<id> to the dir) + humans. */
 let _seedRunSeq = 0;
 async function seedWorkspaceWithPipeline(name) {
   const a = await freshRepo();
@@ -444,22 +446,16 @@ async function seedWorkspaceWithPipeline(name) {
       branches: {}, checkpointRefs: {}, workspaceDescription: '',
     },
   });
-  // FS files: still written for pipeline-delete (Task 3.13, FS-based) + humans.
-  await writeFile(join(pdir, 'state.json'), JSON.stringify({
-    id: runId, title: 'WS feature', status: 'done', target: 'workspace',
-    workspaceId: workspace.id, workspaceKey: workspace.id, workspaceName: name,
-    baseName: 'ws-feature', datePrefix: '04-06-26',
-    projectKeys: workspace.projectKeys,
-    projects: workspace.projectKeys.map((k, i) => ({ projectKey: k, projectDir: workspace.projectPaths[i], projectName: 'm' })),
-    branches: {}, checkpointRefs: {},
-  }), 'utf8');
+  // FS run-dir files: human-facing + the -<id> run-dir resolution (runDirIndex).
   await writeFile(join(pdir, 'prompt.md'), '# WS feature\n', 'utf8');
   await writeFile(join(pdir, 'pipeline.md'), '# WS feature\n', 'utf8');
+  // Shared markdown on the FS + indexed so the index-based delete (3.13) unlinks it.
   await mkdir(join(wsRoot, 'plans'), { recursive: true });
   await mkdir(join(wsRoot, 'reviews'), { recursive: true });
   await writeFile(join(wsRoot, 'plans', '04-06-26-ws-feature.md'), '# p', 'utf8');
   await writeFile(join(wsRoot, 'reviews', '04-06-26-ws-feature-impl-review.md'), '# r', 'utf8');
-  await writeFile(join(wsRoot, 'meta.json'), JSON.stringify({ key: workspace.id, id: workspace.id, name }), 'utf8');
+  recordArtifact(runId, 'plan', 'plans/04-06-26-ws-feature.md');
+  recordArtifact(runId, 'review', 'reviews/04-06-26-ws-feature-impl-review.md');
   return { workspace, wsRoot, runId, pdir };
 }
 
