@@ -1,19 +1,19 @@
 // src/core/workflows.mjs
+// node:sqlite migration: now persisted in the `workflows` table; path helpers vestigial.
 // Global workflow-template store + the built-in DEFAULT_WORKFLOW + resolveWorkflow.
 //
-// Templates are TOPOLOGY ONLY (steps + feedbacks, by node-instance id); they live
-// under ~/.maestro/workflows/<id>.json (global, honoring MAESTRO_HOME like
-// projects.mjs). Per-project model/effort/cycle data is the run-config in
-// config.mjs and is merged in by resolveWorkflow.
+// Templates are TOPOLOGY ONLY (steps + feedbacks, by node-instance id). Per-project
+// model/effort/cycle data is the run-config in config.mjs and is merged in by
+// resolveWorkflow.
 //
-// Reads never throw: a missing/corrupt store yields []/null. Writes are atomic
-// (temp file + rename), mirroring config.mjs / projects.mjs.
+// Reads never throw: a missing/corrupt store yields []/null.
 
-import { mkdir, readFile, writeFile, rename, readdir, unlink } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
+import { getDb, prepare, tx } from './db.mjs';
 import { maestroHome } from './projects.mjs';
 import { resolveRunConfig, readConfig } from './config.mjs';
 import { slugify } from './artifacts.mjs';
@@ -115,16 +115,35 @@ async function writeRaw(id, tpl) {
   await rename(tmp, file);
 }
 
-/** Read + shallow-validate one stored template. Missing/corrupt => null. */
-async function readRaw(id) {
+/** Fail-safe JSON.parse to an array; returns [] on any error. */
+function parseArr(text) {
+  if (typeof text !== 'string' || !text) return [];
+  try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+/** Map a workflows row to the template object shape. */
+function rowToTpl(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    version: r.version,
+    steps: parseArr(r.steps),
+    feedbacks: parseArr(r.feedbacks),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+/** Read + shallow-validate one stored template row. Unsafe id / missing => null. */
+function readRaw(id) {
   if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
-  try {
-    const data = JSON.parse(await readFile(workflowFile(id), 'utf8'));
-    if (!data || typeof data !== 'object' || !Array.isArray(data.steps)) return null;
-    return data;
-  } catch {
-    return null;
-  }
+  getDb();
+  const r = prepare(
+    'SELECT id, name, version, steps, feedbacks, created_at, updated_at FROM workflows WHERE id = ?'
+  ).get(id);
+  if (!r) return null;
+  const tpl = rowToTpl(r);
+  return Array.isArray(tpl.steps) ? tpl : null; // mirror the legacy steps-array check
 }
 
 /**
@@ -159,7 +178,7 @@ export async function writeWorkflow(tpl) {
 
 /**
  * Read a template by id. Returns the built-in DEFAULT_WORKFLOW for "wf_default";
- * otherwise the stored template, or null when absent/corrupt.
+ * otherwise the stored row, or null when absent/corrupt/unsafe-id.
  * @param {string} id
  * @returns {Promise<object|null>}
  */
@@ -169,25 +188,16 @@ export async function readWorkflow(id) {
 }
 
 /**
- * List user templates (NOT DEFAULT_WORKFLOW — callers prepend it), newest first
- * by createdAt. Missing store => []. Never throws.
+ * List user templates (NOT DEFAULT_WORKFLOW — callers prepend it), newest first by
+ * createdAt. Empty store => []. Never throws.
  * @returns {Promise<object[]>}
  */
 export async function listWorkflows() {
-  let names;
-  try {
-    names = await readdir(workflowsDir());
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const f of names) {
-    if (!f.endsWith('.json')) continue;
-    const tpl = await readRaw(f.slice(0, -'.json'.length));
-    if (tpl && tpl.id !== DEFAULT_WORKFLOW.id) out.push(tpl);
-  }
-  out.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-  return out;
+  getDb();
+  const rows = prepare(
+    'SELECT id, name, version, steps, feedbacks, created_at, updated_at FROM workflows ORDER BY created_at DESC, id'
+  ).all();
+  return rows.filter((r) => r.id !== DEFAULT_WORKFLOW.id).map(rowToTpl);
 }
 
 /**
