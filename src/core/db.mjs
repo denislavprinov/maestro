@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { maestroHome } from './projects.mjs';
+import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
 
 let _db = null; // the singleton handle, or null when closed/never-opened
 let _txDepth = 0; // guards against re-entrant tx(): node:sqlite has no nested BEGIN
@@ -37,9 +38,10 @@ export function getDb() {
   const home = maestroHome();
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
   const db = new DatabaseSync(dbPath());
-  _configure(db);
-  migrate(db);
-  _db = db;
+  _configure(db);            // pragmas (WAL, FK, busy_timeout, synchronous)
+  migrate(db);               // versioned, idempotent schema (Task 1.3)
+  maybeMigrateFromFs(db);    // one-shot fs→db import (other phase; self-guarded)
+  _db = db;                  // publish only after the DB is fully ready
   return _db;
 }
 

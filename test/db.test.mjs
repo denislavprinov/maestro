@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { getDb, closeDb, _resetForTests, prepare, tx, migrate as _migrateForTest } from '../src/core/db.mjs';
 import { maestroHome } from '../src/core/projects.mjs';
+import { _migrateFromFsCallCount, _resetMigrateFromFsCallCount } from '../src/core/migrate-fs-to-db.mjs';
 
 // Each test gets its own MAESTRO_HOME so the singleton DB path is fresh and
 // isolated; _resetForTests() drops the cached handle so the next getDb() reopens
@@ -19,6 +20,7 @@ async function freshHome() {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'maestro-db-')));
   homes.push(dir);
   _resetForTests();
+  _resetMigrateFromFsCallCount();
   process.env.MAESTRO_HOME = dir;
   return dir;
 }
@@ -209,4 +211,21 @@ test('_resetForTests() clears the statement cache and closes the handle', () => 
   _resetForTests();
   const second = prepare(sql);
   assert.notEqual(first, second, 'a fresh statement is prepared after reset');
+});
+
+test('getDb() calls maybeMigrateFromFs(db) once after migrate()', () => {
+  // A14: ESM namespace exports are non-configurable, so mock.method() throws
+  // "Cannot redefine property". Instead the Phase-1 stub increments an exported
+  // module-level call counter; we assert the OBSERVABLE effect (called exactly
+  // once on first open) AND that the schema was already migrated when it ran
+  // (user_version === 1 proves migrate() ran before the hook).
+  assert.equal(_migrateFromFsCallCount(), 0, 'counter starts at 0 before first open');
+  const db = getDb();
+  assert.equal(_migrateFromFsCallCount(), 1, 'hook invoked exactly once on first open');
+  // The schema must already exist when the hook runs (it reads/writes rows).
+  const { user_version } = db.prepare('PRAGMA user_version').get();
+  assert.equal(user_version, 1, 'migrate() ran before the hook');
+  // Cached singleton: a repeat getDb() must NOT re-run the one-shot hook.
+  getDb();
+  assert.equal(_migrateFromFsCallCount(), 1, 'hook not re-run on cached getDb()');
 });
