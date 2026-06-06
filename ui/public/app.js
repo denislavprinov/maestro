@@ -1027,6 +1027,7 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
   wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
   let s = `<defs>` +
     `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
+    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
     `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
     `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
   for (let i = 0; i < steps.length - 1; i++) {
@@ -1035,7 +1036,10 @@ function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
         const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
         const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
         const dx = Math.max(36, (x2 - x1) * 0.5);
-        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${COMPOSER_SEQ}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#arrSeq-${ns})"/>`;
+        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
+        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
+        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
+        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
       });
     });
   }

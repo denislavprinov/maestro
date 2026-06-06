@@ -118,3 +118,23 @@ test('composer (non-runMode) never adds wire-live / wire-dim classes', async () 
   assert.doesNotMatch(html, /wire-live/, 'no wire-live in composer');
   assert.doesNotMatch(html, /wire-dim/, 'no wire-dim in composer');
 });
+
+test('sequential wire turns green + uses arrSeqDone marker when BOTH endpoints are done', async () => {
+  const window = await boot();
+  const { svg, paint } = fixture(window, ['p', 'q']);
+  const steps = [[{ id: 'p', key: 'planner' }], [{ id: 'q', key: 'refiner' }]];
+  paint(steps, [], { ns: 'tst', runMode: true, doneSet: new Set(['p', 'q']), cycles: {} });
+  const html = svg.innerHTML;
+  assert.match(html, /<marker id="arrSeqDone-tst"[^>]*>[\s\S]*?fill="#5BAE5B"/, 'green done marker defined');
+  assert.match(html, /stroke="#5BAE5B"[^>]*marker-end="url\(#arrSeqDone-tst\)"/, 'done seq wire is green');
+});
+
+test('sequential wire stays gray when an endpoint is NOT done', async () => {
+  const window = await boot();
+  const { svg, paint } = fixture(window, ['p', 'q']);
+  const steps = [[{ id: 'p', key: 'planner' }], [{ id: 'q', key: 'refiner' }]];
+  paint(steps, [], { ns: 'tst', runMode: true, doneSet: new Set(['p']), cycles: {} });
+  const html = svg.innerHTML;
+  assert.match(html, /stroke="#B7B7BC"[^>]*marker-end="url\(#arrSeq-tst\)"/, 'partial -> gray seq wire (COMPOSER_SEQ)');
+  assert.doesNotMatch(html, /stroke="#5BAE5B"[^>]*marker-end="url\(#arrSeqDone/, 'no green wire when not both done');
+});
