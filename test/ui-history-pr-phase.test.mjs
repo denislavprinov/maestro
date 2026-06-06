@@ -63,7 +63,7 @@ test('history-pr OPEN batch swaps Create-PR -> "View PR" link in place, merge pi
   ctx.showHistory();
   await ctx.tick();
   const card = ctx.window.document.querySelector('#history .hist-card');
-  assert.equal(card.querySelector('.hist-pr').hidden, false, 'Create-PR button shown initially');
+  assert.equal(card.querySelector('.hist-pr').hidden, true, 'Create-PR hidden until Phase-2 resolves (progressive reveal)');
 
   // Expand the card first; the in-place patch must NOT collapse it (no full repaint).
   card.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -125,7 +125,7 @@ test('stale/never-issued token batch is dropped (no DOM change)', async () => {
   await ctx.tick();
   const card = ctx.window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr-link'), null, 'no link from a stale token');
-  assert.equal(card.querySelector('.hist-pr').hidden, false, 'Create-PR button still shown');
+  assert.equal(card.querySelector('.hist-pr').hidden, true, 'still hidden — pending; stale batch did not resolve it');
   // settle the real load so no watchdog lingers
   ctx.dispatchPr({ token, items: [] });
   await ctx.tick();
@@ -151,4 +151,89 @@ test('race: a forced refresh supersedes the prior load; the old token batch is d
   ctx.dispatchPr({ token: tB, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } }] });
   await ctx.tick();
   assert.ok(card.querySelector('.hist-pr-link'), 'current (tB) batch patches');
+});
+
+test('PR button stays hidden until each entry resolves, then reveals progressively', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.endsWith('/api/history')
+      ? skeleton([ROW({ id: 'a', projectKey: 'k' }), ROW({ id: 'b', projectKey: 'k' })]) : null),
+  });
+  ctx.showHistory();
+  await ctx.tick();
+  const cardA = ctx.window.document.querySelector(cardSel('a', 'k'));
+  const cardB = ctx.window.document.querySelector(cardSel('b', 'k'));
+  // Eligible (gh + survived + branch + source) but UNRESOLVED -> hidden, NOT "Create PR".
+  assert.equal(cardA.querySelector('.hist-pr').hidden, true, 'A hidden while pending');
+  assert.equal(cardB.querySelector('.hist-pr').hidden, true, 'B hidden while pending');
+
+  const token = ctx.prTokens().at(-1);
+  // Non-final batch resolves only A (no PR) -> A reveals Create-PR, B stays hidden.
+  ctx.dispatchPr({ token, done: false, items: [{ projectKey: 'k', id: 'a', pr: null }] });
+  await ctx.tick();
+  assert.equal(cardA.querySelector('.hist-pr').hidden, false, 'A revealed after its result');
+  assert.equal(cardB.querySelector('.hist-pr').hidden, true, 'B still hidden until its result');
+
+  // Final batch resolves B (OPEN) -> B becomes a link.
+  ctx.dispatchPr({ token, done: true, items: [{ projectKey: 'k', id: 'b', pr: { state: 'OPEN', url: 'https://gh/x/pull/4', number: 4 } }] });
+  await ctx.tick();
+  assert.equal(cardB.querySelector('.hist-pr'), null, 'B button replaced by link');
+  assert.equal(cardB.querySelector('.hist-pr-link').textContent, 'View PR');
+});
+
+test('an eligible entry the server never sent a batch for is revealed on the final (done) batch', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW({ id: 'a', projectKey: 'k' })]) : null),
+  });
+  ctx.showHistory();
+  await ctx.tick();
+  const card = ctx.window.document.querySelector(cardSel('a', 'k'));
+  assert.equal(card.querySelector('.hist-pr').hidden, true, 'hidden while pending');
+  const token = ctx.prTokens().at(-1);
+  ctx.dispatchPr({ token, done: true, items: [] });   // final batch, no item for 'a'
+  await ctx.tick();
+  assert.equal(card.querySelector('.hist-pr').hidden, false, 'revealed as Create-PR by finalize');
+});
+
+test('enrichment failure (no done batch) reveals pending buttons via the watchdog catch', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.endsWith('/api/history/pr')) return Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
+      if (url.endsWith('/api/history')) return skeleton([ROW({ id: 'a', projectKey: 'k' })]);
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await ctx.tick();                                   // POST /api/history/pr rejects -> catch finalizes
+  const card = ctx.window.document.querySelector(cardSel('a', 'k'));
+  assert.equal(card.querySelector('.hist-pr').hidden, false, 'failed enrichment still reveals Create-PR');
+});
+
+// Maps 1:1 to the reported bug: an entry with an existing MERGED PR must NOT flash a
+// "Create PR" button (nor keep a stale "Merged" link) during a refresh; it is hidden
+// while the refresh is in flight, then re-resolves to "Merged".
+test('refresh hides a previously-merged entry button (no Create-PR flash) until it re-resolves', async () => {
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW()]) : null) });
+  ctx.showHistory();
+  await ctx.tick();
+  // First load resolves the entry as MERGED (done defaults true via dispatchPr).
+  const t1 = ctx.prTokens().at(-1);
+  ctx.dispatchPr({ token: t1, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } }] });
+  await ctx.tick();
+  let card = ctx.window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged', 'resolved to Merged after first load');
+
+  // Force-refresh: skeleton has no pr -> button must be HIDDEN, not "Create PR", and the
+  // stale "Merged" link must be gone during the refresh window.
+  ctx.refresh();
+  await ctx.tick();
+  card = ctx.window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-pr-link'), null, 'no stale link during refresh');
+  assert.equal(card.querySelector('.hist-pr').hidden, true, 'no Create-PR flash during refresh — button hidden');
+
+  // Enrichment re-resolves -> Merged link returns.
+  const t2 = ctx.prTokens().at(-1);
+  assert.notEqual(t1, t2, 'refresh issued a new token');
+  ctx.dispatchPr({ token: t2, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } }] });
+  await ctx.tick();
+  assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged', 're-resolved to Merged after refresh');
 });

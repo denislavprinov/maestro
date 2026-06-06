@@ -304,7 +304,11 @@ function onHello(msg) {
   updateNavCounts();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
-  if (cur === 'history') loadHistoryView();
+  // Background-load history on the first connect so the sidebar count + PR states
+  // populate even when boot lands on another view (e.g. New pipeline). Reconnects
+  // skip this; an open History view still re-loads to refresh its data.
+  if (cur === 'history' || !historyBooted) loadHistoryView();
+  historyBooted = true;
 }
 
 function currentView() {
@@ -3503,6 +3507,7 @@ el.refreshHistory.addEventListener('click', () => loadHistoryView({ force: true 
 
 let historyLoadToken = 0;                 // monotonically increasing; newest wins (per-tab)
 let historyInFlight = null;               // AbortController for the current skeleton fetch
+let historyBooted = false;                // first-connect guard: background-load history once
 
 async function loadHistoryView({ force = false } = {}) {
   const token = ++historyLoadToken;       // any earlier resolved fetch/push is now stale
@@ -3577,7 +3582,7 @@ function clearHistoryPrWatchdog() {
 function requestHistoryPr(token) {
   clearHistoryPrWatchdog();
   historyPrWatchdog = setTimeout(() => {                       // terminal fallback
-    if (token === historyLoadToken) setHistoryLoading(false);
+    if (token === historyLoadToken) { finalizeHistoryPr(); setHistoryLoading(false); }
     historyPrWatchdog = null;
   }, HISTORY_PR_TIMEOUT_MS);
   // In Node-backed test runners the timer would keep the event loop alive; unref it
@@ -3589,7 +3594,7 @@ function requestHistoryPr(token) {
   })
     .then((r) => { if (!r || !r.ok) throw new Error(`history-pr ${r ? r.status : 'failed'}`); })
     .catch(() => {                                             // network error OR !res.ok
-      if (token === historyLoadToken) { setHistoryLoading(false); clearHistoryPrWatchdog(); }
+      if (token === historyLoadToken) { finalizeHistoryPr(); setHistoryLoading(false); clearHistoryPrWatchdog(); }
     });
 }
 
@@ -3598,7 +3603,7 @@ function onHistoryPr(msg) {
   if (!msg || msg.token !== historyLoadToken) return;        // stale batch from a superseded load -> drop
   const items = Array.isArray(msg.items) ? msg.items : [];
   for (const it of items) patchHistoryPr(it);                // model + DOM, in place
-  if (msg.done) { setHistoryLoading(false); clearHistoryPrWatchdog(); }  // final batch clears the spinner
+  if (msg.done) { finalizeHistoryPr(); setHistoryLoading(false); clearHistoryPrWatchdog(); }  // final batch clears the spinner
 }
 
 // Escape a value for use inside a quoted attribute selector. Prefers CSS.escape;
@@ -3640,6 +3645,24 @@ function patchHistoryPr({ projectKey, id, pr }) {
   setupPrButton(card, row?.projectDir || null, row || { id, projectKey, pr }, state.ghAvailable);
   // No setMergePill: clarification B — merged-or-not is shown by the link swap inside
   // setupPrButton (OPEN->"View PR", MERGED->"Merged"); the .hist-merge pill stays hidden.
+}
+
+// Enrichment terminated (final WS batch, failed POST, or the watchdog): any entry
+// still unresolved (pr === undefined) is treated as "no PR" so its control is
+// revealed. Without this an eligible entry the server never sent a batch for — or a
+// load where enrichment failed entirely — would stay hidden forever. Patches the
+// visible card in place; off-screen rows get the model update and resolve on the
+// next paint (e.g. a filter click). Callers already gate on the load token.
+function finalizeHistoryPr() {
+  for (const row of state.historyAll) {
+    if (!row || row.pr !== undefined) continue;        // already resolved (object or null)
+    row.pr = null;                                      // resolved: no open/merged PR
+    const sel = `.hist-card[data-pipeline-id="${cssEscape(row.id)}"][data-project-key="${cssEscape(row.projectKey)}"]`;
+    const card = el.history.querySelector(sel);
+    if (!card) continue;                                // off-screen — model update is enough
+    resetPrCluster(card);
+    setupPrButton(card, row.projectDir || null, row, state.ghAvailable);
+  }
 }
 
 // Distinct projects present in the dataset, in most-recent-activity order
@@ -3861,6 +3884,15 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
 
   const eligible = ghAvailable && p.survived && p.branch && p.sourceBranch;
   if (!eligible) { btn.hidden = true; return; }
+
+  // PR state not yet resolved for this entry (Phase-2 enrichment still in flight).
+  // Keep the button hidden instead of flashing "Create PR" on an entry that may
+  // already have an OPEN/MERGED PR. patchHistoryPr (per-entry result) or
+  // finalizeHistoryPr (terminal) re-runs this with a resolved pr — object or null —
+  // and reveals the correct control. Tri-state on entry.pr:
+  //   undefined = pending, null = looked/none, object = found.
+  if (p.pr === undefined) { btn.hidden = true; return; }
+
   btn.hidden = false;
   btn.addEventListener('click', async (e) => {
     e.stopPropagation(); // never toggle the card when clicking the button

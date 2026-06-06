@@ -58,7 +58,7 @@ test('Create-PR button shows when gh available; click opens PR + merge pill', as
   let prBody = null;
   const { window, showHistory } = await boot({
     fetchHandler: (url, opts) => {
-      if (url.includes('/api/history')) return runs([SURVIVED], true);
+      if (url.includes('/api/history')) return runs([{ ...SURVIVED, pr: null }], true);
       // NOTE: match the exact path — `/api/projects`.includes('/api/pr') is true,
       // so a loose substring check would swallow the project-list fetch.
       if (url.endsWith('/api/pr')) {
