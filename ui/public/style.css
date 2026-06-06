@@ -137,26 +137,6 @@ body.view-history .main{padding-top:0;}
 /* ---------- Views ---------- */
 .view{display:block;}
 
-/* ---------- Stage tabs ---------- */
-.stages{display:flex;gap:12px;margin-bottom:26px;flex-wrap:wrap;}
-.stage{
-  flex:1;min-width:150px;
-  display:flex;align-items:center;gap:12px;
-  background:var(--panel);border:1px solid var(--line);
-  padding:13px 16px;border-radius:18px;box-shadow:var(--shadow-soft);
-  cursor:pointer;transition:transform .15s,box-shadow .15s;
-}
-.stage:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
-.stage .num{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
-  font-weight:700;font-size:13px;flex:0 0 auto;}
-.stage .lbl{display:flex;flex-direction:column;line-height:1.15;}
-.stage .lbl b{font-weight:600;font-size:14px;}
-.stage .lbl small{color:var(--ink-3);font-size:11px;font-weight:500;}
-.stage.active{background:var(--ink);border-color:var(--ink);}
-.stage.active .lbl b{color:#fff;}
-.stage.active .lbl small{color:rgba(255,255,255,.6);}
-.stage.active .num{background:#fff;color:var(--ink);}
-
 /* number-disc tint utilities */
 .n-green{background:var(--green-bg);color:var(--green-ink);}
 .n-peach{background:var(--peach-bg);color:var(--peach-ink);}
@@ -363,22 +343,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .chip.qcount{background:var(--amber-bg);color:var(--amber-ink);}
 .btn-stop.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
 
-/* per-card stage strip */
-.stages.compact{margin:0 0 18px;gap:9px;}
-.stages.compact .stage{min-width:118px;padding:11px 13px;border-radius:15px;}
-.stages.compact .num{width:26px;height:26px;font-size:12px;}
-.stages.compact .lbl b{font-size:13px;}
-.stages.compact .lbl small{font-size:10.5px;}
-
-/* stepper state overrides — solid fills for done/now/stop discs */
-.stage.s-done{background:var(--green-bg);border-color:transparent;}
-.stage.s-done .num{background:var(--green);color:#fff;}
-.stage.s-now{background:var(--peach-bg);border-color:transparent;}
-.stage.s-now .num{background:var(--peach);color:#fff;}
-.stage.s-pause{background:var(--amber-bg);border-color:transparent;}
-.stage.s-stop{background:var(--red-bg);border-color:transparent;}
-.stage.s-stop .num{background:var(--red);color:#fff;}
-
 /* expand to live log */
 .btn-expand{margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:var(--field);
   border:none;border-radius:999px;padding:8px 15px;font-family:inherit;font-weight:600;font-size:12px;
@@ -478,7 +442,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-head .h-meta b:hover{text-decoration:underline;}
 .hist-detail{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
 .hist-detail[hidden]{display:none;}
-.hist-detail .stages.compact{margin:0;}
 .hist-detail .detail-error{color:var(--red-ink);font-size:12.5px;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
@@ -546,22 +509,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .topnav a.active{background:var(--ink);color:#fff;}
 }
 
-/* ---------- per-phase + per-pipeline cost ---------- */
-.stage .lbl .cost{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--ink-2);font-style:normal;margin-top:2px;}
-.stage .lbl .cost:empty{display:none;}
-.stage.active .lbl .cost{color:rgba(255,255,255,.82);}
+/* ---------- per-pipeline cost (per-node cost is the graph's .nrun .cost) ---------- */
 .run-meta .run-cost{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
 .run-meta .run-cost:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .h-meta .hist-total{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
 .h-meta .hist-total:empty{display:none;}
 
-/* ---------- per-phase + per-pipeline duration (twin of cost) ---------- */
-.stage .lbl .dur{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--ink-2);font-style:normal;margin-top:2px;}
-.stage .lbl .dur:empty{display:none;}
-.stage.active .lbl .dur{color:rgba(255,255,255,.82);}
-.stage .lbl .me{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);font-style:normal;margin-top:2px;}
-.stage .lbl .me:empty{display:none;}
-.stage.active .lbl .me{color:rgba(255,255,255,.72);}
+/* ---------- per-pipeline duration (twin of cost) ---------- */
 .run-meta .run-time{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
 .run-meta .run-time:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .h-meta .hist-time{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
@@ -706,30 +660,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ro-flow .strip{flex:0 0 58px;align-self:stretch;margin:40px 0;}
 .ro-flow .col{pointer-events:none;}
 .ro-flow .node{width:218px;}
-
-/* Parallel step cell: nodes stack vertically and share one step number. */
-.stages.compact .stage.parallel{align-items:flex-start;}
-.stages.compact .stage.parallel .pnodes{display:flex;flex-direction:column;gap:8px;min-width:0;}
-.stages.compact .stage.parallel .stage-node{display:flex;flex-direction:column;line-height:1.15;
-  padding-left:9px;border-left:2px solid var(--line-2);}
-.stages.compact .stage.parallel .stage-node b{font-weight:600;font-size:13px;}
-.stages.compact .stage.parallel .stage-node .cycle,
-.stages.compact .stage.parallel .stage-node .dur,
-.stages.compact .stage.parallel .stage-node .cost{font-family:var(--mono);font-size:10.5px;font-style:normal;color:var(--ink-2);}
-.stage .lbl .cycle:empty,.stage .lbl .dur:empty,.stage .stage-node em:empty{display:none;}
-.stages.compact .stage.parallel .stage-node .sub{color:var(--ink-3);font-size:10.5px;font-weight:500;}
-.stages.compact .stage.parallel .stage-node .me{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);}
-.stages.compact .stage.parallel .stage-node .me:empty{display:none;}
-
-/* Node color accent (mirrors the composer's .acc swatches) on the label edge.
-   Cover ALL six registry colors — the default implementer is amber. */
-.stages.compact .stage .lbl.acc-violet,.stages.compact .stage .stage-node.acc-violet{box-shadow:inset 3px 0 0 -1px var(--violet);}
-.stages.compact .stage .lbl.acc-green, .stages.compact .stage .stage-node.acc-green {box-shadow:inset 3px 0 0 -1px var(--green);}
-.stages.compact .stage .lbl.acc-peach, .stages.compact .stage .stage-node.acc-peach {box-shadow:inset 3px 0 0 -1px var(--peach);}
-.stages.compact .stage .lbl.acc-blue,  .stages.compact .stage .stage-node.acc-blue  {box-shadow:inset 3px 0 0 -1px var(--blue);}
-.stages.compact .stage .lbl.acc-amber, .stages.compact .stage .stage-node.acc-amber {box-shadow:inset 3px 0 0 -1px var(--amber);}
-.stages.compact .stage .lbl.acc-red,   .stages.compact .stage .stage-node.acc-red   {box-shadow:inset 3px 0 0 -1px var(--red);}
-.stages.compact .stage .lbl[class*="acc-"]{padding-left:8px;}
 
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {

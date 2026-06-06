@@ -412,93 +412,10 @@ function rebuildStepperDom(r) {
   if (host) buildRunGraph(host, r.stepper);
 }
 
-// Build the stepper DOM into `host` (a .stages.compact container) from a
-// manifest. Each cell -> one .stage with a single visible number. A cell with
-// >1 node gets class .parallel and stacks each node as a .stage-node row.
-function buildStepper(host, manifest) {
-  host.innerHTML = '';
-  const m = manifestFor(manifest);
-  m.steps.forEach((cell, i) => {
-    const stage = document.createElement('div');
-    stage.className = 'stage' + (cell.nodes.length > 1 ? ' parallel' : '');
-    stage.dataset.cellIdx = String(i);
-    // Single-node cells carry the node id directly for fast addressing.
-    if (cell.nodes.length === 1) stage.dataset.nodeId = cell.nodes[0].id;
-
-    const num = document.createElement('div');
-    num.className = 'num';
-    num.textContent = String(i + 1);
-    stage.appendChild(num);
-
-    if (cell.nodes.length === 1) {
-      stage.appendChild(buildStageLabel(cell.nodes[0]));
-    } else {
-      const wrap = document.createElement('div');
-      wrap.className = 'pnodes';
-      for (const node of cell.nodes) wrap.appendChild(buildParallelNode(node));
-      stage.appendChild(wrap);
-    }
-    host.appendChild(stage);
-  });
-}
-
-// Resolve a node's model·effort caption from the manifest. Maps model id -> label
-// via the globally-loaded state.models (fallback to the raw id); "default" when the
-// node has no explicit model (it runs on the pipeline's global default model).
-function nodeModelEffortLabel(node) {
-  const m = node && node.model ? modelById(node.model) : null;
-  const label = node && node.model ? (m ? m.label : node.model) : 'default';
-  return node && node.effort ? `${label} · ${node.effort}` : label;
-}
-
-// The label column for a single-node cell: bold label, sub caption, and the
-// cycle/dur/cost <em> slots paint* fills. Color accent when the node has one.
-function buildStageLabel(node) {
-  const lbl = document.createElement('div');
-  lbl.className = 'lbl';
-  if (node.color) lbl.classList.add('acc-' + node.color);
-  const b = document.createElement('b');
-  b.textContent = node.label || node.id;
-  const sub = document.createElement('small');
-  sub.className = 'sub';
-  sub.textContent = node.sub || '';
-  lbl.append(b, sub);
-  if (node.uiPhase) { // agent node -> show model·effort; bookends keep just .sub
-    const me = document.createElement('small');
-    me.className = 'me';
-    me.textContent = nodeModelEffortLabel(node);
-    lbl.append(me);
-  }
-  const cycle = document.createElement('em'); cycle.className = 'cycle';
-  const dur = document.createElement('em'); dur.className = 'dur';
-  const cost = document.createElement('em'); cost.className = 'cost';
-  lbl.append(cycle, dur, cost);
-  return lbl;
-}
-
-// One stacked row inside a .parallel cell. Addressable by node id; carries its
-// own cycle/dur/cost slots.
-function buildParallelNode(node) {
-  const row = document.createElement('div');
-  row.className = 'stage-node pnode';
-  row.dataset.nodeId = node.id;
-  if (node.color) row.classList.add('acc-' + node.color);
-  const b = document.createElement('b');
-  b.textContent = node.label || node.id;
-  const sub = document.createElement('small'); sub.className = 'sub'; sub.textContent = node.sub || '';
-  const me = document.createElement('small'); me.className = 'me'; me.textContent = nodeModelEffortLabel(node);
-  const cycle = document.createElement('em'); cycle.className = 'cycle';
-  const dur = document.createElement('em'); dur.className = 'dur';
-  const cost = document.createElement('em'); cost.className = 'cost';
-  row.append(b, sub, me, cycle, dur, cost);
-  return row;
-}
-
 // ---------------------------------------------------------------------------
 // Run/history node-graph (composer-style). buildRunGraph builds the static
-// .run-flow skeleton; paintRunGraph (next task) tints it + repaints wires via
-// the shared composerPaintWires. Mirrors buildStepper's manifest walk but emits
-// composer .node markup instead of the flat .stages.compact strip.
+// .run-flow skeleton; paintRunGraph tints it + repaints wires via the shared
+// composerPaintWires. Walks the stepper manifest and emits composer .node markup.
 // ---------------------------------------------------------------------------
 
 // Resolve a manifest node to its agent meta (icon/displayName/description/color).
@@ -1539,7 +1456,6 @@ if (typeof window !== 'undefined') {
     renderNodeRows,
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
-    buildStepper,
     manifestFor,
     durByNode,
     costByNode,
@@ -4545,24 +4461,6 @@ function buildRunCard(r) {
   return node;
 }
 
-// Paint the stepper from the run model.
-const STAGE_NUM = { done: ['s-done', 'n-green'], now: ['s-now', 'n-peach'], pause: ['s-pause', 'n-amber'], stop: ['s-stop', 'n-red'] };
-
-// Aggregate kind for a cell from its nodes' live status + position. terminalDone
-// forces all-done; a cell strictly before the frontier is done; the frontier
-// cell takes its nodes' status (any 'now' wins, else 'done' when all settled).
-function cellKind(r, cell, cellIdx, terminalDone) {
-  if (terminalDone) return 'done';
-  if (cellIdx < r.maxCellIdx) return 'done';
-  if (cellIdx > r.maxCellIdx) return null; // pending
-  const kinds = cell.nodes.map((n) => r.nodeStatus[n.id]).filter(Boolean);
-  if (!kinds.length) return null;
-  if (kinds.includes('stop')) return 'stop';
-  if (kinds.includes('pause')) return 'pause';
-  if (kinds.includes('now')) return 'now';
-  return kinds.every((k) => k === 'done') ? 'done' : 'now';
-}
-
 // Running -> graph status per node. done if its cell is behind the frontier or
 // nodeStatus says done; at the frontier: stop->stopped, pause->paused, now->active;
 // else pending. terminalDone (run status 'done') forces all-done.
@@ -4782,10 +4680,10 @@ const _timerTick = setInterval(() => {
     const timeEl = r.el.querySelector('.run-time');
     if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, now));
     const durs = durByNode(r.steps, now, true);
-    for (const el of r.el.querySelectorAll('.stage[data-node-id], .stage-node[data-node-id]')) {
+    for (const el of r.el.querySelectorAll('.run-node[data-id]')) {
       const durEl = el.querySelector('.dur');
       if (!durEl) continue;
-      const d = durs[el.dataset.nodeId];
+      const d = durs[el.dataset.id];
       durEl.textContent = d != null ? fmtDuration(d) : '';
     }
   }

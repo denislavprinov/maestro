@@ -42,52 +42,51 @@ async function bootLive() {
   return { window, selectProject, showRunning, emit, chipText };
 }
 
-test('buildStepper renders one numbered cell per manifest step with labels', async () => {
+test('buildRunGraph renders one .col per manifest step with node labels', async () => {
   const { window } = await bootLive();
   const host = window.document.createElement('div');
-  host.className = 'stages compact';
-  const manifest = {
+  host.className = 'run-flow';
+  window.__np.buildRunGraph(host, {
     version: 1,
     steps: [
       { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
-      { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
+      { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
+      { kind: 'agents', nodes: [{ id: 's1_0', key: 'refiner', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
       { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
     ],
-  };
-  window.__np.buildStepper(host, manifest);
-  const cells = host.querySelectorAll('.stage');
-  assert.equal(cells.length, 4);
-  assert.equal(cells[0].querySelector('.num').textContent, '1');
-  assert.equal(cells[1].querySelector('.lbl b').textContent, 'Plan');
-  assert.equal(cells[2].querySelector('.lbl b').textContent, 'Refine Plan');
-  assert.equal(cells[3].querySelector('.num').textContent, '4');
-  assert.ok(host.querySelector('.stage[data-node-id="s0_0"]'));
+    feedbacks: [],
+  });
+  assert.equal(host.querySelectorAll('.col').length, 4);
+  assert.equal(host.querySelector('.run-node[data-id="s0_0"] .nmeta b').textContent, 'Plan');
+  assert.equal(host.querySelector('.run-node[data-id="s1_0"] .nmeta b').textContent, 'Refine Plan');
 });
 
-test('buildStepper stacks parallel nodes in one cell sharing a number', async () => {
+test('parallel cell yields two .run-node in one .col with the parallel col-tag', async () => {
   const { window } = await bootLive();
   const host = window.document.createElement('div');
-  const manifest = {
+  host.className = 'run-flow';
+  window.__np.buildRunGraph(host, {
     version: 1,
     steps: [
       { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
       { kind: 'agents', nodes: [
-        { id: 's1_0', uiPhase: 'implement', label: 'Implementation', color: 'amber', cycles: false },
-        { id: 's1_1', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', color: 'blue', cycles: false },
+        { id: 's0_0', key: 'planner', label: 'Plan', color: 'violet', cycles: false },
+        { id: 's0_1', key: 'reviewer', label: 'Review', color: 'blue', cycles: false },
       ] },
       { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
     ],
-  };
-  window.__np.buildStepper(host, manifest);
-  const cells = host.querySelectorAll('.stage');
-  assert.equal(cells.length, 3);
-  const parallel = cells[1];
-  assert.ok(parallel.classList.contains('parallel'));
-  assert.equal(parallel.querySelectorAll('.pnode').length, 2);
-  assert.equal(parallel.querySelector('.num').textContent, '2'); // ONE number for the cell
-  assert.ok(parallel.querySelector('.stage-node[data-node-id="s1_0"]'));
-  assert.ok(parallel.querySelector('.stage-node[data-node-id="s1_1"]'));
+    feedbacks: [],
+  });
+  const cols = host.querySelectorAll(':scope > .col');
+  assert.match(cols[1].querySelector('.col-tag').textContent, /parallel/);
+  assert.equal(cols[1].querySelectorAll('.run-node').length, 2);
+});
+
+test('the templates host .run-flow, not the retired .stages.compact', async () => {
+  const { window } = await bootLive();
+  assert.equal(window.document.querySelectorAll('.stages.compact').length, 0, 'no .stages.compact in the DOM');
+  assert.ok(window.document.querySelector('#run-card-tpl').content.querySelector('.run-flow'), 'run template hosts .run-flow');
+  assert.ok(window.document.querySelector('#hist-card-tpl').content.querySelector('.run-flow'), 'hist template hosts .run-flow');
 });
 
 test('manifestFor falls back to the legacy default when state has no stepper', async () => {
@@ -97,61 +96,6 @@ test('manifestFor falls back to the legacy default when state has no stepper', a
   assert.equal(m.steps.at(-1).kind, 'done');
   assert.deepEqual(m.steps.map((s) => s.nodes[0].label),
     ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
-});
-
-test('buildStepper renders per-node model·effort from the manifest into .me', async () => {
-  const { window } = await bootLive();
-  window.__np._setModels([{ id: 'opus', label: 'Opus 4.8', efforts: ['low', 'high'] }]);
-  const host = window.document.createElement('div');
-  host.className = 'stages compact';
-  const manifest = {
-    version: 1,
-    steps: [
-      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet',
-                                  sub: 'architecture & breakdown', model: 'opus', effort: 'high', cycles: false }] },
-      { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green',
-                                  sub: 'tighten the plan', model: '', effort: '', cycles: true }] },
-      { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-    ],
-  };
-  window.__np.buildStepper(host, manifest);
-
-  // Description preserved in .sub; model·effort in its own .me slot.
-  const plan = host.querySelector('.stage[data-node-id="s0_0"]');
-  assert.equal(plan.querySelector('.sub').textContent, 'architecture & breakdown');
-  assert.equal(plan.querySelector('.me').textContent, 'Opus 4.8 · high');
-
-  // Unset model -> "default"; description still shown.
-  const refine = host.querySelector('.stage[data-node-id="s1_0"]');
-  assert.equal(refine.querySelector('.sub').textContent, 'tighten the plan');
-  assert.equal(refine.querySelector('.me').textContent, 'default');
-
-  // Bookends (preflight/done) have no .me (gated on node.uiPhase).
-  const pre = host.querySelector('.stage[data-node-id="preflight"]');
-  assert.equal(pre.querySelector('.me'), null);
-});
-
-test('buildStepper renders .sub + .me on parallel-cell nodes', async () => {
-  const { window } = await bootLive();
-  window.__np._setModels([{ id: 'sonnet', label: 'Sonnet 4.6', efforts: [] }]);
-  const host = window.document.createElement('div');
-  host.className = 'stages compact';
-  const manifest = {
-    version: 1,
-    steps: [
-      { kind: 'agents', nodes: [
-        { id: 's1_0', uiPhase: 'implement', label: 'Implementation', sub: 'write the code', model: 'sonnet', effort: '', cycles: false },
-        { id: 's1_1', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', sub: 'draft manual test cases', model: '', effort: '', cycles: false },
-      ] },
-    ],
-  };
-  window.__np.buildStepper(host, manifest);
-  const a = host.querySelector('.stage-node[data-node-id="s1_0"]');
-  assert.equal(a.querySelector('.sub').textContent, 'write the code');
-  assert.equal(a.querySelector('.me').textContent, 'Sonnet 4.6'); // no effort -> just the model label
-  const b = host.querySelector('.stage-node[data-node-id="s1_1"]');
-  assert.equal(b.querySelector('.me').textContent, 'default');
 });
 
 test('Running card renders the run\'s graph (run-flow, not stages.compact) and tints by nodeId', async () => {
