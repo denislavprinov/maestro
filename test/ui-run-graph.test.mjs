@@ -79,7 +79,7 @@ test('buildRunGraph builds .run-flow with leading/trailing strip, one .col per c
   assert.ok(host.querySelector('.run-node[data-id="s3_1"]'));
 });
 
-test('runNode markup: class, --c color, title tooltip = model · effort, and the .nic/.nmeta/.nrun slots', async () => {
+test('runNode markup: class, --c color, visible model·effort sub-line, and the .nic/.nmeta/.nrun slots', async () => {
   const { window } = await bootLive();
   window.__np._setModels([{ id: 'opus', label: 'Opus 4.8', efforts: ['low', 'high'] }]);
   const node = MANIFEST.steps[1].nodes[0]; // plan, model opus / effort high
@@ -89,8 +89,9 @@ test('runNode markup: class, --c color, title tooltip = model · effort, and the
   assert.ok(el.classList.contains('is-pending'));
   assert.equal(el.dataset.id, 's0_0');
   assert.ok(el.style.getPropertyValue('--c'), 'color var set');
-  // Tooltip is model · effort (NOT the visible meta — that's label/status).
-  assert.equal(el.getAttribute('title'), 'opus · high');
+  // model · effort is now a visible .nmodel sub-line using the friendly label, not a tooltip.
+  assert.equal(el.getAttribute('title'), null, 'tooltip removed');
+  assert.equal(el.querySelector('.nmeta .nmodel').textContent, 'Opus 4.8 · high');
   assert.ok(el.querySelector('.nic svg'), 'agent icon present');
   assert.equal(el.querySelector('.nmeta b').textContent, 'Plan');
   assert.ok(el.querySelector('.nmeta .nstatus'), 'status caption slot present');

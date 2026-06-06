@@ -405,10 +405,11 @@ test('History card shows per-node model·effort from the saved manifest', async 
   await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  // model · effort is now a hover tooltip (title) on the node, carrying the raw
-  // model id + effort. A node with neither model nor effort has no tooltip.
-  assert.equal(detail.querySelector('.run-node[data-id="s0_0"]').getAttribute('title'), 'opus · high');
-  assert.equal(detail.querySelector('.run-node[data-id="s1_0"]').getAttribute('title'), null);
+  // model · effort renders as a visible .nmodel sub-line (friendly model label,
+  // resolved from state.models loaded at boot via loadConfig); a step with neither
+  // model nor effort shows the "default" placeholder.
+  assert.equal(detail.querySelector('.run-node[data-id="s0_0"] .nmodel').textContent, 'Opus 4.8 · high');
+  assert.equal(detail.querySelector('.run-node[data-id="s1_0"] .nmodel').textContent, 'default');
 });
 
 test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice -> count 1)', async () => {

@@ -787,6 +787,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-flow .node.is-paused .nmeta small{color:var(--amber-ink);font-weight:600;}
 .run-flow .node.is-stopped{border-color:color-mix(in srgb, var(--red) 50%, var(--line-2));box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 13%, transparent),var(--shadow-soft);}
 .run-flow .node.is-stopped .nmeta small{color:var(--red-ink);font-weight:600;}
+/* Per-node model · effort sub-line: stays neutral grey across all statuses
+   (matches the New-pipeline .step-current caption) and truncates with ellipsis. */
+.run-flow .node .nmeta small.nmodel{color:var(--ink-3);font-weight:600;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 @keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
 @keyframes nodeGlowAmber{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
 
