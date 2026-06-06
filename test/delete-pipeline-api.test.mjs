@@ -7,6 +7,9 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app, runs } from '../ui/server.mjs';
+import { recordArtifact, writeStoreMeta } from '../src/core/artifacts.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 let srv, base, home, prevHome;
 const KEY = 'beta-00000002';
@@ -14,20 +17,24 @@ const KEY = 'beta-00000002';
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'maestro-del-api-'));
   prevHome = process.env.MAESTRO_HOME; process.env.MAESTRO_HOME = home; // store.mjs appends '.maestro'
+  _resetForTests();                                                     // DB singleton opens under this home
   const root = join(home, '.maestro', 'store', KEY);
   const pdir = join(root, 'pipelines', '04-06-26-my-feature-pp');
   await mkdir(pdir, { recursive: true });
-  // No branch -> no git calls; isolates store-removal behavior.
-  await writeFile(join(pdir, 'state.json'), JSON.stringify({
-    id: 'pp', title: 'My feature', status: 'stopped', projectDir: '/repo/beta',
-    projectKey: KEY, baseName: 'my-feature', datePrefix: '04-06-26',
-  }), 'utf8');
   await writeFile(join(pdir, 'prompt.md'), '# My feature\n', 'utf8');
   await mkdir(join(root, 'plans'), { recursive: true });
   await mkdir(join(root, 'reviews'), { recursive: true });
   await writeFile(join(root, 'plans', '04-06-26-my-feature.md'), '# p', 'utf8');
   await writeFile(join(root, 'reviews', '04-06-26-my-feature-impl-review.md'), '# r', 'utf8');
-  await writeFile(join(root, 'meta.json'), JSON.stringify({ key: KEY, name: 'Beta', path: '/repo/beta' }), 'utf8');
+  // DB instead of state.json/meta.json: store_meta + the pipelines row + indexed md.
+  // No branch -> no git calls; isolates store-removal behavior.
+  writeStoreMeta(KEY, 'project', { key: KEY, name: 'Beta', path: '/repo/beta' });
+  seedPipelineRow({
+    id: 'pp', projectKey: KEY, title: 'My feature', status: 'stopped',
+    baseName: 'my-feature', datePrefix: '04-06-26',
+  });
+  recordArtifact('pp', 'plan', 'plans/04-06-26-my-feature.md');
+  recordArtifact('pp', 'review', 'reviews/04-06-26-my-feature-impl-review.md');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -35,6 +42,7 @@ before(async () => {
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   runs.clear();
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });

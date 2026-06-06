@@ -1,104 +1,52 @@
 // src/core/pipeline-delete.mjs
 // Delete a finished pipeline and everything that belongs to it: its store folder,
-// its shared plan/review markdown (linked by name), and its local branch + worktree.
-// The remote branch is never touched. Best-effort on git: filesystem store removal
-// always proceeds; git failures are reported as warnings, not thrown.
+// its shared plan/review markdown (now resolved EXACTLY via the artifacts index,
+// no more baseName guessing), and its local branch + worktree. The remote branch
+// is never touched. Best-effort on git: filesystem store removal always proceeds;
+// git failures are reported as warnings, not thrown. The DB row is DELETEd last;
+// the FK ON DELETE CASCADE clears its steps/events/clarify/reviews/artifacts.
 
-import { rm, readdir, readFile, unlink } from 'node:fs/promises';
+import { rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 
 import { projectKey, projectStorePath } from './store.mjs';
-import { slugify } from './artifacts.mjs';
+import { listArtifacts, readPipelineByKey } from './artifacts.mjs';
+import { getDb, tx } from './db.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { branchExists } from './git-info.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
 const ACTIVE = new Set(['running', 'starting', 'created']);
-const DATE_RE = /^(\d{2}-\d{2}-\d{2})-/;
-
 function err(message, code) { return Object.assign(new Error(message), { code }); }
-function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-/** First non-empty, heading-stripped line — mirrors the orchestrator's firstLine. */
-function firstLine(text) {
-  if (!text) return '';
-  for (const line of String(text).split(/\r?\n/)) {
-    const t = line.replace(/^#+\s*/, '').trim();
-    if (t) return t;
-  }
-  return '';
-}
-
-/** Find the pipeline dir by directory basename, then by state.id. */
-async function findPipelineDir(pipelinesDir, id) {
-  let entries;
-  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
-  const dirs = entries.filter((e) => e.isDirectory());
-  for (const e of dirs) if (e.name === id) return join(pipelinesDir, e.name);
-  for (const e of dirs) {
-    try {
-      const st = JSON.parse(await readFile(join(pipelinesDir, e.name, 'state.json'), 'utf8'));
-      if (st && st.id === id) return join(pipelinesDir, e.name);
-    } catch { /* unreadable -> skip */ }
-  }
-  return null;
+/**
+ * Resolve the pipelines row for a store key + (short id | run-dir basename). Mirrors
+ * artifacts.lookupPipelineRow's WHERE logic: exact id first, then the 8-hex id parsed
+ * from a run-dir basename. A workspace key ("workspaces/<wk>") filters on workspace_key.
+ */
+function lookupRow(storeKey, id) {
+  const isWs = typeof storeKey === 'string' && storeKey.startsWith('workspaces/');
+  const col = isWs ? 'workspace_key' : 'project_key';
+  const val = isWs ? storeKey.slice('workspaces/'.length) : storeKey;
+  let row = getDb().prepare(`SELECT * FROM pipelines WHERE ${col} = ? AND id = ?`).get(val, id);
+  if (row) return row;
+  const m = /-([0-9a-f]{8})$/i.exec(String(id));
+  if (m) row = getDb().prepare(`SELECT * FROM pipelines WHERE ${col} = ? AND id = ?`).get(val, m[1].toLowerCase());
+  return row || null;
 }
 
 /**
- * Reconstruct the plan/review name linkage for an entry.
- *  - The exact base is `state.baseName` when persisted (orchestrator Step 1c).
- *  - For older entries we rebuild candidates that, combined, cover every way the
- *    orchestrator could have produced the base:
- *      a) _deriveBaseName-equivalent: title unless title === the dir basename (the
- *         auto title, which the orchestrator ignores), else the prompt's first
- *         line; slugified, capped at 40.
- *      b) the pipeline dir's own slug: <date>-<slug>-<id> with the date prefix and
- *         the trailing -<id> stripped.
- * Returns { datePrefix, bases:Set<string> } (all non-empty). Matching any
- * candidate is safe because the file regex is date-scoped and anchored.
+ * Resolve an indexed artifact's absolute path. The artifacts index encodes scope by
+ * convention (recordArtifact / orchestrator._artifact): plans/ and reviews/ are
+ * store-root-relative (the shared markdown, a sibling of pipelines/); everything else
+ * (prompt.md, manual-tests-checklist.md, webui-review-cycleN.md, extras/*) is
+ * pipeline-dir-relative.
  */
-async function deriveNames(dir, state) {
-  const dirBase = basename(dir);
-  const m = DATE_RE.exec(dirBase);
-  const datePrefix = (state?.datePrefix && String(state.datePrefix)) || (m ? m[1] : '');
-  const bases = new Set();
-  if (state?.baseName) bases.add(String(state.baseName));            // exact (persisted)
-
-  const title = state?.title ? String(state.title) : '';
-  const titleIsAuto = title && title === dirBase;                    // orchestrator ignores it
-  let source = titleIsAuto ? '' : title;
-  if (!source) {
-    let prompt = '';
-    try { prompt = await readFile(join(dir, 'prompt.md'), 'utf8'); } catch { /* none */ }
-    source = firstLine(prompt);
-  }
-  const derived = slugify(source).slice(0, 40);
-  if (derived) bases.add(derived);
-
-  if (datePrefix && state?.id) {
-    const inner = dirBase.slice(datePrefix.length + 1);              // drop "DD-MM-YY-"
-    const suffix = `-${String(state.id)}`;
-    const dirSlug = inner.endsWith(suffix) ? inner.slice(0, -suffix.length) : '';
-    if (dirSlug) bases.add(dirSlug);
-  }
-  return { datePrefix, bases: new Set([...bases].filter(Boolean)) };
-}
-
-/**
- * Unlink every file in `dir` whose name matches `re`. Names returned by readdir
- * are single path segments (never contain a separator), so a matched name can
- * only ever resolve to a direct child of `dir` — no traversal is possible.
- */
-async function removeMatching(dir, re) {
-  const removed = [];
-  let names;
-  try { names = await readdir(dir); } catch { return removed; }
-  for (const name of names) {
-    if (!re.test(name)) continue;
-    try { await unlink(join(dir, name)); removed.push(join(dir, name)); } catch { /* best-effort */ }
-  }
-  return removed;
+function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
+  if (isAbsolute(relPath)) return relPath;
+  if (relPath.startsWith('plans/') || relPath.startsWith('reviews/')) return join(storeRootDir, relPath);
+  return join(pipelineDir, relPath);
 }
 
 /**
@@ -110,56 +58,58 @@ async function removeMatching(dir, re) {
  * (store/workspaces/<workspaceKey>/); branch/worktree cleanup iterates the
  * per-project `state.branches` map (each entry {feature,worktreeDir} keyed by
  * projectKey) against the matching `state.projects[].projectDir`, instead of the
- * single scalar `state.branch`. The ACTIVE-status guard and deriveNames are
- * unchanged. Result warnings[] aggregates per-project failures.
+ * single scalar `state.branch`. The state is reconstructed from the DB row by the
+ * same reader history uses. Result warnings[] aggregates per-project failures.
  */
 export async function deletePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
 
-  // Resolve the store key ONCE so the pipeline dir and the shared plan/review
-  // files are always read from the same store root. A workspace pipeline lives
-  // under the literal "workspaces/<workspaceKey>" segment (projectStorePath joins
-  // it under storeRoot()), so the dir/plan/review resolution below is reused as-is.
-  let storeKey = workspaceKey
+  // Resolve the store key ONCE so the run dir and the shared plan/review files are
+  // always read from the same store root. A workspace pipeline lives under the
+  // literal "workspaces/<workspaceKey>" segment (projectStorePath joins it under
+  // storeRoot()), so the dir/plan/review resolution below is reused as-is.
+  const storeKey = workspaceKey
     ? `workspaces/${workspaceKey}`
     : (key || (projectDir ? projectKey(projectDir) : null));
   if (!storeKey) throw err('projectKey, projectDir or workspaceKey is required', 'BAD_REQUEST');
 
-  const dir = await findPipelineDir(join(projectStorePath(storeKey), 'pipelines'), id);
-  if (!dir) return null;
-
-  let state = null;
-  try { state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')); } catch { state = null; }
-  // When we derived the key from a projectDir, prefer the key the entry recorded
-  // for itself (defensive; for a given repo these are equal). Never for a
-  // workspace pipeline — its store key is the composite path, not state.projectKey.
-  if (!workspaceKey && !key && state?.projectKey) storeKey = String(state.projectKey);
-
-  if (ACTIVE.has(String(state?.status || '').toLowerCase())) {
+  const row = lookupRow(storeKey, id);
+  if (!row) return null;
+  if (ACTIVE.has(String(row.status || '').toLowerCase())) {
     throw err('cannot delete a running pipeline', 'RUNNING');
   }
 
+  // Reconstruct state (branch/branches/projects) via the same reader history uses.
+  const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
+
+  // The real on-disk run dir (markdown + extras live here). Resolve by the -<id> suffix.
+  const storeRootDir = projectStorePath(storeKey);
+  const pipelinesDir = join(storeRootDir, 'pipelines');
+  const runDir = await findRunDir(pipelinesDir, row.id);
+
   const report = {
-    ok: true, id, pipelineDir: dir,
+    ok: true, id: row.id, pipelineDir: runDir,
     planFiles: [], reviewFiles: [], branch: null, worktree: null, warnings: [],
   };
 
-  // 1) Shared plan/review markdown (linked only by <datePrefix>-<base> name).
-  const { datePrefix, bases } = await deriveNames(dir, state);
-  if (datePrefix && bases.size) {
-    const root = projectStorePath(storeKey);
-    const date = escapeRe(datePrefix);
-    const alt = [...bases].map(escapeRe).join('|');
-    report.planFiles = await removeMatching(
-      join(root, 'plans'), new RegExp(`^${date}-(?:${alt})(-v\\d+)?\\.md$`));
-    report.reviewFiles = await removeMatching(
-      join(root, 'reviews'), new RegExp(`^${date}-(?:${alt})-(impl-review|plan-review)\\.md$`));
-  } else {
-    report.warnings.push('could not derive plan/review name; shared markdown left in place');
+  // 1) Unlink the EXACT indexed markdown (no baseName-derivation). Pipeline-local
+  //    artifacts (prompt/extras/checklist/webui) live INSIDE runDir and are cleared
+  //    by the rm(runDir) below; only the shared store-rooted plan/review md need an
+  //    explicit unlink here.
+  const arts = await listArtifacts(row.id);
+  for (const a of arts) {
+    const abs = artifactAbsPath(a.relPath, runDir || join(pipelinesDir, row.id), storeRootDir);
+    if (!abs || (runDir && abs.startsWith(runDir))) continue; // pipeline-local handled by rm(runDir)
+    try {
+      if (existsSync(abs)) { await rm(abs, { force: true }); }
+      if (a.kind === 'plan') report.planFiles.push(abs);
+      else if (a.kind === 'review') report.reviewFiles.push(abs);
+    } catch { /* best-effort */ }
   }
 
-  // 2) Local branch(es) + worktree(s) (remote untouched). Best-effort.
-  if (workspaceKey) {
+  // 2) Local branch(es) + worktree(s) (remote untouched). Best-effort. Reads the
+  //    reconstructed state (branch / branches / projects from the row's JSON columns).
+  if (workspaceKey || state?.target === 'workspace') {
     // Per-project: iterate state.branches keyed by projectKey, cleaning each
     // member's worktree+branch in its OWN repo (state.projects[].projectDir).
     const branches = state?.branches && typeof state.branches === 'object' ? state.branches : {};
@@ -174,8 +124,8 @@ export async function deletePipeline({ projectDir = null, key = null, workspaceK
       const liveBranch = feature && (await branchExists(repoDir, feature)) ? feature : null;
       if (!liveWt && !liveBranch) continue;
       const res = await removeWorktree({ projectDir: repoDir, worktreeDir: liveWt, branch: liveBranch, force: true });
-      for (const s of res.steps.filter((x) => !x.ok)) {
-        report.warnings.push(`${pk}: ${s.step}: ${s.stderr || 'failed'}`);
+      for (const stp of res.steps.filter((x) => !x.ok)) {
+        report.warnings.push(`${pk}: ${stp.step}: ${stp.stderr || 'failed'}`);
       }
     }
   } else {
@@ -189,15 +139,30 @@ export async function deletePipeline({ projectDir = null, key = null, workspaceK
         const res = await removeWorktree({ projectDir: repoDir, worktreeDir: liveWt, branch: liveBranch, force: true });
         report.branch = liveBranch;
         report.worktree = liveWt;
-        for (const s of res.steps.filter((x) => !x.ok)) {
-          report.warnings.push(`${s.step}: ${s.stderr || 'failed'}`);
+        for (const stp of res.steps.filter((x) => !x.ok)) {
+          report.warnings.push(`${stp.step}: ${stp.stderr || 'failed'}`);
         }
       }
     }
   }
 
-  // 3) The pipeline folder itself (everything else lives inside it).
-  await rm(dir, { recursive: true, force: true });
+  // 3) The run folder itself (prompt.md, pipeline.md header, extras/, any
+  //    pipeline-local md). Everything else lives inside it.
+  if (runDir) await rm(runDir, { recursive: true, force: true });
+
+  // 4) The DB row — FK ON DELETE CASCADE clears steps/events/clarify/reviews/artifacts.
+  //    A5: the cascade does every child table in this single DELETE; no nested tx().
+  tx(() => { getDb().prepare('DELETE FROM pipelines WHERE id = ?').run(row.id); });
 
   return report;
+}
+
+/** Find the on-disk run dir for an id under pipelinesDir (basename ends in -<id>). */
+async function findRunDir(pipelinesDir, id) {
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) if (e.isDirectory() && new RegExp(`-${id}$`, 'i').test(e.name)) return join(pipelinesDir, e.name);
+  // exact-basename match (id passed as the full dir name)
+  for (const e of entries) if (e.isDirectory() && e.name === id) return join(pipelinesDir, e.name);
+  return null;
 }
