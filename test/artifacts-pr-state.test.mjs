@@ -81,3 +81,36 @@ test('withPr:true with only a closed PR -> pr is null (button re-appears)', asyn
   const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === 'pp-closed');
   assert.equal(row.pr, null);
 });
+
+test('enrichPipelinesPr emits {projectKey,id,pr} batches; pr has no mergeable; final done=true', async () => {
+  const { enrichPipelinesPr, artifactPaths } = await import('../src/core/artifacts.mjs');
+  stubGh({ state: 'OPEN', url: 'https://gh/x/pull/7', number: 7 });
+  await seed('pp-enrich-a');
+  await seed('pp-enrich-b');
+  // listAllPipelines derives each row's projectDir from the store key's meta.json
+  // (createPipeline always writes one); seed it so the rows are PR-enrich targets.
+  await writeFile(join(artifactPaths(repo).root, 'meta.json'),
+    JSON.stringify({ key: 'k', path: repo, name: 'Repo' }), 'utf8');
+  const collected = [];
+  let finalDone = null;
+  await enrichPipelinesPr((items, done) => { collected.push(...items); finalDone = done; }, { batchSize: 1 });
+  const a = collected.find((x) => x.id === 'pp-enrich-a');
+  assert.ok(a, 'seeded branch row was enriched');
+  assert.deepEqual(Object.keys(a).sort(), ['id', 'pr', 'projectKey'], 'only {projectKey,id,pr}');
+  assert.equal(a.pr.state, 'OPEN');
+  assert.ok(!('mergeable' in a.pr), 'no live mergeability field in v1 (clarification B)');
+  assert.equal(finalDone, true, 'the final batch flags done=true');
+});
+
+test('enrichPipelinesPr with gh unavailable emits exactly one empty final batch', async () => {
+  const { enrichPipelinesPr } = await import('../src/core/artifacts.mjs');
+  gitInfo.setRunner((cmd, args) =>
+    Promise.resolve(cmd === 'gh' && args[0] === '--version'
+      ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
+      : { ok: true, stdout: '', stderr: '', code: 0 }));
+  await seed('pp-enrich-nogh');
+  const batches = [];
+  await enrichPipelinesPr((items, done) => batches.push({ items, done }));
+  assert.equal(batches.length, 1, 'exactly one batch when gh is unavailable');
+  assert.deepEqual(batches[0], { items: [], done: true });
+});

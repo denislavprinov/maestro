@@ -1,7 +1,7 @@
 // test/list-all-pipelines.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listAllPipelines } from '../src/core/artifacts.mjs';
@@ -72,4 +72,25 @@ test('listAllPipelines returns [] when the store is absent', async () => {
   process.env.MAESTRO_HOME = home;
   try { assert.deepEqual(await listAllPipelines(), []); }
   finally { if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev; }
+});
+
+test('listAllPipelines orders equal-mtime rows deterministically by (projectKey,id)', async () => {
+  // The walk now builds rows in parallel batches, so equal-mtime rows must not
+  // reorder run-to-run. The sort tiebreaker keys on (projectKey, id).
+  const home = await mkdtemp(join(tmpdir(), 'maestro-all-det-'));
+  const prev = process.env.MAESTRO_HOME;
+  process.env.MAESTRO_HOME = home;
+  try {
+    await seed('zeta-00000009', 'Zeta', 'z1', 'Zeta run');
+    await seed('alpha-00000001', 'Alpha', 'a1', 'Alpha run');
+    // Force identical dir mtimes so only the tiebreaker decides the order.
+    const t = new Date(1700000000000);
+    await utimes(join(storeRoot(), 'zeta-00000009', 'pipelines', 'z1'), t, t);
+    await utimes(join(storeRoot(), 'alpha-00000001', 'pipelines', 'a1'), t, t);
+    const order1 = (await listAllPipelines()).map((p) => `${p.projectKey}/${p.id}`);
+    const order2 = (await listAllPipelines()).map((p) => `${p.projectKey}/${p.id}`);
+    assert.deepEqual(order1, order2, 'stable across repeated calls');
+    assert.deepEqual(order1, ['alpha-00000001/a1', 'zeta-00000009/z1'],
+      'projectKey asc then id asc when mtimes tie');
+  } finally { if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev; }
 });

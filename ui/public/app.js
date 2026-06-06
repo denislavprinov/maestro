@@ -221,6 +221,13 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // History PR-enrichment batches are token-tagged (not runId-tagged) and ride the
+  // same broadcast socket. Handle them BEFORE the !msg.runId early-return below.
+  if (msg.type === 'history-pr') {
+    onHistoryPr(msg);
+    return;
+  }
+
   // Tagged per-run event. Ignore anything without a runId.
   if (!msg.runId) return;
   const r = upsertRun({ runId: msg.runId });
@@ -2219,8 +2226,9 @@ function finishRun(r, status) {
   renderRunningView();
   updateNavCounts();
   // History is machine-wide + decoupled from the project picker now; if the user
-  // is looking at it, refetch so the just-finished pipeline appears.
-  if (currentView() === 'history') loadHistoryView();
+  // is looking at it, force-refetch so the just-finished pipeline surfaces with no
+  // stale-cache flash (and re-triggers Phase-2 PR enrichment).
+  if (currentView() === 'history') loadHistoryView({ force: true });
 
   // Client-evict heavy fields; keep the model so a stray duplicate event/hello
   // re-upserts onto the (already _finished) model rather than a fresh one.
@@ -3459,25 +3467,179 @@ if (runListEl) {
 // ---------------------------------------------------------------------------
 const HISTORY_FILTER_KEY = 'maestro.history.project'; // stores a projectKey; '' === All Projects
 
-// Refresh re-fetches /api/history; the active filter is preserved (it lives in
-// localStorage, which loadHistoryView restores).
-el.refreshHistory.addEventListener('click', () => loadHistoryView());
+// Versioned localStorage cache for instant (stale-while-revalidate) first paint.
+// Only stable FS + local-git skeleton fields are persisted — never the live `pr`
+// (a gh fact that goes stale); Phase-2 fills PR state over the WS. Bump the .vN
+// suffix on any shape change (there is no migration helper).
+const HISTORY_CACHE_KEY = 'maestro.history.cache.v1';
+const HISTORY_CACHE_VER = 1;
+const HISTORY_CACHE_MAX = 500;   // cap persisted rows (rows are newest-first)
 
-async function loadHistoryView() {
+function readHistoryCache() {
   try {
-    const res = await fetch('/api/history');
-    const data = await safeJson(res);
-    if (!res.ok) { renderHistoryError(data.error || `HTTP ${res.status}`); return; }
-    state.historyAll = Array.isArray(data.pipelines) ? data.pipelines : [];
-    state.ghAvailable = !!data.ghAvailable;
-    // Restore the remembered filter, but only if that project still has history;
-    // otherwise fall back to All Projects (the default).
-    const saved = localStorage.getItem(HISTORY_FILTER_KEY) || '';
-    state.historyFilter = saved && state.historyAll.some((p) => p && p.projectKey === saved) ? saved : '';
-    paintHistory();
-  } catch (e) {
-    renderHistoryError(e.message);
+    const raw = localStorage.getItem(HISTORY_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw);                              // try/catch mirrors the ws parse guard
+    if (!c || c.v !== HISTORY_CACHE_VER || !Array.isArray(c.pipelines)) {
+      localStorage.removeItem(HISTORY_CACHE_KEY);           // version/shape bust -> forget the bad blob
+      return null;
+    }
+    return c;
+  } catch { localStorage.removeItem(HISTORY_CACHE_KEY); return null; }  // parse bust
+}
+
+function writeHistoryCache(pipelines, ghAvailable) {
+  try {
+    const slim = pipelines.slice(0, HISTORY_CACHE_MAX).map(({ pr, ...rest }) => rest); // never persist live PR
+    localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(
+      { v: HISTORY_CACHE_VER, ts: Date.now(), ghAvailable: !!ghAvailable, pipelines: slim }));
+  } catch { /* quota / serialization: skip cache, never throw */ }
+}
+
+// Refresh re-fetches /api/history with force:true (bypass the cache, always show
+// the spinner + re-trigger Phase 2). Other callers (showView/onHello) stay
+// cache-first. The active filter is preserved (it lives in localStorage).
+el.refreshHistory.addEventListener('click', () => loadHistoryView({ force: true }));
+
+let historyLoadToken = 0;                 // monotonically increasing; newest wins (per-tab)
+let historyInFlight = null;               // AbortController for the current skeleton fetch
+
+async function loadHistoryView({ force = false } = {}) {
+  const token = ++historyLoadToken;       // any earlier resolved fetch/push is now stale
+  if (historyInFlight) { try { historyInFlight.abort(); } catch {} }
+  const ac = new AbortController();
+  historyInFlight = ac;
+
+  // (A1) Instant paint from cache — UNLESS this is a force-refresh.
+  if (!force) {
+    const cached = readHistoryCache();
+    if (cached) {
+      state.historyAll = cached.pipelines;
+      state.ghAvailable = cached.ghAvailable;
+      restoreHistoryFilter();
+      paintHistory();                     // instant; cards show Create-PR in its neutral state
+    }
   }
+  setHistoryLoading(true);                // spinner + disable Refresh
+
+  let res, data;
+  try {
+    res = await fetch('/api/history', { signal: ac.signal });
+    data = await safeJson(res);
+  } catch (e) {
+    if (e.name === 'AbortError') return;                 // superseded; newer load owns the spinner
+    if (token !== historyLoadToken) return;
+    if (!state.historyAll.length) renderHistoryError(e.message);  // else keep the stale paint
+    setHistoryLoading(false);
+    return;
+  }
+  if (token !== historyLoadToken) return;                // a newer load won the race -> drop
+  if (!res.ok) {
+    if (!state.historyAll.length) renderHistoryError((data && data.error) || `HTTP ${res.status}`);
+    setHistoryLoading(false);
+    return;
+  }
+  const pipelines = Array.isArray(data.pipelines) ? data.pipelines : [];
+  state.historyAll = pipelines;
+  state.ghAvailable = !!data.ghAvailable;
+  restoreHistoryFilter();
+  paintHistory();                                        // fresh skeleton repaint
+  if (pipelines.length) writeHistoryCache(pipelines, data.ghAvailable);  // never cache empty/error
+  requestHistoryPr(token);                               // Phase 2: ask server to push gh enrichment
+  // NOTE: the spinner intentionally stays ON here; onHistoryPr (or the watchdog) clears it.
+}
+
+// Restore the remembered filter, but only if that project still has history;
+// otherwise fall back to All Projects (the default).
+function restoreHistoryFilter() {
+  const saved = localStorage.getItem(HISTORY_FILTER_KEY) || '';
+  state.historyFilter = saved && state.historyAll.some((p) => p && p.projectKey === saved) ? saved : '';
+}
+
+// Loading affordance for Refresh: disable + spin the button and mark the list
+// aria-busy. Mirrors the per-button busy idiom in setupPrButton/setupDeleteButton.
+function setHistoryLoading(on) {
+  const btn = el.refreshHistory;                         // #refresh-history
+  if (btn) { btn.disabled = !!on; btn.classList.toggle('busy', !!on); }
+  if (el.history) el.history.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+
+// Phase-2 trigger + WS handler. The spinner stays on through PR enrichment and is
+// cleared by the final batch, a failed/!ok POST, or the per-token watchdog — so it
+// provably always clears even if the WS `done` batch is never delivered.
+const HISTORY_PR_TIMEOUT_MS = 15000;
+let historyPrWatchdog = null;
+
+function clearHistoryPrWatchdog() {
+  if (historyPrWatchdog) { clearTimeout(historyPrWatchdog); historyPrWatchdog = null; }
+}
+
+function requestHistoryPr(token) {
+  clearHistoryPrWatchdog();
+  historyPrWatchdog = setTimeout(() => {                       // terminal fallback
+    if (token === historyLoadToken) setHistoryLoading(false);
+    historyPrWatchdog = null;
+  }, HISTORY_PR_TIMEOUT_MS);
+  // In Node-backed test runners the timer would keep the event loop alive; unref it
+  // there. In a real browser setTimeout returns a number, so this is a no-op.
+  if (historyPrWatchdog && typeof historyPrWatchdog.unref === 'function') historyPrWatchdog.unref();
+
+  fetch('/api/history/pr', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+  })
+    .then((r) => { if (!r || !r.ok) throw new Error(`history-pr ${r ? r.status : 'failed'}`); })
+    .catch(() => {                                             // network error OR !res.ok
+      if (token === historyLoadToken) { setHistoryLoading(false); clearHistoryPrWatchdog(); }
+    });
+}
+
+// Dispatched from handleServerMessage for {type:'history-pr'} frames.
+function onHistoryPr(msg) {
+  if (!msg || msg.token !== historyLoadToken) return;        // stale batch from a superseded load -> drop
+  const items = Array.isArray(msg.items) ? msg.items : [];
+  for (const it of items) patchHistoryPr(it);                // model + DOM, in place
+  if (msg.done) { setHistoryLoading(false); clearHistoryPrWatchdog(); }  // final batch clears the spinner
+}
+
+// Escape a value for use inside a quoted attribute selector. Prefers CSS.escape;
+// the fallback escapes the chars that would break `[attr="..."]`.
+function cssEscape(s) {
+  s = String(s == null ? '' : s);
+  return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
+}
+
+// Rebuild the .hist-merge + .hist-pr nodes from the template so a re-patch (e.g. a
+// Refresh after a link was already rendered) starts from the Create-PR BUTTON again:
+// setupPrButton early-returns if it cannot find `.hist-pr` (a prior button->link
+// swap did btn.replaceWith(link)), so that swap must be undone first. Cloning fresh
+// nodes also drops any click listener a prior setupPrButton attached.
+function resetPrCluster(card) {
+  const aside = card.querySelector('.hist-aside');
+  if (!aside) return;
+  const tpl = $('#hist-card-tpl').content;
+  const freshMerge = tpl.querySelector('.hist-merge').cloneNode(true);  // <span class="hist-merge" hidden>
+  const freshPr = tpl.querySelector('.hist-pr').cloneNode(true);        // <button class="hist-pr btn-ghost" hidden>
+  const curMerge = aside.querySelector('.hist-merge');
+  const curPr = aside.querySelector('.hist-pr, .hist-pr-link');         // button OR the swapped-in link
+  if (curMerge) curMerge.replaceWith(freshMerge); else aside.appendChild(freshMerge);
+  if (curPr) curPr.replaceWith(freshPr); else aside.appendChild(freshPr);
+}
+
+function patchHistoryPr({ projectKey, id, pr }) {
+  // 1) Update the in-memory model (by id AND projectKey) so a later paintHistory()
+  //    (e.g. a filter click) does NOT revert the card to its pr-less state.
+  const row = state.historyAll.find((r) => r && r.id === id && r.projectKey === projectKey);
+  if (row) row.pr = pr || null;
+
+  // 2) Patch ONLY the matching live card in place. NEVER call paintHistory() here —
+  //    a full repaint blows away expand state + the lazily-fetched stepper.
+  const sel = `.hist-card[data-pipeline-id="${cssEscape(id)}"][data-project-key="${cssEscape(projectKey)}"]`;
+  const card = el.history.querySelector(sel);
+  if (!card) return;                                         // off-screen (filtered out) — model is enough
+  resetPrCluster(card);
+  setupPrButton(card, row?.projectDir || null, row || { id, projectKey, pr }, state.ghAvailable);
+  // No setMergePill: clarification B — merged-or-not is shown by the link swap inside
+  // setupPrButton (OPEN->"View PR", MERGED->"Merged"); the .hist-merge pill stays hidden.
 }
 
 // Distinct projects present in the dataset, in most-recent-activity order
@@ -3798,6 +3960,7 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   const node = tpl.content.firstElementChild.cloneNode(true);
   const id = p.id || '';
   node.dataset.pipelineId = id;
+  node.dataset.projectKey = p.projectKey || ''; // composite key for the §3.6 in-place PR patch selector
 
   const badge = node.querySelector('.badge');
   if (badge) {

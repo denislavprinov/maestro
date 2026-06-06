@@ -335,6 +335,35 @@ test('History card without a saved manifest still renders the legacy six', async
   assert.ok([...detail.querySelectorAll('.stage')].every((s) => s.classList.contains('s-done')));
 });
 
+test('Refresh shows a busy spinner/disabled affordance, cleared by the final history-pr batch', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') && !url.endsWith('/api/history/pr')
+      ? runsListResponse([{ id: 'p1', title: 'Feat', status: 'done', startedAt: '2026-01-01T00:00:00Z', projectKey: 'k1', projectName: 'K1' }])
+      : null),
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+
+  const doc = ctx.window.document;
+  const btn = doc.querySelector('#refresh-history');
+  btn.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // force refresh
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(btn.disabled, true, 'Refresh disabled while loading');
+  assert.ok(btn.classList.contains('busy'), 'Refresh shows the busy spinner');
+  assert.equal(doc.querySelector('#history').getAttribute('aria-busy'), 'true', 'list marked aria-busy');
+
+  // The final Phase-2 batch (done:true) for the current token clears the affordance.
+  const posts = ctx.calls.filter((c) => c.url.endsWith('/api/history/pr') && c.opts.body);
+  const token = JSON.parse(posts.at(-1).opts.body).token;
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'history-pr', token, done: true, items: [] }) });
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(btn.disabled, false, 'Refresh re-enabled after the final batch');
+  assert.ok(!btn.classList.contains('busy'), 'busy spinner cleared');
+  assert.equal(doc.querySelector('#history').getAttribute('aria-busy'), 'false', 'aria-busy cleared');
+});
+
 test('History card shows per-node model·effort from the saved manifest', async () => {
   const customState = {
     status: 'done', phase: 'done', cycle: 0, steps: [],

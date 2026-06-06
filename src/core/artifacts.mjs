@@ -531,37 +531,42 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 }
 
 /**
- * Walk one workspace key dir, pushing a row per pipeline. A workspace row carries
- * the literal store-relative composite key "workspaces/<wkey>" (round-trips through
- * projectStorePath) and target:'workspace'; name/primary-dir come from the
- * workspace meta. Live branch facts are best-effort against the primary repo only.
+ * Enumerate (but do NOT build) every pipeline row for one workspace key. The
+ * expensive per-pipeline git work runs later, in parallel batches. Mirrors the
+ * exact field tagging the old inline push did (projectKey/projectName/
+ * workspaceName/projectDir/target) — primaryDir = meta.projectPaths[0]. Returns
+ * task descriptors so no shared array is mutated concurrently.
  */
-async function pushWorkspaceRows(out, wkey, opts) {
+async function workspaceRowTasks(wkey, opts) {
   const keyDir = join(workspacesStoreRoot(), wkey);
   let meta = null;
   try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; }
   const primaryDir = Array.isArray(meta?.projectPaths) ? (meta.projectPaths[0] ?? null) : null;
   const pipelinesDir = join(keyDir, 'pipelines');
   let entries;
-  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return; }
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    const e = await pipelineEntry(join(pipelinesDir, ent.name), primaryDir, opts);
-    e.projectKey = `workspaces/${wkey}`;
-    e.projectName = meta?.name ?? wkey;
-    e.workspaceName = meta?.name ?? wkey; // explicit field the History UI prefers
-    e.projectDir = primaryDir;
-    e.target = 'workspace';
-    out.push(e);
-  }
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return []; }
+  const tag = {
+    projectKey: `workspaces/${wkey}`,
+    projectName: meta?.name ?? wkey,
+    workspaceName: meta?.name ?? wkey, // explicit field the History UI prefers
+    projectDir: primaryDir,
+    target: 'workspace',
+  };
+  return entries
+    .filter((ent) => ent.isDirectory())
+    .map((ent) => ({ dir: join(pipelinesDir, ent.name), projectDir: primaryDir, tag, opts }));
 }
 
-/** Every pipeline across every store key, newest-first, tagged with project. */
-export async function listAllPipelines(opts = {}) {
+/** Every pipeline across every store key, newest-first, tagged with project.
+ *  The per-pipeline build (which spawns git/gh) runs in parallel batches so a
+ *  large store does not pay N serialized git round-trips. Wire format unchanged. */
+export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const root = storeRoot();
   let keys;
   try { keys = await readdir(root, { withFileTypes: true }); } catch { return []; }
-  const out = [];
+
+  // Phase 1 — cheap enumeration only (readdir + meta.json reads, no git).
+  const tasks = [];
   for (const k of keys) {
     if (!k.isDirectory()) continue;
     // The "workspaces" entry is a CONTAINER, not a pipeline-bearing key: recurse one
@@ -571,7 +576,7 @@ export async function listAllPipelines(opts = {}) {
       try { wkeys = await readdir(join(root, k.name), { withFileTypes: true }); } catch { continue; }
       for (const wk of wkeys) {
         if (!wk.isDirectory()) continue;
-        await pushWorkspaceRows(out, wk.name, opts);
+        tasks.push(...(await workspaceRowTasks(wk.name, opts)));
       }
       continue;
     }
@@ -581,17 +586,54 @@ export async function listAllPipelines(opts = {}) {
     const pipelinesDir = join(keyDir, 'pipelines');
     let entries;
     try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { continue; }
+    const tag = { projectKey: k.name, projectName: meta?.name ?? k.name, projectDir: meta?.path ?? null };
     for (const ent of entries) {
       if (!ent.isDirectory()) continue;
-      const e = await pipelineEntry(join(pipelinesDir, ent.name), meta?.path ?? null, opts);
-      e.projectKey = k.name;
-      e.projectName = meta?.name ?? k.name;
-      e.projectDir = meta?.path ?? null;
-      out.push(e);
+      tasks.push({ dir: join(pipelinesDir, ent.name), projectDir: meta?.path ?? null, tag, opts });
     }
   }
-  out.sort((a, b) => b.mtime - a.mtime);
+
+  // Phase 2 — build rows in parallel, capped at `batchSize` concurrent git/gh fans.
+  const out = [];
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const rows = await Promise.all(tasks.slice(i, i + batchSize).map(async (t) => {
+      const e = await pipelineEntry(t.dir, t.projectDir, t.opts);
+      return Object.assign(e, t.tag); // same tag fields as before; tag has no `pr` key
+    }));
+    out.push(...rows);
+  }
+
+  // Newest-first, with a deterministic tiebreaker so equal-mtime rows do not
+  // reorder run-to-run now that build order is non-deterministic (parallel).
+  out.sort((a, b) =>
+    (b.mtime - a.mtime) ||
+    (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0) ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return out;
+}
+
+/**
+ * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
+ * in parallel batches. v1 sends ONLY `pr` (state OPEN/MERGED or null) —
+ * findPrForBranch already distinguishes merged-vs-open. We do NOT compute live
+ * mergeability (no prMergeable call). `onBatch(items, isFinal)` is awaited so a
+ * caller can broadcast incrementally; the FINAL call always carries isFinal=true
+ * (even with no gh / no targets) so a client spinner provably clears.
+ */
+export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
+  if (!(await hasGh())) { await onBatch([], true); return; } // no gh: one empty final batch
+  const rows = await listAllPipelines();                     // skeleton (no withPr), parallelized
+  const targets = rows.filter((r) => r.projectDir && r.branch);
+  if (targets.length === 0) { await onBatch([], true); return; }
+  for (let i = 0; i < targets.length; i += batchSize) {
+    const slice = targets.slice(i, i + batchSize);
+    const items = await Promise.all(slice.map(async (r) => ({
+      projectKey: r.projectKey,
+      id: r.id,
+      pr: (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null,
+    })));
+    await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
+  }
 }
 
 /**

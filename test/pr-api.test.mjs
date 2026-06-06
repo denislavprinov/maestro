@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
+import { projectKey } from '../src/core/store.mjs';
 
 let srv, base, home, prevHome;
 
@@ -80,15 +81,46 @@ test('GET /api/history exposes ghAvailable', async () => {
   assert.equal(j.ghAvailable, true);
 });
 
-test('GET /api/history attaches live pr state to entries', async () => {
+test('GET /api/history is PR-light: no inline pr even when an OPEN PR exists', async () => {
+  // The live PR state now rides the WS (POST /api/history/pr -> history-pr events),
+  // so the machine-wide skeleton must NOT attach pr inline or spend `gh pr list`.
+  let prListCalled = false;
   gitInfo.setRunner((cmd, args) => {
-    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+      prListCalled = true;
       return Promise.resolve({ ok: true, stdout: JSON.stringify([{ number: 4, state: 'OPEN', url: 'https://gh/b/pull/4' }]), stderr: '', code: 0 });
+    }
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
   const j = await (await fetch(`${base}/api/history`)).json();
   const row = j.pipelines.find((p) => p.id === 'pp');
-  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/b/pull/4', number: 4 });
+  assert.equal('pr' in row, false, 'history skeleton omits inline pr');
+  assert.equal(prListCalled, false, 'GET /api/history does not run `gh pr list`');
+});
+
+test('GET /api/runs?projectDir still returns inline pr (per-project withPr unchanged)', async () => {
+  // Only /api/history went two-phase; the per-project /api/runs arm KEEPS withPr:true
+  // and must still attach pr inline. Seed under the real projectKey so the lookup hits.
+  const repoDir = await mkdtemp(join(tmpdir(), 'maestro-runs-repo-'));
+  const key = projectKey(repoDir);
+  const dir = join(home, '.maestro', 'store', key, 'pipelines', 'rp');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'state.json'), JSON.stringify({
+    id: 'rp', title: 'Runs feat', status: 'stopped', projectDir: repoDir,
+    branch: { source: 'main', feature: 'maestro/runs-rp', branchKept: true },
+  }), 'utf8');
+  await writeFile(join(home, '.maestro', 'store', key, 'meta.json'),
+    JSON.stringify({ key, name: 'RunsRepo', path: repoDir }), 'utf8');
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')
+      return Promise.resolve({ ok: true, stdout: JSON.stringify([{ number: 9, state: 'OPEN', url: 'https://gh/r/pull/9' }]), stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+  const j = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(repoDir)}`)).json();
+  const row = j.pipelines.find((p) => p.id === 'rp');
+  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
 });

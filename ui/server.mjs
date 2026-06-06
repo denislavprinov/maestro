@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { listPipelines, readPipeline, listAllPipelines, readPipelineByKey } from '../src/core/artifacts.mjs';
+import { listPipelines, readPipeline, listAllPipelines, readPipelineByKey, enrichPipelinesPr } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import {
@@ -660,9 +660,29 @@ app.get('/api/runs/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/history', async (_req, res) => {
   try {
-    res.json({ pipelines: (await listAllPipelines({ withPr: true })) || [], ghAvailable: await hasGh() });
+    // Phase 1: PR-light skeleton (no `gh pr list`). Live PR state is pushed
+    // separately over the WS by POST /api/history/pr -> enrichPipelinesPr.
+    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/history/pr  -> enrich the skeleton with live PR state, pushed back
+// over the WS as batched `history-pr` events (reuses broadcast(), the same
+// fire-to-every-socket primitive wireRun/wireScan use). The body's `token`
+// echoes the client's load token so it can drop stale batches after a newer
+// Refresh. Responds 200 immediately; results arrive asynchronously.
+// ---------------------------------------------------------------------------
+app.post('/api/history/pr', async (req, res) => {
+  const token = Number(req.body && req.body.token) || 0;
+  res.json({ ok: true }); // results arrive over WS
+  try {
+    await enrichPipelinesPr((items, done) =>
+      broadcast({ type: 'history-pr', token, done, items }));
+  } catch {
+    broadcast({ type: 'history-pr', token, done: true, items: [] }); // always terminate the spinner
   }
 });
 
