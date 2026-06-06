@@ -13,6 +13,9 @@ import { maestroHome } from './projects.mjs';
 
 let _db = null; // the singleton handle, or null when closed/never-opened
 
+/** WAL busy-timeout: wait up to 5s for a competing writer (CLI + UI). */
+const BUSY_TIMEOUT_MS = 5000;
+
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
   return join(maestroHome(), 'maestro.db');
@@ -28,8 +31,24 @@ export function getDb() {
   if (_db) return _db;
   const home = maestroHome();
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
-  _db = new DatabaseSync(dbPath());
+  const db = new DatabaseSync(dbPath());
+  _configure(db);
+  _db = db;
   return _db;
+}
+
+/**
+ * Apply the connection pragmas exactly once on open. journal_mode=WAL is durable
+ * (sticks to the file); foreign_keys/busy_timeout/synchronous are per-connection
+ * and must be re-applied every open. Done via exec() in one batch.
+ */
+function _configure(db) {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};
+    PRAGMA synchronous = NORMAL;
+  `);
 }
 
 /** Close the singleton handle (no-op when already closed). */

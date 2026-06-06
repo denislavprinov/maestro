@@ -51,3 +51,18 @@ test('closeDb() then getDb() reopens a fresh handle', () => {
   const b = getDb();
   assert.notEqual(a, b, 'a new handle is created after closeDb()');
 });
+
+test('first open sets the required pragmas', () => {
+  const db = getDb();
+  const jm = db.prepare('PRAGMA journal_mode').get();
+  assert.equal(String(jm.journal_mode).toLowerCase(), 'wal', 'journal_mode=WAL');
+
+  const fk = db.prepare('PRAGMA foreign_keys').get();
+  assert.equal(fk.foreign_keys, 1, 'foreign_keys=ON');
+
+  const bt = db.prepare('PRAGMA busy_timeout').get();
+  assert.equal(bt.timeout, 5000, 'busy_timeout=5000ms');
+
+  const sy = db.prepare('PRAGMA synchronous').get();
+  assert.equal(sy.synchronous, 1, 'synchronous=NORMAL (1)');
+});
