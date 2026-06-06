@@ -7,11 +7,11 @@
 // self-describing: each gets a directory containing the prompt, any extra files,
 // a human-readable audit log (pipeline.md), and machine state (state.json).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { projectKey, projectStorePath, canonicalProjectRoot, storeRoot, workspaceStorePath, workspacesStoreRoot } from './store.mjs';
+import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
@@ -654,194 +654,194 @@ function toPipelineRow(o) {
 }
 
 /**
- * The pipeline's total spend for the history list. Prefer the persisted
- * `totalCostUsd`; when it is missing/non-number (older or partially written
- * state.json), fall back to summing per-step `costUsd` so a run that recorded
- * step costs is never shown as blank. Returns null only when there is genuinely
- * no cost data at all.
- * @param {object|null} state
- * @returns {number|null}
+ * The pipeline's {cost, active} totals for the history list, read from the DB row.
+ * Normal runs carry NOT-NULL 0-defaulted totals, so when a total is > 0 it is used
+ * verbatim and NO extra query runs. Only when a total is 0 do we fall back to the
+ * per-step SUM/COUNT (the DB-native equivalent of the old pipelineTotalCost/
+ * pipelineTotalActiveMs step-sum): COUNT=0 ⇒ null (genuinely no figures anywhere ⇒
+ * the UI shows a blank chip), else the SUM (which may be a recorded $0 / 0ms). This
+ * matches the legacy "recorded $0 shows, absent shows blank" semantics without
+ * needing NULL in the NOT-NULL-DEFAULT-0 columns.
+ * @param {object} row a pipelines DB row (total_cost_usd / total_active_ms)
+ * @returns {{cost:number|null, active:number|null}}
  */
-function pipelineTotalCost(state) {
-  if (typeof state?.totalCostUsd === 'number') return state.totalCostUsd;
-  let sum = 0;
-  let any = false;
-  for (const s of Array.isArray(state?.steps) ? state.steps : []) {
-    if (Number.isFinite(s?.costUsd)) {
-      sum += s.costUsd;
-      any = true;
-    }
-  }
-  return any ? Math.round(sum * 1e4) / 1e4 : null;
+function totalsFor(row) {
+  const agg = getDb().prepare(`
+    SELECT COUNT(cost_usd) cc, SUM(cost_usd) sc, COUNT(active_ms) ca, SUM(active_ms) sa
+    FROM pipeline_steps WHERE pipeline_id = ?
+  `).get(row.id) || {};
+  const cost = row.total_cost_usd > 0
+    ? row.total_cost_usd
+    : (agg.cc ? Math.round((agg.sc || 0) * 1e4) / 1e4 : null);
+  const active = row.total_active_ms > 0
+    ? row.total_active_ms
+    : (agg.ca ? (agg.sa || 0) : null);
+  return { cost, active };
 }
 
 /**
- * The pipeline's total active processing time (ms) for the history list. Prefer
- * the persisted `totalActiveMs`; fall back to summing per-step `activeMs` for
- * older/partial state.json. Returns null only when there's no timing data at all
- * (so the UI renders a blank chip rather than a misleading 0s).
- * @param {object|null} state
- * @returns {number|null}
+ * Build a history row from a pipelines DB row. Mirrors the legacy pipelineEntry
+ * wire shape EXACTLY: { id, dir, title, status, startedAt, branch, sourceBranch,
+ * survived, added, removed, totalCostUsd, totalActiveMs, mtime[, pr] }. Git/PR work
+ * (branchExists / diffShortstat / findPrForBranch) is UNCHANGED — it still shells
+ * out — and is fed the DB row's branch JSON instead of a parsed state.json.
+ *  - `branch` (wire) = state.branch.feature; `sourceBranch` = state.branch.source.
+ *  - `mtime` maps to updated_at parsed to ms (a SORT KEY only; never displayed).
+ *  - `row.dir` is attached by the caller (the real on-disk run dir).
+ * @param {object} row a pipelines row (incl. row.dir set by the caller)
+ * @param {string|null} repoDir git repo root for live branch facts
+ * @param {object} opts { withPr? }
  */
-function pipelineTotalActiveMs(state) {
-  if (typeof state?.totalActiveMs === 'number') return state.totalActiveMs;
-  let sum = 0;
-  let any = false;
-  for (const s of Array.isArray(state?.steps) ? state.steps : []) {
-    if (Number.isFinite(s?.activeMs)) { sum += s.activeMs; any = true; }
-  }
-  return any ? sum : null;
-}
-
-/** Build one history row from a pipeline directory. Never throws.
- *  `projectDir` is the git repo root used to compute live branch facts
- *  (survival + diff line-counts); falls back to state.projectDir. */
-async function pipelineEntry(dir, projectDir = null, opts = {}) {
-  let mtime = 0;
-  try { mtime = (await stat(dir)).mtimeMs; } catch { /* ignore */ }
-  let state = null;
-  try { state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')); } catch { state = null; }
-  const branch = state?.branch?.feature ?? (typeof state?.branch === 'string' ? state.branch : null);
-  const sourceBranch = state?.branch?.source ?? null;
-
-  // Live git facts: a branch "survived" iff its ref still exists in the repo; line
-  // counts come from `git diff --shortstat <source>...<feature>` recomputed now.
-  const repoDir = projectDir || state?.projectDir || null;
+async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
+  const branchObj = j(row.branch, null);
+  const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
+  const source = branchObj?.source ?? null;
   let survived = false;
   let added = 0;
   let removed = 0;
-  if (repoDir && branch) {
-    survived = await branchExists(repoDir, branch);
-    if (survived && sourceBranch) {
-      const d = await diffShortstat(repoDir, sourceBranch, branch);
+  if (repoDir && feature) {
+    survived = await branchExists(repoDir, feature);
+    if (survived && source) {
+      const d = await diffShortstat(repoDir, source, feature);
       added = d.added;
       removed = d.removed;
     }
   }
-
+  const { cost, active } = totalsFor(row);
   const entry = {
-    id: state?.id ?? basename(dir),
-    dir,
-    title: state?.title ?? basename(dir),
-    status: state?.status ?? 'unknown',
-    startedAt: state?.startedAt ?? null,
-    branch,
-    sourceBranch,
+    id: row.id,
+    dir: row.dir,
+    title: row.title ?? row.id,
+    status: row.status ?? 'unknown',
+    startedAt: row.started_at ?? null,
+    branch: feature,
+    sourceBranch: source,
     survived,
     added,
     removed,
-    totalCostUsd: pipelineTotalCost(state),
-    totalActiveMs: pipelineTotalActiveMs(state),
-    mtime,
+    totalCostUsd: cost,
+    totalActiveMs: active,
+    mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
-
-  // Live PR state (opt-in; only the UI history endpoints request it). One gh call
-  // per entry that has a feature branch — including merged branches that no longer
-  // exist locally, which is exactly the "already merged" case we must detect. When
-  // gh is unavailable we still set pr:null (the field is present whenever requested),
-  // so callers can distinguish "looked, none" from "did not look".
-  if (opts.withPr && repoDir && branch) {
-    entry.pr = (await hasGh()) ? await findPrForBranch({ projectDir: repoDir, head: branch }) : null;
+  // Live PR state (opt-in; only the UI history endpoints request it). When gh is
+  // unavailable we still set pr:null (the field is present whenever requested), so
+  // callers can distinguish "looked, none" from "did not look".
+  if (opts.withPr && repoDir && feature) {
+    entry.pr = (await hasGh()) ? await findPrForBranch({ projectDir: repoDir, head: feature }) : null;
   }
-
   return entry;
 }
 
 /**
- * List all pipelines for a project, newest first.
- * Each entry: { id, dir, title, status, startedAt, branch, totalCostUsd, totalActiveMs, mtime }.
- * Directories without a readable state.json fall back to filesystem metadata.
+ * Map every run dir under `pipelinesDir` to its 8-hex id (parsed from the
+ * basename). One readdir; used to attach the real on-disk `dir` to a DB-sourced
+ * history row and to locate a run for detail/delete. Returns an empty Map when the
+ * dir is absent. This is O(#runs in that key), not a git scan, and runs ONCE per
+ * store key — not once per pipeline.
+ * @param {string} pipelinesDir
+ * @returns {Promise<Map<string,string>>} id (lowercase 8-hex) -> absolute run dir
+ */
+async function runDirIndex(pipelinesDir) {
+  const map = new Map();
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return map; }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const m = DIR_ID_RE.exec(ent.name);
+    if (m) map.set(m[1].toLowerCase(), join(pipelinesDir, ent.name));
+  }
+  return map;
+}
+
+/**
+ * List all pipelines for a project (or workspace, when `workspaceKey` is set),
+ * newest first. SELECTs from the pipelines table via the spec indexes
+ * (idx_pipelines_project_started / idx_pipelines_workspace_started), replacing the
+ * O(N) readdir + per-dir state.json parse. The wire shape (§0.6) is unchanged; the
+ * real on-disk run dir is resolved by a single readdir per store key (runDirIndex).
  * @param {string} projectDir
+ * @param {object} [opts] { withPr? }
+ * @param {string} [workspaceKey] route to the workspace store + filter on it
  * @returns {Promise<Array>}
  */
 export async function listPipelines(projectDir, opts = {}, workspaceKey) {
-  const { pipelines } = artifactPaths(projectDir, workspaceKey);
-  let entries;
-  try { entries = await readdir(pipelines, { withFileTypes: true }); } catch { return []; }
+  const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
+  const dirById = await runDirIndex(pipelinesDir);
+  const rows = getDb().prepare(`
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    FROM pipelines
+    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'}
+    ORDER BY started_at DESC
+  `).all(workspaceKey ? workspaceKey : projectKey(projectDir));
   const out = [];
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    out.push(await pipelineEntry(join(pipelines, ent.name), projectDir, opts));
+  for (const row of rows) {
+    row.dir = dirById.get(row.id) || join(pipelinesDir, row.id);
+    out.push(await rowToHistoryEntry(row, projectDir, opts));
   }
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
 }
 
-/**
- * Enumerate (but do NOT build) every pipeline row for one workspace key. The
- * expensive per-pipeline git work runs later, in parallel batches. Mirrors the
- * exact field tagging the old inline push did (projectKey/projectName/
- * workspaceName/projectDir/target) — primaryDir = meta.projectPaths[0]. Returns
- * task descriptors so no shared array is mutated concurrently.
- */
-async function workspaceRowTasks(wkey, opts) {
-  const keyDir = join(workspacesStoreRoot(), wkey);
-  // Meta now lives in store_meta (Phase 3.2); fall back to a legacy meta.json file
-  // for stores written before the migration. (Task 3.6 formalizes the read path.)
-  let meta = readStoreMeta(wkey);
-  if (!meta) { try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; } }
-  const primaryDir = Array.isArray(meta?.projectPaths) ? (meta.projectPaths[0] ?? null) : null;
-  const pipelinesDir = join(keyDir, 'pipelines');
-  let entries;
-  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return []; }
-  const tag = {
-    projectKey: `workspaces/${wkey}`,
-    projectName: meta?.name ?? wkey,
-    workspaceName: meta?.name ?? wkey, // explicit field the History UI prefers
-    projectDir: primaryDir,
-    target: 'workspace',
-  };
-  return entries
-    .filter((ent) => ent.isDirectory())
-    .map((ent) => ({ dir: join(pipelinesDir, ent.name), projectDir: primaryDir, tag, opts }));
-}
-
-/** Every pipeline across every store key, newest-first, tagged with project.
- *  The per-pipeline build (which spawns git/gh) runs in parallel batches so a
- *  large store does not pay N serialized git round-trips. Wire format unchanged. */
+/** Every pipeline across every store key, newest-first, tagged with project. One
+ *  SQL scan over pipelines replaces the store-tree walk; project/workspace names
+ *  come from store_meta rows. The per-pipeline build (which still spawns git/gh)
+ *  runs in parallel batches so a large store does not pay N serialized git
+ *  round-trips. Wire format (§0.6) unchanged: project rows tag {projectKey,
+ *  projectName, projectDir}; workspace rows tag {projectKey:"workspaces/<wk>",
+ *  projectName, workspaceName, projectDir:primaryPath, target:'workspace'}. */
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
-  const root = storeRoot();
-  let keys;
-  try { keys = await readdir(root, { withFileTypes: true }); } catch { return []; }
+  const rows = getDb().prepare(`
+    SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
+           total_cost_usd, total_active_ms, branch, workspace_meta
+    FROM pipelines
+    ORDER BY started_at DESC
+  `).all();
 
-  // Phase 1 — cheap enumeration only (readdir + meta.json reads, no git).
-  const tasks = [];
-  for (const k of keys) {
-    if (!k.isDirectory()) continue;
-    // The "workspaces" entry is a CONTAINER, not a pipeline-bearing key: recurse one
-    // level and treat each <workspaceKey>/ child as a key dir.
-    if (k.name === 'workspaces') {
-      let wkeys;
-      try { wkeys = await readdir(join(root, k.name), { withFileTypes: true }); } catch { continue; }
-      for (const wk of wkeys) {
-        if (!wk.isDirectory()) continue;
-        tasks.push(...(await workspaceRowTasks(wk.name, opts)));
-      }
-      continue;
+  const metaCache = new Map(); // store key -> meta object (or null)
+  const meta = (k) => {
+    if (metaCache.has(k)) return metaCache.get(k);
+    const m = readStoreMeta(k); metaCache.set(k, m); return m;
+  };
+  const dirIndexCache = new Map(); // pipelinesDir -> (id->dir) map
+
+  // Phase 1 — cheap tagging + repoDir + pipelinesDir resolution per row (no git).
+  const tasks = rows.map((row) => {
+    const isWs = row.target === 'workspace' && row.workspace_key;
+    const storeKey = isWs ? `workspaces/${row.workspace_key}` : row.project_key;
+    const pipelinesDir = join(projectStorePath(storeKey), 'pipelines');
+    let tag;
+    let repoDir;
+    if (isWs) {
+      const m = meta(row.workspace_key);
+      const primary = Array.isArray(m?.projectPaths) ? (m.projectPaths[0] ?? null) : null;
+      tag = {
+        projectKey: `workspaces/${row.workspace_key}`,
+        projectName: m?.name ?? row.workspace_key,
+        workspaceName: m?.name ?? row.workspace_key, // explicit field the History UI prefers
+        projectDir: primary,
+        target: 'workspace',
+      };
+      repoDir = primary;
+    } else {
+      const m = meta(row.project_key);
+      tag = { projectKey: row.project_key, projectName: m?.name ?? row.project_key, projectDir: m?.path ?? null };
+      repoDir = m?.path ?? null;
     }
-    const keyDir = join(root, k.name);
-    // Meta now lives in store_meta (Phase 3.2); fall back to a legacy meta.json file
-    // for stores written before the migration. (Task 3.6 formalizes the read path.)
-    let meta = readStoreMeta(k.name);
-    if (!meta) { try { meta = JSON.parse(await readFile(join(keyDir, 'meta.json'), 'utf8')); } catch { meta = null; } }
-    const pipelinesDir = join(keyDir, 'pipelines');
-    let entries;
-    try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { continue; }
-    const tag = { projectKey: k.name, projectName: meta?.name ?? k.name, projectDir: meta?.path ?? null };
-    for (const ent of entries) {
-      if (!ent.isDirectory()) continue;
-      tasks.push({ dir: join(pipelinesDir, ent.name), projectDir: meta?.path ?? null, tag, opts });
-    }
-  }
+    return { row, tag, repoDir, pipelinesDir };
+  });
 
   // Phase 2 — build rows in parallel, capped at `batchSize` concurrent git/gh fans.
   const out = [];
   for (let i = 0; i < tasks.length; i += batchSize) {
-    const rows = await Promise.all(tasks.slice(i, i + batchSize).map(async (t) => {
-      const e = await pipelineEntry(t.dir, t.projectDir, t.opts);
+    const slice = tasks.slice(i, i + batchSize);
+    const built = await Promise.all(slice.map(async (t) => {
+      let idx = dirIndexCache.get(t.pipelinesDir);
+      if (!idx) { idx = await runDirIndex(t.pipelinesDir); dirIndexCache.set(t.pipelinesDir, idx); }
+      t.row.dir = idx.get(t.row.id) || join(t.pipelinesDir, t.row.id);
+      const e = await rowToHistoryEntry(t.row, t.repoDir, opts);
       return Object.assign(e, t.tag); // same tag fields as before; tag has no `pr` key
     }));
-    out.push(...rows);
+    out.push(...built);
   }
 
   // Newest-first, with a deterministic tiebreaker so equal-mtime rows do not
@@ -953,12 +953,15 @@ export async function readPipelineByKey(key, id) {
  */
 export async function listWorkspacePipelines(workspaceKey, primaryDir = null, opts = {}) {
   const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
-  let entries;
-  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return []; }
+  const dirById = await runDirIndex(pipelinesDir);
+  const rows = getDb().prepare(`
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    FROM pipelines WHERE workspace_key = ? ORDER BY started_at DESC
+  `).all(workspaceKey);
   const out = [];
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    out.push(await pipelineEntry(join(pipelinesDir, ent.name), primaryDir, opts));
+  for (const row of rows) {
+    row.dir = dirById.get(row.id) || join(pipelinesDir, row.id);
+    out.push(await rowToHistoryEntry(row, primaryDir, opts));
   }
   out.sort((a, b) => b.mtime - a.mtime);
   return out;

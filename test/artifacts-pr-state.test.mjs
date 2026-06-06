@@ -1,20 +1,27 @@
 // test/artifacts-pr-state.test.mjs
+// Phase 3.6 — withPr enrichment is unchanged (still shells out via git-info), now
+// fed DB rows. Fixtures seed pipelines rows (seedPipelineRow) + store_meta instead
+// of state.json + meta.json.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 let home, prevHome, repo;
 
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'maestro-prs-'));
   prevHome = process.env.MAESTRO_HOME; process.env.MAESTRO_HOME = home;
+  _resetForTests(); // open the DB under this temp home
   repo = await mkdtemp(join(tmpdir(), 'maestro-prs-repo-'));
 });
 after(async () => {
   gitInfo.reset();
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
   await rm(repo, { recursive: true, force: true });
@@ -33,13 +40,12 @@ function stubGh({ state = 'OPEN', url = 'https://gh/x/pull/5', number = 5 } = {}
 }
 
 async function seed(id) {
-  const { artifactPaths } = await import('../src/core/artifacts.mjs');
-  const dir = join(artifactPaths(repo).pipelines, id);
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id, title: 'Feat', status: 'done', projectDir: repo,
+  const { projectKey } = await import('../src/core/store.mjs');
+  seedPipelineRow({
+    id, projectKey: projectKey(repo), title: 'Feat', status: 'done',
+    startedAt: '2026-06-01T00:00:00Z',
     branch: { source: 'main', feature: 'maestro/feat-1', branchKept: true },
-  }), 'utf8');
+  });
 }
 
 test('withPr:true attaches the live PR state to each row', async () => {
@@ -53,7 +59,7 @@ test('withPr:true attaches the live PR state to each row', async () => {
 test('withPr defaults off: no pr field, no gh call', async () => {
   const { listPipelines } = await import('../src/core/artifacts.mjs');
   let ghCalled = false;
-  gitInfo.setRunner((cmd, args) => {
+  gitInfo.setRunner((cmd) => {
     if (cmd === 'gh') ghCalled = true;
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
@@ -83,14 +89,14 @@ test('withPr:true with only a closed PR -> pr is null (button re-appears)', asyn
 });
 
 test('enrichPipelinesPr emits {projectKey,id,pr} batches; pr has no mergeable; final done=true', async () => {
-  const { enrichPipelinesPr, artifactPaths } = await import('../src/core/artifacts.mjs');
+  const { enrichPipelinesPr, writeStoreMeta } = await import('../src/core/artifacts.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
   stubGh({ state: 'OPEN', url: 'https://gh/x/pull/7', number: 7 });
   await seed('pp-enrich-a');
   await seed('pp-enrich-b');
-  // listAllPipelines derives each row's projectDir from the store key's meta.json
-  // (createPipeline always writes one); seed it so the rows are PR-enrich targets.
-  await writeFile(join(artifactPaths(repo).root, 'meta.json'),
-    JSON.stringify({ key: 'k', path: repo, name: 'Repo' }), 'utf8');
+  // listAllPipelines derives each row's projectDir from the store_meta row; seed it
+  // so the rows are PR-enrich targets.
+  writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), path: repo, name: 'Repo' });
   const collected = [];
   let finalDone = null;
   await enrichPipelinesPr((items, done) => { collected.push(...items); finalDone = done; }, { batchSize: 1 });
