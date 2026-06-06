@@ -1,22 +1,39 @@
 // test/run-config.test.mjs
-import { test, after } from 'node:test';
+import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  readConfig, setStep, configFile,
+  readConfig, setStep,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow, resolveRunConfig,
 } from '../src/core/config.mjs';
+import { getDb, _resetForTests } from '../src/core/db.mjs';
+import { projectKey } from '../src/core/store.mjs';
 
+// node:sqlite migration: run-config now lives in normalized DB tables. Each test
+// isolates the DB under a throwaway MAESTRO_HOME and resets the singleton.
+const homes = [];
 const dirs = [];
+async function freshHome() {
+  const dir = await mkdtemp(join(tmpdir(), 'maestro-rc-home-'));
+  homes.push(dir);
+  _resetForTests();
+  process.env.MAESTRO_HOME = dir;
+  return dir;
+}
 async function freshProject() {
   const d = await mkdtemp(join(tmpdir(), 'maestro-proj-'));
   dirs.push(d);
   return d;
 }
-after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
+beforeEach(freshHome);
+after(async () => {
+  _resetForTests();
+  delete process.env.MAESTRO_HOME;
+  await Promise.all([...homes, ...dirs].map((d) => rm(d, { recursive: true, force: true })));
+});
 
 test('readRunConfig on a fresh project returns empty workflows and no active id', async () => {
   const p = await freshProject();
@@ -33,9 +50,11 @@ test('setNodeModel persists model+effort keyed by workflowId -> nodeId', async (
   await setNodeModel(p, 'wf_quickfix', 's1_0', { model: 'claude-opus-4-8', effort: 'high' });
   const rc = await readRunConfig(p);
   assert.deepEqual(rc.workflows.wf_quickfix.nodes.s1_0, { model: 'claude-opus-4-8', effort: 'high' });
-  // Written to the SAME file as legacy config.
-  const onDisk = JSON.parse(await readFile(configFile(p), 'utf8'));
-  assert.equal(onDisk.workflows.wf_quickfix.nodes.s1_0.effort, 'high');
+  // Stored as a normalized row in config_workflow_nodes.
+  const row = getDb().prepare(
+    'SELECT effort FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+  ).get(projectKey(p), 'wf_quickfix', 's1_0');
+  assert.equal(row.effort, 'high');
 });
 
 test('setFeedbackCycles persists maxCycles keyed by workflowId -> fbId', async () => {
@@ -120,16 +139,19 @@ test('setNodeModel with only fanOut=false keeps the node entry', async () => {
 });
 
 test('a legacy setStep does NOT wipe the run-config layer or webUiTesting (integrity)', async () => {
-  const p = await mkdtemp(join(tmpdir(), 'maestro-rcint-'));
+  const p = await freshProject();
+  const key = projectKey(p);
   await setNodeModel(p, 'wf_x', 's1_0', { model: 'claude-opus-4-8', effort: 'high' });
-  const file = join(p, '.maestro', 'config.json');
-  const whole = JSON.parse(await readFile(file, 'utf8'));
-  whole.webUiTesting = { startCommand: 'npm run dev', baseUrl: 'http://localhost:5173' };
-  await writeFile(file, JSON.stringify(whole), 'utf8');
+  // seed an unknown top-level key into project_config.extra
+  getDb().prepare(
+    `INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+     VALUES (?, '{}', '[]', NULL, ?)
+     ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra`
+  ).run(key, JSON.stringify({ webUiTesting: { startCommand: 'npm run dev', baseUrl: 'http://localhost:5173' } }));
   await setStep(p, 'reviewer', { model: 'claude-sonnet-4-6', effort: 'high' }); // LEGACY write
 
   const rc = await readRunConfig(p);
   assert.deepEqual(rc.workflows.wf_x.nodes.s1_0, { model: 'claude-opus-4-8', effort: 'high' }, 'run-config survived setStep');
-  assert.equal(rc.webUiTesting.startCommand, 'npm run dev', 'webUiTesting survived setStep + is surfaced by readRunConfig');
+  assert.equal(rc.webUiTesting.startCommand, 'npm run dev', 'webUiTesting (extra) survived setStep');
   assert.deepEqual(rc.steps.reviewer, { model: 'claude-sonnet-4-6', effort: 'high' }, 'the legacy step itself was written');
 });
