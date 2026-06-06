@@ -94,6 +94,20 @@ export function recordArtifact(pipelineId, kind, relPath) {
   } catch { /* artifact indexing is best-effort; never break a run on it */ }
 }
 
+/**
+ * List a pipeline's indexed artifacts as [{ kind, relPath }]. The inverse of
+ * recordArtifact: pipeline-delete (Task 3.13) reads these to unlink the EXACT FS
+ * markdown/extras files instead of re-deriving names. rel_path scope is encoded by
+ * the convention recordArtifact documents (dir-relative for pipeline-local files,
+ * store-root-relative for the shared plan/review markdown).
+ * @param {string} pipelineId
+ * @returns {Promise<Array<{kind:string, relPath:string}>>}
+ */
+export async function listArtifacts(pipelineId) {
+  return getDb().prepare('SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?')
+    .all(pipelineId).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 

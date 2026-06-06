@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
 import { ensureArtifactDirs, writeState, appendAudit, createPipeline } from '../src/core/artifacts.mjs';
+import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
 const homes = [];
@@ -311,4 +312,21 @@ test('createPipeline (workspace) inserts workspace_meta + records workspace-desc
   assert.equal(await readFile(join(dir, 'workspace-description.md'), 'utf8'), 'lots of detail');
   const arts = getDb().prepare('SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?').all(id);
   assert.ok(arts.some((a) => a.kind === 'workspace-description' && a.rel_path === 'workspace-description.md'));
+});
+
+// ── Task 3.8 — artifacts index: recordArtifact / listArtifacts ──────────────────
+
+test('recordArtifact indexes a (kind, relPath) and listArtifacts returns them', async () => {
+  await writeState('/d-cccc3333', fullState({ id: 'cccc3333' })); // FK parent
+  await recordArtifact('cccc3333', 'plan', 'plans/01-06-26-demo.md');
+  await recordArtifact('cccc3333', 'review', 'reviews/01-06-26-demo-impl-review.md');
+  await recordArtifact('cccc3333', 'checklist', 'manual-tests-checklist.md');
+  // Idempotent: same triple twice does not duplicate.
+  await recordArtifact('cccc3333', 'plan', 'plans/01-06-26-demo.md');
+  const arts = await listArtifacts('cccc3333');
+  assert.equal(arts.length, 3);
+  assert.deepEqual(
+    arts.map((a) => `${a.kind}:${a.relPath}`).sort(),
+    ['checklist:manual-tests-checklist.md', 'plan:plans/01-06-26-demo.md',
+     'review:reviews/01-06-26-demo-impl-review.md']);
 });
