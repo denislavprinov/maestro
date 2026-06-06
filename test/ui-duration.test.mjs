@@ -85,7 +85,7 @@ test('expanding a card paints per-phase duration from saved steps (refine cycles
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .stage[data-node-id]')) byStep[s.dataset.nodeId] = s;
+  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.plan.querySelector('.dur').textContent, '4s');
   assert.equal(byStep.refine.querySelector('.dur').textContent, '3s', 'refine cycles summed (2500ms -> 3s)');
   assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'executed sub-ms phase shows 0s');
@@ -114,7 +114,7 @@ test('clarify active time folds into the Plan stage chip (parity with cost)', as
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .stage[data-node-id="plan"]');
+  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="plan"]');
   assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s in the Plan chip');
 });
 
@@ -141,7 +141,7 @@ test('history ignores a dangling runningSince (saved data is treated as final)',
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .stage[data-node-id]')) byStep[s.dataset.nodeId] = s;
+  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'finalized 0ms; dangling clock ignored');
 });
 
@@ -240,7 +240,7 @@ test('clarify folds into the Plan cell on a per-node manifest (nodeId-tagged)', 
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .stage[data-node-id="s0_0"]');
+  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s0_0"]');
   assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s on the s0_0 cell');
 });
 
@@ -274,6 +274,6 @@ test('an untagged clarify step (old run) does NOT fold on a per-node manifest', 
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .stage[data-node-id="s0_0"]');
+  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s0_0"]');
   assert.equal(planStage.querySelector('.dur').textContent, '2s', 'only the plan step (2000) shows; clarify not folded');
 });

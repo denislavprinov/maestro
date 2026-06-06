@@ -1547,6 +1547,7 @@ if (typeof window !== 'undefined') {
     runNode,
     loopCounts,
     paintRunGraph,
+    histNodeCycle,
   });
 }
 
@@ -4307,8 +4308,8 @@ async function loadHistDetail(projectDir, id, detail, record) {
     // alongside a stale error.
     const stale = detail.querySelector('.detail-error');
     if (stale) stale.remove();
-    const host = detail.querySelector('.stages.compact');
-    if (host) buildStepper(host, data.state.stepper); // null stepper -> legacy default
+    const host = detail.querySelector('.run-flow');
+    if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4335,53 +4336,47 @@ async function loadHistDetail(projectDir, id, detail, record) {
   }
 }
 
-// Tint a history card's stepper from saved state ({ phase, status, cycle, steps,
-// stepper }). Built DOM is addressed by node id; coloring is driven by the
-// reached cell, not live events.
+// Per-node max cycle from a saved run's steps[] (history's loop-count source).
+function histNodeCycle(st) {
+  const out = {};
+  for (const s of Array.isArray(st && st.steps) ? st.steps : []) {
+    if (!s) continue;
+    const key = stepBucketKey(s);
+    const c = Number(s.cycle);
+    if (key && Number.isFinite(c)) out[key] = Math.max(out[key] || 0, c);
+  }
+  return out;
+}
+
+// Tint a history card's graph from saved state. Reached cell drives coloring
+// (no live events). activeId=null, live=false -> no glow/marching-ants.
 function paintHistStepper(detail, st) {
+  const host = detail.querySelector('.run-flow');
+  if (!host) return;
   const manifest = manifestFor(st.stepper);
   const status = String(st.status || '').toLowerCase();
   const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed';
   const isDone = status === 'done' || status === 'complete' || status === 'completed';
-
   const reached = histReachedCell(manifest, st);
   const durs = durByNode(st.steps, 0, false);
   const costs = costByNode(st.steps);
 
-  const stages = detail.querySelectorAll('.stages.compact > .stage');
-  manifest.steps.forEach((cell, cellIdx) => {
-    const stage = stages[cellIdx];
-    if (!stage) return;
-    const numEl = stage.querySelector('.num');
-    stage.classList.remove('s-done', 's-now', 's-pause', 's-stop');
-    if (numEl) numEl.classList.remove('n-green', 'n-peach', 'n-amber', 'n-red', 'n-grey');
+  const cellOf = {};
+  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
 
-    let kind = null;
-    if (isDone) kind = 'done';
-    else if (cellIdx < reached) kind = 'done';
-    else if (cellIdx === reached) kind = halted ? 'stop' : 'done';
-
-    if (kind) {
-      const [sCls, nCls] = STAGE_NUM[kind];
-      stage.classList.add(sCls);
-      if (numEl) numEl.classList.add(nCls);
-    } else if (numEl) {
-      numEl.classList.add('n-grey');
-    }
-
-    for (const node of cell.nodes) {
-      const scope = stage.querySelector(`.stage-node[data-node-id="${node.id}"]`) || stage;
-      const cyEl = scope.querySelector('.cycle');
-      if (cyEl) cyEl.textContent = (node.cycles && st.cycle) ? `#${st.cycle}` : '';
-      const durEl = scope.querySelector('.dur');
-      if (durEl) { const d = durs[node.id]; durEl.textContent = d != null ? fmtDuration(d) : ''; }
-      const costEl = scope.querySelector('.cost');
-      if (costEl) {
-        const c = costs[node.id];
-        costEl.textContent = c != null ? fmtUsd(c) : '';
-        costEl.title = c != null ? estTitle(c) : '';
-      }
-    }
+  paintRunGraph(host, manifest, {
+    statusOf: (id) => {
+      const cellIdx = cellOf[id] != null ? cellOf[id] : -1;
+      if (isDone) return 'done';
+      if (cellIdx < reached) return 'done';
+      if (cellIdx === reached) return halted ? 'stopped' : 'done';
+      return 'pending';
+    },
+    activeId: null,
+    cycles: loopCounts(manifest, histNodeCycle(st)),
+    live: false,
+    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
+    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
   });
 }
 

@@ -167,15 +167,15 @@ test('expanding a card toggles aria-expanded, unhides detail, tints stepper from
 
   // Tinted stepper: phase=implement, status=stopped => preflight/plan/refine done,
   // implement stopped, review/done pending.
-  const byStep = {};
-  for (const s of detail.querySelectorAll('.stage[data-node-id]')) byStep[s.dataset.nodeId] = s;
-  assert.ok(byStep.preflight.classList.contains('s-done'), 'preflight done');
-  assert.ok(byStep.plan.classList.contains('s-done'), 'plan done');
-  assert.ok(byStep.refine.classList.contains('s-done'), 'refine done');
-  assert.ok(byStep.implement.classList.contains('s-stop'), 'implement stopped');
-  assert.ok(byStep.implement.querySelector('.num').classList.contains('n-red'), 'implement num red');
-  assert.ok(byStep.review.querySelector('.num').classList.contains('n-grey'), 'review pending grey');
-  assert.ok(!byStep.review.classList.contains('s-done'), 'review not done');
+  const byId = {};
+  for (const n of detail.querySelectorAll('.run-node[data-id]')) byId[n.dataset.id] = n;
+  assert.ok(byId.preflight.classList.contains('is-done'), 'preflight done');
+  assert.ok(byId.plan.classList.contains('is-done'), 'plan done');
+  assert.ok(byId.refine.classList.contains('is-done'), 'refine done');
+  assert.ok(byId.implement.classList.contains('is-stopped'), 'implement stopped (halt cell)');
+  assert.ok(byId.implement.querySelector('.nstat.stopped svg'), 'stopped X badge at halt cell');
+  assert.ok(byId.review.classList.contains('is-pending'), 'review pending');
+  assert.ok(!byId.review.classList.contains('is-done'), 'review not done');
 
   // Collapse again toggles aria-expanded back + re-hides.
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -235,10 +235,12 @@ test('keyboard: Enter on the head toggles expand', async () => {
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(head.getAttribute('aria-expanded'), 'true', 'Enter expands the card');
 
-  // DONE state tints every stage s-done.
+  // DONE state tints every node done.
   const detail = doc.querySelector('#history .hist-detail');
-  const stages = [...detail.querySelectorAll('.stage[data-node-id]')];
-  assert.ok(stages.every((s) => s.classList.contains('s-done')), 'DONE tints all stages done');
+  const nodes = [...detail.querySelectorAll('.run-node[data-id]')];
+  assert.ok(nodes.length > 0);
+  assert.ok(nodes.every((n) => n.classList.contains('is-done')), 'DONE tints every node done');
+  assert.ok(detail.querySelector('.run-node[data-id="done"] .nstat.done svg'), 'done badge present');
 });
 
 test('empty history renders a .hist-empty div (no <li>)', async () => {
@@ -308,11 +310,11 @@ test('History card renders the persisted manifest nodes on expand', async () => 
   await new Promise((r) => setTimeout(r, 0));
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  const labels = [...detail.querySelectorAll('.stage .lbl b, .stage .stage-node b')].map((e) => e.textContent);
+  const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
   assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine Plan', 'Manual Tests Checklist', 'Manual web UI testing', 'Done']);
-  // stopped at refine (cell idx 2) -> that cell is s-stop, earlier done.
-  assert.ok(detail.querySelector('.stage[data-node-id="s1_0"]').classList.contains('s-stop'));
-  assert.ok(detail.querySelector('.stage[data-node-id="s0_0"]').classList.contains('s-done'));
+  // stopped at refine (cell idx 2) -> that node is is-stopped, earlier done.
+  assert.ok(detail.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-stopped'));
+  assert.ok(detail.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
 });
 
 test('History card without a saved manifest still renders the legacy six', async () => {
@@ -330,9 +332,9 @@ test('History card without a saved manifest still renders the legacy six', async
   await new Promise((r) => setTimeout(r, 0));
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  const labels = [...detail.querySelectorAll('.stage .lbl b')].map((e) => e.textContent);
+  const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
   assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
-  assert.ok([...detail.querySelectorAll('.stage')].every((s) => s.classList.contains('s-done')));
+  assert.ok([...detail.querySelectorAll('.run-node[data-id]')].every((n) => n.classList.contains('is-done')));
 });
 
 test('Refresh shows a busy spinner/disabled affordance, cleared by the final history-pr batch', async () => {
@@ -403,7 +405,45 @@ test('History card shows per-node model·effort from the saved manifest', async 
   await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  assert.equal(detail.querySelector('.stage[data-node-id="s0_0"] .sub').textContent, 'architecture & breakdown');
-  assert.equal(detail.querySelector('.stage[data-node-id="s0_0"] .me').textContent, 'Opus 4.8 · high');
-  assert.equal(detail.querySelector('.stage[data-node-id="s1_0"] .me').textContent, 'default');
+  // model · effort is now a hover tooltip (title) on the node, carrying the raw
+  // model id + effort. A node with neither model nor effort has no tooltip.
+  assert.equal(detail.querySelector('.run-node[data-id="s0_0"]').getAttribute('title'), 'opus · high');
+  assert.equal(detail.querySelector('.run-node[data-id="s1_0"]').getAttribute('title'), null);
+});
+
+test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice -> count 1)', async () => {
+  const state = {
+    phase: 'done', status: 'done', cycle: 2,
+    stepper: {
+      version: 1,
+      steps: [
+        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+        { kind: 'agents', nodes: [{ id: 's1_0', key: 'refiner', uiPhase: 'refine', label: 'Refine', color: 'green', cycles: true }] },
+        { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+      ],
+      feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }],
+    },
+    steps: [
+      { nodeId: 's1_0', phase: 'refine', cycle: 1, activeMs: 1000, costUsd: 0.01 },
+      { nodeId: 's1_0', phase: 'refine', cycle: 2, activeMs: 2000, costUsd: 0.02 },
+    ],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) return runsListResponse([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
+      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  // The adapter's cycle map is the public contract; assert it directly.
+  const counts = ctx.window.__np.loopCounts(state.stepper, ctx.window.__np.histNodeCycle(state));
+  assert.equal(counts.s1_0, 1, 'two cycles -> one loop-back badge');
+  // Summed dur/cost still paint into the graph node.
+  const node = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s1_0"]');
+  assert.equal(node.querySelector('.dur').textContent, '3s');
+  assert.equal(node.querySelector('.cost').textContent, '$0.03');
 });
