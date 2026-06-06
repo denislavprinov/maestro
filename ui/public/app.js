@@ -597,6 +597,84 @@ function buildRunGraph(host, manifest) {
   host.appendChild(svg);
 }
 
+// Final per-node loop count the renderer consumes directly: a node that ran k
+// cycles fired its loop k-1 times. nodeCycle[id] = max cycle observed (default 1).
+function loopCounts(manifest, nodeCycle) {
+  const nc = nodeCycle || {};
+  const out = {};
+  runGraphNodeIds(manifestFor(manifest)).forEach((id) => {
+    out[id] = Math.max(0, (nc[id] || 1) - 1);
+  });
+  return out;
+}
+
+// manifest.steps (cells with .nodes) -> the [[{id}…]…] shape composerPaintWires
+// walks for sequential + feedback wires.
+function manifestStepsForWires(manifest) {
+  return manifestFor(manifest).steps.map((cell) => cell.nodes.map((n) => ({ id: n.id })));
+}
+
+// Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
+// view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
+//          live:boolean, durText(id)->str, costText(id)->str }.
+const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
+function paintRunGraph(host, manifest, view) {
+  const m = manifestFor(manifest);
+  const doneSet = new Set();
+  runGraphNodeIds(m).forEach((id) => {
+    const status = view.statusOf(id) || 'pending';
+    if (status === 'done') doneSet.add(id);
+    const el = host.querySelector(`.run-node[data-id="${id}"]`);
+    if (!el) return;
+
+    el.classList.remove(...RUN_STATUSES);
+    el.classList.add('is-' + status);
+
+    const statusEl = el.querySelector('.nstatus');
+    if (statusEl) {
+      const txt = STAT_TEXT[status];
+      statusEl.textContent = (txt != null && txt !== '') ? txt : (status === 'pending' ? (statusEl.dataset.sub || statusEl.textContent || '') : '');
+    }
+
+    // Swap the settled-status badge (.nstat). Remove any existing, then re-add.
+    const old = el.querySelector('.nstat');
+    if (old) old.remove();
+    if (STAT_BADGE[status]) el.insertAdjacentHTML('beforeend', STAT_BADGE[status]);
+
+    const durEl = el.querySelector('.dur');
+    if (durEl) durEl.textContent = view.durText(id) || '';
+    const costEl = el.querySelector('.cost');
+    if (costEl) costEl.textContent = view.costText(id) || '';
+  });
+
+  // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
+  // every tick. Repaint only when activeId, the done-set, the loop counts, or
+  // the topology change since the last paint.
+  const cycles = view.cycles || {};
+  const sig = JSON.stringify([
+    view.live ? (view.activeId || null) : null,
+    [...doneSet].sort(),
+    Object.keys(cycles).sort().map((k) => `${k}:${cycles[k]}`),
+    host.dataset.graphSig || '',
+  ]);
+  if (host.dataset.wiresSig === sig) return;
+  host.dataset.wiresSig = sig;
+
+  const svg = host.querySelector('svg.wires');
+  if (!svg) return;
+  const steps = manifestStepsForWires(m);
+  const feedbacks = Array.isArray(m.feedbacks) ? m.feedbacks : [];
+  const paint = (window.__np && window.__np.composerPaintWires) || composerPaintWires;
+  const ns = (host.dataset.ns ||= 'rg-' + Math.random().toString(36).slice(2, 8));
+  paint(host, svg, steps, feedbacks, {
+    ns,
+    runMode: true,
+    activeId: view.live ? (view.activeId || null) : null,
+    doneSet,
+    cycles,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
 // Running view; events are fanned out by handleServerMessage.
@@ -1465,6 +1543,8 @@ if (typeof window !== 'undefined') {
     composerPaintWires,
     buildRunGraph,
     runNode,
+    loopCounts,
+    paintRunGraph,
   });
 }
 
