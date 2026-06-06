@@ -84,3 +84,89 @@ test('listWorkspaces marks a vanished member exists=false but keeps the workspac
   const idx = ws.projectPaths.indexOf(b);
   assert.equal(ws.exists[idx], false);
 });
+
+// ---- Task 2.10: updateWorkspace (+ thin setters) and deleteWorkspace ----
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import {
+  updateWorkspace, updateWorkspaceDescription, renameWorkspace, deleteWorkspace,
+} from '../src/core/workspaces.mjs';
+import { workspaceStorePath } from '../src/core/store.mjs';
+
+test('updateWorkspaceDescription edits description, stamps updatedAt, keeps id', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Editable', projectPaths: [a, b], description: 'one' });
+  const before = ws.updatedAt;
+  await new Promise((r) => setTimeout(r, 5));
+  const up = await updateWorkspaceDescription(ws.id, 'two');
+  assert.equal(up.id, ws.id);
+  assert.equal(up.description, 'two');
+  assert.notEqual(up.updatedAt, before, 'updatedAt advanced');
+  assert.equal(up.createdAt, ws.createdAt, 'createdAt preserved');
+  assert.equal((await readWorkspace(ws.id)).description, 'two', 'persisted');
+});
+
+test('renameWorkspace changes name but NEVER recomputes id', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Old Name', projectPaths: [a, b] });
+  const renamed = await renameWorkspace(ws.id, 'New Name');
+  assert.equal(renamed.id, ws.id, 'id frozen across rename');
+  assert.equal(renamed.name, 'New Name');
+  assert.notEqual(workspaceKey({ name: 'New Name', projectPaths: [a, b] }), ws.id, 'recompute would differ');
+});
+
+test('updateWorkspace rejects a NOCASE name clash (DUPLICATE_NAME); self-rename allowed', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const c = await freshRepo();
+  await createWorkspace({ name: 'Taken', projectPaths: [a, b] });
+  const other = await createWorkspace({ name: 'Free', projectPaths: [a, c] });
+  await assert.rejects(() => renameWorkspace(other.id, 'taken'), (e) => e.code === 'DUPLICATE_NAME');
+  assert.equal((await renameWorkspace(other.id, 'FREE')).name, 'FREE', 'self case-variant allowed');
+});
+
+test('updateWorkspace throws NOT_FOUND for an unknown id; never mutates projectPaths', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  await assert.rejects(() => updateWorkspace('wks-ghost-00000000', { description: 'x' }), (e) => e.code === 'NOT_FOUND');
+  const ws = await createWorkspace({ name: 'Immutable', projectPaths: [a, b] });
+  const up = await updateWorkspace(ws.id, { description: 'd', projectPaths: ['/evil'] });
+  assert.deepEqual(up.projectPaths, ws.projectPaths, 'project set immutable');
+});
+
+test('deleteWorkspace removes the row, cascades member rows, and removes the store dir', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Delete Me', projectPaths: [a, b] });
+  const storeDir = workspaceStorePath(ws.id);
+  await mkdir(join(storeDir, 'pipelines'), { recursive: true });
+  assert.ok(existsSync(storeDir));
+
+  const res = await deleteWorkspace(ws.id);
+  assert.equal(res.ok, true);
+  assert.equal(await readWorkspace(ws.id), null, 'registry row gone');
+  assert.equal(existsSync(storeDir), false, 'store dir removed');
+  // FK ON DELETE CASCADE removed the member rows too.
+  const { n } = getDb().prepare('SELECT COUNT(*) AS n FROM workspace_projects WHERE workspace_id = ?').get(ws.id);
+  assert.equal(n, 0, 'member rows cascaded');
+});
+
+test('deleteWorkspace throws NOT_FOUND for an unknown well-formed id and removes nothing', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Keep On Miss', projectPaths: [a, b] });
+  await assert.rejects(() => deleteWorkspace('wks-ghost-00000000'), (e) => e.code === 'NOT_FOUND');
+  assert.ok(await readWorkspace(ws.id), 'existing workspace untouched');
+});
+
+test('deleteWorkspace rejects a path-traversal id and deletes nothing', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Victim', projectPaths: [a, b] });
+  for (const evil of ['../..', '../../store/x', '..', 'wks-x/../../..', '/etc']) {
+    await assert.rejects(() => deleteWorkspace(evil), (e) => e.code === 'NOT_FOUND');
+  }
+  assert.ok(await readWorkspace(ws.id), 'the real workspace survives crafted ids');
+});

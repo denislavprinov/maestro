@@ -91,51 +91,6 @@ export function workspaceKey(ws) {
   return `wks-${slugify(name)}-${rootsHash(paths)}`;
 }
 
-/** True for a record that has the exactly-six-field persisted shape (loose). */
-function isValidEntry(e) {
-  return (
-    e && typeof e === 'object' &&
-    typeof e.id === 'string' &&
-    typeof e.name === 'string' &&
-    typeof e.description === 'string' &&
-    Array.isArray(e.projectPaths) &&
-    e.projectPaths.length >= 2 &&
-    e.projectPaths.every((p) => typeof p === 'string')
-  );
-}
-
-/**
- * Read the raw registry array. Missing file / invalid JSON -> []; malformed
- * records are dropped. Never throws.
- * @returns {Promise<Array<object>>}
- */
-async function readRaw() {
-  try {
-    const text = await readFile(workspacesFile(), 'utf8');
-    const data = JSON.parse(text);
-    if (!Array.isArray(data)) return [];
-    return data.filter(isValidEntry).map((e) => ({
-      id: e.id,
-      name: e.name,
-      description: e.description,
-      projectPaths: e.projectPaths.slice(),
-      createdAt: typeof e.createdAt === 'string' ? e.createdAt : '',
-      updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
-    }));
-  } catch {
-    return [];
-  }
-}
-
-/** Atomically write the registry array. Creates ~/.maestro if needed. */
-async function writeRaw(list) {
-  await mkdir(maestroHome(), { recursive: true });
-  const file = workspacesFile();
-  const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(list, null, 2) + '\n', 'utf8');
-  await rename(tmp, file);
-}
-
 /**
  * Annotate a persisted entry with read-time derived fields:
  *   projectKeys (sorted ascending, index-aligned with the returned projectPaths)
@@ -291,25 +246,33 @@ export async function createWorkspace(input = {}) {
  * @throws err(code: NOT_FOUND | BAD_REQUEST | DUPLICATE_NAME)
  */
 export async function updateWorkspace(id, patch = {}) {
-  const list = await readRaw();
-  const idx = list.findIndex((e) => e.id === id);
-  if (idx < 0) throw err(`workspace not found: ${id}`, 'NOT_FOUND');
-  const entry = list[idx];
+  getDb();
+  const entry = readEntry(id);
+  if (!entry) throw err(`workspace not found: ${id}`, 'NOT_FOUND');
 
+  let { name, description } = entry;
   if (patch && typeof patch.name === 'string') {
-    const name = patch.name.trim();
-    if (!name) throw err('workspace name is required', 'BAD_REQUEST');
-    const clash = list.some((e, i) => i !== idx && e.name.toLowerCase() === name.toLowerCase());
-    if (clash) throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
-    entry.name = name;
+    const next = patch.name.trim();
+    if (!next) throw err('workspace name is required', 'BAD_REQUEST');
+    name = next;
   }
   if (patch && typeof patch.description === 'string') {
-    // Cap-on-freeze, not cap-on-store: the editable text is persisted whole.
-    entry.description = patch.description;
+    description = patch.description; // cap-on-freeze, not cap-on-store: persisted whole
   }
-  entry.updatedAt = new Date().toISOString();
-  await writeRaw(list);
-  return annotate(entry);
+  const now = new Date().toISOString();
+
+  tx(() => {
+    // Re-check NOCASE name clash against OTHER rows (exclude self).
+    const clash = prepare(
+      'SELECT 1 FROM workspaces WHERE name = ? COLLATE NOCASE AND id <> ?'
+    ).get(name, id);
+    if (clash) throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
+    prepare(
+      'UPDATE workspaces SET name = ?, description = ?, updated_at = ? WHERE id = ?'
+    ).run(name, description, now, id);
+  });
+
+  return annotate({ ...entry, name, description, updatedAt: now });
 }
 
 /** Thin setter: edit only the description. */
@@ -323,15 +286,14 @@ export async function renameWorkspace(id, name) {
 }
 
 /**
- * Delete a workspace: remove the store/workspaces/<key>/ directory (best-effort)
- * and the registry entry. The module has no runs map — the live-run 409 guard
- * lives in the server route.
+ * Delete a workspace: remove the store/workspaces/<id>/ directory (best-effort) and
+ * the registry row. The workspace_projects children are removed by the FK
+ * ON DELETE CASCADE (foreign_keys=ON, set on open). The module has no runs map —
+ * the live-run 409 guard lives in the server route.
  *
- * Self-guarded (defense-in-depth; the server's WORKSPACE_ID_RE is not the only
- * line of defense): the id MUST match the workspace-key shape, and the entry MUST
- * already exist in the registry, before anything is removed. A bad/crafted id
- * (e.g. "../.." or "../../store/x") never reaches the rm — it throws NOT_FOUND, so
- * a malformed id reads as "not found" and deletes nothing outside the namespace.
+ * Self-guarded: id MUST match the workspace-key shape AND the row MUST exist before
+ * anything is removed; a crafted id (e.g. "../..") never reaches the rm — it throws
+ * NOT_FOUND. (store_meta cleanup is owned by Phase 3 — see the cross-phase note.)
  * @param {string} id
  * @returns {Promise<{ok:true, warnings:string[]}>}
  * @throws err(code: NOT_FOUND) for a malformed or unknown id
@@ -340,10 +302,9 @@ export async function deleteWorkspace(id) {
   if (!id || typeof id !== 'string' || !WORKSPACE_KEY_RE.test(id)) {
     throw err(`workspace not found: ${id}`, 'NOT_FOUND');
   }
-  // Membership-first: only remove the store dir for an id actually in the registry.
-  const list = await readRaw();
-  const next = list.filter((e) => e.id !== id);
-  if (next.length === list.length) {
+  getDb();
+  // Membership-first: only act on an id actually present.
+  if (!prepare('SELECT 1 FROM workspaces WHERE id = ?').get(id)) {
     throw err(`workspace not found: ${id}`, 'NOT_FOUND');
   }
 
@@ -353,8 +314,14 @@ export async function deleteWorkspace(id) {
   } catch (e) {
     warnings.push(`store cleanup failed: ${e && e.message ? e.message : 'error'}`);
   }
-  try { await writeRaw(next); }
-  catch (e) { warnings.push(`registry write failed: ${e && e.message ? e.message : 'error'}`); }
+  try {
+    tx(() => {
+      // Children cascade via the workspace_projects FK (ON DELETE CASCADE).
+      prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+    });
+  } catch (e) {
+    warnings.push(`registry write failed: ${e && e.message ? e.message : 'error'}`);
+  }
 
   return { ok: true, warnings };
 }

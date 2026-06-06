@@ -9,7 +9,7 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,10 +27,12 @@ import {
   renameWorkspace,
   deleteWorkspace,
 } from '../src/core/workspaces.mjs';
-import { canonicalProjectRoot, projectKey, workspaceStorePath } from '../src/core/store.mjs';
+import { projectKey, workspaceStorePath } from '../src/core/store.mjs';
+import { getDb, _resetForTests } from '../src/core/db.mjs';
 
 const created = [];
 after(async () => {
+  _resetForTests();
   delete process.env.MAESTRO_HOME;
   await Promise.all(created.map((d) => rm(d, { recursive: true, force: true })));
 });
@@ -38,6 +40,7 @@ after(async () => {
 async function freshHome() {
   const dir = await mkdtemp(join(tmpdir(), 'maestro-ws-home-'));
   created.push(dir);
+  _resetForTests();
   process.env.MAESTRO_HOME = dir;
   return dir;
 }
@@ -87,25 +90,22 @@ test('rootsHash is name-independent and order-independent (D1 dedupe key)', asyn
   assert.ok(kx.endsWith(h1) && ky.endsWith(h1), 'roots-hash tail is shared across names');
 });
 
-test('createWorkspace persists EXACTLY six fields; derives id == workspaceKey', async () => {
+test('createWorkspace persists the workspace row + ordered member rows (no derived fields stored)', async () => {
   await freshHome();
   const a = await freshRepo();
   const b = await freshRepo();
   const ws = await createWorkspace({ name: 'Demo WS', projectPaths: [a, b], description: 'desc' });
   assert.equal(ws.id, workspaceKey({ name: 'Demo WS', projectPaths: [a, b] }));
-
-  const raw = JSON.parse(await readFile(workspacesFile(), 'utf8'));
-  assert.equal(raw.length, 1);
-  assert.deepEqual(
-    Object.keys(raw[0]).sort(),
-    ['createdAt', 'description', 'id', 'name', 'projectPaths', 'updatedAt'],
-    'on-disk entry has EXACTLY the six persisted fields (no derived fields)',
-  );
-  assert.equal(raw[0].name, 'Demo WS');
-  assert.equal(raw[0].description, 'desc');
-  assert.equal(raw[0].projectPaths.length, 2);
-  assert.ok(typeof raw[0].createdAt === 'string' && raw[0].createdAt);
-  assert.ok(typeof raw[0].updatedAt === 'string' && raw[0].updatedAt);
+  const db = getDb();
+  const row = db.prepare('SELECT name, description, created_at, updated_at FROM workspaces WHERE id = ?').get(ws.id);
+  assert.equal(row.name, 'Demo WS');
+  assert.equal(row.description, 'desc');
+  assert.ok(row.created_at && row.updated_at);
+  const members = db.prepare('SELECT ordinal FROM workspace_projects WHERE workspace_id = ? ORDER BY ordinal').all(ws.id);
+  assert.deepEqual(members.map((m) => m.ordinal), [0, 1]);
+  // projectKeys/exists are derived on read, never stored.
+  const cols = db.prepare("PRAGMA table_info('workspaces')").all().map((c) => c.name);
+  assert.ok(!cols.includes('project_keys') && !cols.includes('exists'), 'no derived columns');
 });
 
 test('createWorkspace defaults description to "" when omitted', async () => {
@@ -114,8 +114,8 @@ test('createWorkspace defaults description to "" when omitted', async () => {
   const b = await freshRepo();
   const ws = await createWorkspace({ name: 'No Desc', projectPaths: [a, b] });
   assert.equal(ws.description, '');
-  const raw = JSON.parse(await readFile(workspacesFile(), 'utf8'));
-  assert.equal(raw[0].description, '');
+  const row = getDb().prepare('SELECT description FROM workspaces WHERE id = ?').get(ws.id);
+  assert.equal(row.description, '');
 });
 
 test('listWorkspaces annotates derived projectKeys/exists (sorted, never persisted)', async () => {
@@ -231,8 +231,8 @@ test('updateWorkspaceDescription stores the FULL description (cap-on-freeze, not
   const big = 'x'.repeat(5000);
   const updated = await updateWorkspaceDescription(ws.id, big);
   assert.equal(updated.description.length, 5000, 'editable description is never truncated on store');
-  const raw = JSON.parse(await readFile(workspacesFile(), 'utf8'));
-  assert.equal(raw[0].description.length, 5000);
+  const row = getDb().prepare('SELECT description FROM workspaces WHERE id = ?').get(ws.id);
+  assert.equal(row.description.length, 5000);
 });
 
 test('renameWorkspace changes name but NEVER recomputes id (D1 immutability)', async () => {
@@ -281,44 +281,9 @@ test('updateWorkspace never mutates projectPaths even if passed in the patch', a
   assert.deepEqual(updated.projectPaths, ws.projectPaths, 'project set is immutable');
 });
 
-test('listWorkspaces returns [] on a missing file and drops malformed records on corrupt JSON', async () => {
+test('listWorkspaces returns [] on an empty store', async () => {
   await freshHome();
-  assert.deepEqual(await listWorkspaces(), [], 'missing file => []');
-
-  // Corrupt JSON => [] (never throws).
-  await mkdir(join(process.env.MAESTRO_HOME, '.maestro'), { recursive: true });
-  await writeFile(workspacesFile(), 'not json at all', 'utf8');
-  assert.deepEqual(await listWorkspaces(), [], 'corrupt JSON => []');
-
-  // Array with malformed records: only the valid one survives the per-entry filter.
-  const a = await freshRepo();
-  const b = await freshRepo();
-  const valid = {
-    id: 'wks-keep-12345678', name: 'Keep', description: '',
-    projectPaths: [a, b], createdAt: 'x', updatedAt: 'x',
-  };
-  const bad = [
-    valid,
-    { id: 'wks-bad', name: 'NoPaths', description: '' },                 // missing projectPaths
-    { id: 'wks-bad2', name: 'OnePath', description: '', projectPaths: [a] }, // <2 paths
-    { id: 7, name: 'BadId', description: '', projectPaths: [a, b] },     // non-string id
-    'garbage',                                                          // non-object
-  ];
-  await writeFile(workspacesFile(), JSON.stringify(bad), 'utf8');
-  const list = await listWorkspaces();
-  assert.equal(list.length, 1, 'only the valid record survives');
-  assert.equal(list[0].id, 'wks-keep-12345678');
-});
-
-test('createWorkspace writes atomically (temp+rename) and leaves no .tmp behind', async () => {
-  const home = await freshHome();
-  const a = await freshRepo();
-  const b = await freshRepo();
-  await createWorkspace({ name: 'Atomic', projectPaths: [a, b] });
-  const dir = join(home, '.maestro');
-  const names = await readdir(dir);
-  assert.ok(names.includes('workspaces.json'), 'final file present');
-  assert.ok(!names.some((n) => n.endsWith('.tmp')), 'no leftover temp file');
+  assert.deepEqual(await listWorkspaces(), []);
 });
 
 test('deleteWorkspace removes the registry entry AND the store/workspaces/<key> dir', async () => {
