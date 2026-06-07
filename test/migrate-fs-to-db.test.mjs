@@ -1,7 +1,7 @@
 // test/migrate-fs-to-db.test.mjs
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync, chmodSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -752,4 +752,42 @@ test('M-min3a: a header-less pipeline.md fabricates no pipeline_events', () => {
   assert.equal(n, 0, 'no events when pipeline.md has no "## Timeline" header');
   // sanity: the pipeline itself imported (so we know parseTimeline ran on this run).
   assert.ok(db.prepare('SELECT 1 FROM pipelines WHERE id = ?').get(runId), 'pipeline imported');
+});
+
+// M-min3b: archive failures are best-effort (must NOT crash app open) but MUST be
+// logged so a leftover un-archived file is diagnosable. We strip write perm on the run
+// dir so renameSync() of its files out during archive fails (EACCES/EPERM), then assert:
+// the import still commits (no throw) and console.warn carried a diagnostic.
+//
+// NOTE: we open a RAW handle (NOT getDb(), whose open-time hook would import, archive
+// successfully, and stamp the M3 marker BEFORE we can strip perms — making a later
+// maybeMigrateFromFs() a marker no-op that never reaches archive). This mirrors the
+// rollback test above so the SINGLE import runs below, after perms are stripped.
+test('M-min3b: an archive failure is swallowed but logged', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const fx = buildFixture(home);
+
+  // Prepare a raw handle exactly as getDb() does, up to but excluding the import hook.
+  const db = new DatabaseSync(dbPath());
+  db.exec('PRAGMA foreign_keys = ON;');
+  migrate(db);
+
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    chmodSync(fx.runDir, 0o500);             // r-x: can read children but not rename them out
+    assert.doesNotThrow(() => maybeMigrateFromFs(db), 'archive failure must not crash open');
+  } finally {
+    chmodSync(fx.runDir, 0o700);             // restore so cleanup (rmSync) works
+    console.warn = origWarn;
+  }
+
+  // The import still succeeded (archive runs AFTER commit; only the file move failed).
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, 2, 'import committed');
+  // The failure was logged (diagnosable leftover).
+  assert.ok(warnings.some((w) => /archive/i.test(w)),
+    'an archive failure is logged via console.warn');
+  db.close();
 });

@@ -590,7 +590,12 @@ function archive(home, consumed) {
           throw e;
         }
       }
-    } catch { /* best-effort: leave the file; the DB already has the data */ }
+    } catch (err) {
+      // Best-effort: the DB is already authoritative, so a stuck file must NOT crash
+      // app open. But LOG it (M-min3) so a leftover un-archived legacy file in the
+      // live tree is diagnosable instead of vanishing silently.
+      try { console.warn(`maestro: fs->db archive failed for ${item.src} -> ${dest}: ${err && err.message ? err.message : err}`); } catch { /* never let logging itself crash open */ }
+    }
   }
 }
 
