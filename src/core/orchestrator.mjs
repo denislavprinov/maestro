@@ -1465,7 +1465,6 @@ class Orchestrator extends EventEmitter {
    *  reconcile/late-join source of truth (it carries subAgents). */
   _subAgentTransition(transition, rec) {
     this._emit('subagent', {
-      runId: this.state.id,
       transition,
       id: rec.id,
       label: rec.label ?? null,

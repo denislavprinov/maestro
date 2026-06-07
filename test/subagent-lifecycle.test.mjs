@@ -129,3 +129,13 @@ test('a non-sub-agent tool_use (Read) never becomes a sub-agent record', () => {
     { nodeId: 'n', stepIndex: 0, cycle: 1, stepKey: '0:n' });
   assert.equal(orch.state.subAgents.length, 0);
 });
+
+test('a subagent delta does NOT carry its own runId (the server stamps the run UUID)', () => {
+  const orch = fresh();
+  const evts = [];
+  orch.on('subagent', (m) => evts.push(m));
+  orch._onAgentEvent('planner', spawnEvt('toolu_A'), ATTR);
+  assert.equal(evts.length, 1, 'one spawn delta emitted');
+  assert.ok(!('runId' in evts[0]),
+    'subagent payloads must not self-tag runId; wireRun owns the authoritative tag');
+});
