@@ -44,6 +44,12 @@ let _stmtCache = new Map(); // sql text -> cached StatementSync (per open handle
 /** WAL busy-timeout: wait up to 5s for a competing writer (CLI + UI). */
 const BUSY_TIMEOUT_MS = 5000;
 
+/** First-launch open retries (spec §8): a competing process can make the journal_mode=
+ *  WAL switch or the schema migration return SQLITE_BUSY that the busy-handler will not
+ *  itself retry. Bounded retry with a short synchronous backoff covers it. */
+const OPEN_RETRY_LIMIT = 100;
+const OPEN_BACKOFF_MS = 15;
+
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
 const SCHEMA_VERSION = 1;
 
@@ -62,12 +68,45 @@ export function getDb() {
   if (_db) return _db;
   const home = maestroHome();
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
-  const db = new (databaseSyncCtor())(dbPath());
-  _configure(db);            // pragmas (WAL, FK, busy_timeout, synchronous)
-  migrate(db);               // versioned, idempotent schema (Task 1.3)
+  const db = _openConfiguredMigrated();  // open + pragmas + migrate, retried on BUSY
   maybeMigrateFromFs(db);    // one-shot fs→db import (other phase; self-guarded)
   _db = db;                  // publish only after the DB is fully ready
   return _db;
+}
+
+/**
+ * Open the DB file, apply pragmas, and migrate — retrying the whole sequence on a
+ * transient SQLITE_BUSY / "database is locked". First launch can race a second process
+ * (CLI + UI, spec §8): the journal_mode=WAL header switch and the schema migration each
+ * need a brief exclusive lock, and the WAL-mode switch in particular returns BUSY that
+ * the busy-handler does NOT retry. A bounded synchronous retry makes concurrent first
+ * launch deterministic. node:sqlite is sync, so the backoff blocks this thread inline.
+ */
+function _openConfiguredMigrated() {
+  for (let attempt = 0; ; attempt++) {
+    let db = null;
+    try {
+      db = new (databaseSyncCtor())(dbPath());
+      _configure(db);
+      migrate(db);
+      return db;
+    } catch (err) {
+      try { if (db) db.close(); } catch { /* ignore close error during recovery */ }
+      if (_isBusyError(err) && attempt < OPEN_RETRY_LIMIT) { _sleepMs(OPEN_BACKOFF_MS); continue; }
+      throw err;
+    }
+  }
+}
+
+/** True when err is a transient SQLite lock/busy that retrying can clear. */
+function _isBusyError(err) {
+  const msg = err && err.message ? err.message : String(err);
+  return /locked|busy/i.test(msg);
+}
+
+/** Synchronous sleep (node:sqlite is sync; we must block this thread, not yield it). */
+function _sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**
@@ -76,10 +115,14 @@ export function getDb() {
  * and must be re-applied every open. Done via exec() in one batch.
  */
 function _configure(db) {
+  // busy_timeout MUST be set first so the busy-handler is armed BEFORE the first
+  // contended operation — notably the journal_mode=WAL header switch, which two
+  // first-launch processes may attempt at once. (Switching WAL before busy_timeout is
+  // armed gives the loser an immediate "database is locked" with no wait.)
   db.exec(`
+    PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};
     PRAGMA synchronous = NORMAL;
   `);
 }
@@ -277,21 +320,31 @@ CREATE TABLE artifacts (
 `;
 
 /**
- * Idempotent, versioned schema migration. Reads PRAGMA user_version; when it is
- * already at SCHEMA_VERSION this is a no-op. Otherwise applies the pending DDL in
- * a single transaction and stamps the new user_version. node:sqlite is sync, so
- * this runs inline on the calling thread.
+ * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
+ * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
+ * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
+ * both pass the gate and double-apply SCHEMA_V1; the loser waits on busy_timeout, re-
+ * checks under the lock, and no-ops. The pending DDL + the user_version stamp commit in
+ * one transaction. (The WAL-mode switch itself is made race-safe by getDb's open retry,
+ * since the busy-handler does not retry that pragma.) node:sqlite is sync, so this runs
+ * inline on the calling thread.
  *
- * NOTE: PRAGMA user_version cannot be parameterized, so the version is inlined as
- * a literal integer (SCHEMA_VERSION is module-controlled, never user input).
+ * NOTE: PRAGMA user_version cannot be parameterized, so the version is inlined as a
+ * literal integer (SCHEMA_VERSION is module-controlled, never user input).
  * @param {DatabaseSync} db
  */
 export function migrate(db) {
-  const current = db.prepare('PRAGMA user_version').get().user_version;
-  if (current >= SCHEMA_VERSION) return;
+  // Fast path: an already-migrated DB needs no lock (the common re-open case).
+  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) return;
 
-  db.exec('BEGIN');
+  // First launch may have a competing migrator. BEGIN IMMEDIATE takes the write lock
+  // up front (a deferred BEGIN would not lock until the first write, letting two
+  // migrators both pass the gate and double-apply SCHEMA_V1 → "table projects already
+  // exists"). Under the lock we re-read user_version and no-op if the winner stamped it.
+  db.exec('BEGIN IMMEDIATE');
   try {
+    const current = db.prepare('PRAGMA user_version').get().user_version; // re-check under lock
+    if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); return; }
     if (current < 1) db.exec(SCHEMA_V1);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

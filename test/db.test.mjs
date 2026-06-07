@@ -5,6 +5,7 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { getDb, closeDb, _resetForTests, prepare, tx, migrate as _migrateForTest } from '../src/core/db.mjs';
 import { maestroHome } from '../src/core/projects.mjs';
@@ -228,4 +229,51 @@ test('getDb() calls maybeMigrateFromFs(db) once after migrate()', () => {
   // Cached singleton: a repeat getDb() must NOT re-run the one-shot hook.
   getDb();
   assert.equal(_migrateFromFsCallCount(), 1, 'hook not re-run on cached getDb()');
+});
+
+// ── M2 — concurrent first-launch CLI+UI race (spec §8) ────────────────────────────
+// Two+ processes open the brand-new DB at once; each getDb() runs _configure (the
+// journal_mode=WAL header switch) + migrate() (schema + user_version). Both need a
+// brief exclusive lock, and the WAL-mode switch returns SQLITE_BUSY the busy-handler
+// does NOT retry, so the unfixed code crashed a loser with "database is locked" or
+// "table projects already exists". We launch N real child processes sharing this test's
+// MAESTRO_HOME, released together by a wall-clock barrier to maximize overlap, and
+// require ALL to open the DB without crashing.
+//
+// (A single-thread call-migrate()-twice test cannot express this race: migrate() re-
+// reads user_version, so a sequential second call sees the committed version and no-ops
+// — green even against the bug. Genuine concurrency is required.)
+test('getDb() first-launch is concurrency-safe across N processes (no lock/exists crash)', async () => {
+  const dbUrl = new URL('../src/core/db.mjs', import.meta.url).href;
+  const N = 12;
+  const startAt = Date.now() + 700;          // give every child time to spawn before release
+  const childScript = `
+    const delay = Math.max(0, Number(process.env.__M2_START_AT__) - Date.now());
+    import(${JSON.stringify(dbUrl)}).then(({ getDb }) => {
+      setTimeout(() => {
+        try { getDb(); process.exit(0); }
+        catch (err) { console.error(String((err && err.message) || err)); process.exit(1); }
+      }, delay);
+    }).catch((err) => { console.error(String((err && err.message) || err)); process.exit(1); });
+  `;
+  const kids = Array.from({ length: N }, () => new Promise((resolve) => {
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', childScript], {
+      env: { ...process.env, __M2_START_AT__: String(startAt) },
+    });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('exit', (code) => resolve({ code, err: err.trim().split('\n').filter(Boolean).pop() || '' }));
+  }));
+  const results = await Promise.all(kids);
+  const failed = results.filter((r) => r.code !== 0);
+  assert.equal(failed.length, 0,
+    `all ${N} concurrent first-launch processes must open without crashing; failures: ` +
+    failed.map((f) => f.err).join(' | '));
+
+  // The shared DB is migrated exactly once: v1 stamped, exactly one projects table.
+  const db = getDb();
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 1, 'migrated to v1');
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='projects'").get().n,
+    1, 'exactly one projects table after the race');
 });
