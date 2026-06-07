@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { writeClarify, writeReview } from '../src/core/artifacts.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 
 let homeDir, srv, base, prevHome, alphaKey, alphaId;
@@ -104,4 +105,29 @@ test('POST /api/history/pr returns 200 {ok:true} and leaks no gh work', async ()
   });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true });
+});
+
+// ── M1.2 — detail endpoint surfaces clarify + reviews from the DB ────────────────
+test('GET /api/history/:key/:id includes clarify Q&A and per-cycle reviews', async () => {
+  // alphaId/alphaKey were seeded in `before` via the production writer; write its extras.
+  await writeClarify(alphaId, {
+    questions: { questions: [{ id: 'q1', question: 'Postgres or SQLite?', options: ['pg', 'sqlite', ''], allowFreeText: true }] },
+  });
+  await writeClarify(alphaId, {
+    answers: { answers: [{ id: 'q1', question: 'Postgres or SQLite?', choice: 'sqlite' }] },
+  });
+  await writeReview(alphaId, 'impl', 1, {
+    issues: [{ severity: 'major', title: 'Missing null-check', detail: 'guard the input', location: 'src/x.mjs:10' }],
+    summary: 'one blocking issue',
+  });
+  await writeReview(alphaId, 'impl', 2, { issues: [], summary: 'resolved' });
+
+  const r = await fetch(`${base}/api/history/${alphaKey}/${alphaId}`);
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.clarify.questions[0].question, 'Postgres or SQLite?');
+  assert.equal(j.clarify.answers[0].choice, 'sqlite');
+  assert.deepEqual(j.reviews.map((x) => [x.kind, x.cycle]), [['impl', 1], ['impl', 2]]);
+  assert.equal(j.reviews[0].issues[0].severity, 'major');
+  assert.equal(j.reviews[0].issues[0].location, 'src/x.mjs:10');
 });
