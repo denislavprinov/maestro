@@ -249,6 +249,9 @@ function handleServerMessage(msg) {
     case 'state':
       onState(r, msg);
       break;
+    case 'subagent':
+      onSubagent(r, msg);
+      break;
     case 'done':
       onDone(r, msg);
       break;
@@ -467,6 +470,21 @@ function nodeModelLine(node) {
   return `${modelLabel} · ${effort || 'default'}`;
 }
 
+// Sub-agent square strip for a run-graph node. One <span.sq> per sub-agent
+// (.on iff that sub is still `running`), plus an exact ×N count. Squares are
+// render-capped (the count text stays exact); no subs -> empty string so a
+// node without sub-agents gets no border row. Pulse is CSS-only (.sq.on).
+const SUB_SQUARE_CAP = 24;
+function subFanHtml(subs) {
+  const list = Array.isArray(subs) ? subs : [];
+  if (list.length === 0) return '';
+  const squares = list
+    .slice(0, SUB_SQUARE_CAP)
+    .map((s) => `<span class="sq${s && s.status === 'running' ? ' on' : ''}"></span>`)
+    .join('');
+  return `<div class="fan">${squares}<span class="fl">×${list.length}</span></div>`;
+}
+
 // Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
 // isSelf => the node is its own self-cycle target (gets the .iterates ring).
 function runNode(node, status, isSelf) {
@@ -553,7 +571,8 @@ function manifestStepsForWires(manifest) {
 
 // Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
 // view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
-//          live:boolean, durText(id)->str, costText(id)->str }.
+//          live:boolean, durText(id)->str, costText(id)->str,
+//          subsOf?(id)->Array<{status}> (optional; sub-agent squares) }.
 const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
 function paintRunGraph(host, manifest, view) {
   const m = manifestFor(manifest);
@@ -582,6 +601,13 @@ function paintRunGraph(host, manifest, view) {
     if (durEl) durEl.textContent = view.durText(id) || '';
     const costEl = el.querySelector('.cost');
     if (costEl) costEl.textContent = view.costText(id) || '';
+
+    // Sub-agent square strip (graph view only; optional adapter). Idempotent:
+    // drop the old strip, inject the current one. Empty -> no strip / no row.
+    const oldFan = el.querySelector('.fan');
+    if (oldFan) oldFan.remove();
+    const fanHtml = view.subsOf ? subFanHtml(view.subsOf(id)) : '';
+    if (fanHtml) el.insertAdjacentHTML('beforeend', fanHtml);
   });
 
   // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
@@ -643,6 +669,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
+    subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     el: null,
     _finished: false,
   };
@@ -781,6 +808,37 @@ function costByNode(steps) {
   return out;
 }
 
+// A single node's sub-agents (for its graph card), preserving insertion order.
+// Pure view-adapter consumed by the render layer; r.subAgents is maintained by
+// onSubagent (deltas) + onState (authoritative snapshot).
+function subAgentsOf(r, nodeId) {
+  const list = r && Array.isArray(r.subAgents) ? r.subAgents : [];
+  return list.filter((s) => s && s.nodeId === nodeId);
+}
+
+// Group sub-agents by nodeId for display (the DB keys by step_key, but the UI
+// groups by node — §7). Map<nodeId, {subs, spawned, active}>; active = running.
+// Records with no nodeId are skipped (cannot be placed on a card).
+function subsByNode(subAgents) {
+  const out = new Map();
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (!s || s.nodeId == null) continue;
+    let g = out.get(s.nodeId);
+    if (!g) { g = { subs: [], spawned: 0, active: 0 }; out.set(s.nodeId, g); }
+    g.subs.push(s);
+    g.spawned += 1;
+    if (s.status === 'running') g.active += 1;
+  }
+  return out;
+}
+
+// {nodeId: Array<sub>} — the .subs arrays from subsByNode, the shape the pill/tree
+// helpers (paintSubsBar/subsPillText/renderSubsTree) consume. Bridges the C-layer
+// Map grouping to the D-layer object-of-arrays consumers.
+function subsByNodeArrays(subAgents) {
+  return Object.fromEntries([...subsByNode(subAgents)].map(([k, g]) => [k, g.subs]));
+}
+
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
@@ -798,8 +856,37 @@ function onState(r, msg) {
     r.costByNode = costByNode(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
+  // Sub-agents: the state snapshot is authoritative (covers late-join/replay and
+  // any missed `subagent` delta). Replace wholesale when present; a snapshot that
+  // omits the field (older runs / partial snapshots) leaves the delta-built array.
+  r.subAgents = msg.subAgents || r.subAgents;
   if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
+  paintRunCard(r);
+}
+
+// Per-run sub-agent lifecycle delta. Upsert into r.subAgents by `id`: a spawn
+// inserts/updates the record; a finish updates status + finishedAt + telemetry.
+// Then repaint via the same path onState/onPhase use (paintRunCard -> paintStepper),
+// so the graph card the render layer builds reflects the change immediately. The
+// authoritative full set still arrives on the `state` snapshot (see onState).
+function onSubagent(r, msg) {
+  if (!msg || !msg.id) return;
+  let rec = r.subAgents.find((s) => s.id === msg.id);
+  if (!rec) {
+    rec = { id: msg.id };
+    r.subAgents.push(rec);
+  }
+  // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
+  // label/nodeId/stepKey; never overwrite a known value with undefined).
+  for (const k of ['label', 'nodeId', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
+    if (msg[k] !== undefined) rec[k] = msg[k];
+  }
+  if (msg.transition === 'finish') {
+    if (msg.status === undefined) rec.status = rec.status === 'running' || rec.status == null ? 'finished' : rec.status;
+    rec.finishedAt = msg.finishedAt !== undefined ? msg.finishedAt
+      : (msg.ts != null ? new Date(msg.ts).toISOString() : new Date().toISOString());
+  }
   paintRunCard(r);
 }
 
@@ -1475,8 +1562,15 @@ if (typeof window !== 'undefined') {
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
+    makeRun,
+    onSubagent,
+    onState,
+    getRun: (id) => runs.get(id),
     durByNode,
     costByNode,
+    subsByNode,
+    subsByNodeArrays,
+    subAgentsOf,
     composerPaintWires,
     buildRunGraph,
     runNode,
@@ -1485,6 +1579,12 @@ if (typeof window !== 'undefined') {
     paintRunGraph,
     histNodeCycle,
     renderHistClarifyReviews,
+    subFanHtml,
+    subsPillText,
+    paintSubsBar,
+    subGroupStatus,
+    renderSubsTree,
+    nodeLabelLookup,
   });
 }
 
@@ -4248,6 +4348,9 @@ async function loadHistDetail(projectDir, id, detail, record) {
     const host = detail.querySelector('.run-flow');
     if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
+    // Same Map->object projection as the live call-site (see paintRunCard).
+    const histSubsBar = detail.querySelector('.subs-bar');
+    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeArrays(data.state.subAgents), nodeLabelLookup(data.state.stepper));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4366,6 +4469,7 @@ function paintHistStepper(detail, st) {
     live: false,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
+    subsOf: (id) => subAgentsOf(st, id),
   });
 }
 
@@ -4553,6 +4657,144 @@ function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
   return 'pending';
 }
 
+// Pill text + colour from a {nodeId: Array<{status}>} grouping. "active" =
+// subs still running; a finished/historical run has none -> grey "N sub-agents".
+function subsPillText(byNode) {
+  const groups = byNode && typeof byNode === 'object' ? Object.values(byNode) : [];
+  let spawned = 0;
+  let active = 0;
+  for (const list of groups) {
+    if (!Array.isArray(list)) continue;
+    spawned += list.length;
+    for (const s of list) if (s && s.status === 'running') active += 1;
+  }
+  return active > 0
+    ? { text: `${spawned} spawned · ${active} active`, active: true }
+    : { text: `${spawned} sub-agents`, active: false };
+}
+
+// Paint the "Sub-agents" pill + (lazily) its tree panel from a by-node grouping.
+// Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
+// [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
+// handler is bound once (dataset guard), the count/text repaint every call.
+function paintSubsBar(barEl, byNode, labelOf) {
+  if (!barEl) return;
+  const groups = byNode && typeof byNode === 'object' ? byNode : {};
+  const total = Object.values(groups).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
+  if (total === 0) { barEl.hidden = true; return; }
+  barEl.hidden = false;
+
+  const btn = barEl.querySelector('.btn-subs');
+  const panel = barEl.querySelector('.subs-panel');
+  const count = barEl.querySelector('.sb-count');
+  const labelFn = typeof labelOf === 'function' ? labelOf : (id) => id;
+  // Per-CARD state on the element (NOT a module-level function static) — the app
+  // paints multiple concurrent run cards; a function static would bleed the most
+  // recently painted card's grouping/labels into another card's open panel.
+  barEl._subsGroups = groups;
+  barEl._subsLabelOf = labelFn;
+
+  const { text, active } = subsPillText(groups);
+  if (count) {
+    count.textContent = text;
+    count.classList.toggle('grey', !active);
+  }
+
+  // Re-render an already-open panel in place so live spawns/finishes reflect immediately.
+  if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
+    renderSubsTree(panel, groups, labelFn);
+  }
+
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (panel) {
+        panel.hidden = open;
+        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf);
+      }
+    });
+  }
+}
+
+// Group rollup for a step's sub-agents: anyStop (stop|error) -> 'stop',
+// else anyRun -> 'run', else 'done'. Drives the .subs-stat / .dot colour.
+function subGroupStatus(list) {
+  const arr = Array.isArray(list) ? list : [];
+  if (arr.some((s) => s && (s.status === 'stopped' || s.status === 'error'))) return 'stop';
+  if (arr.some((s) => s && s.status === 'running')) return 'run';
+  return 'done';
+}
+
+// Per-sub-agent row status -> the mono badge / .led class. running -> run (lit),
+// stopped|error -> stop, else done.
+function subRowStatus(status) {
+  if (status === 'running') return 'run';
+  if (status === 'stopped' || status === 'error') return 'stop';
+  return 'done';
+}
+
+// .dot colour per group status (matches the .subs-stat palette).
+const SUBS_DOT_COLOR = { run: 'var(--blue)', done: 'var(--green)', stop: 'var(--red)' };
+const SUBS_STAT_TEXT = { run: 'running', done: 'done', stop: 'stopped' };
+
+// Build the tree panel body from a {nodeId: Array<{id,label,status}>} grouping.
+// legend + one .subs-step per node (dot+name+status pill+count) + a .subs-tree
+// <li> per sub-agent (led + name + mono status). nodeLabel(id)->display name
+// (defaults to the id). Idempotent: the panel is fully rebuilt each call.
+// NOTE: squares here are .sq/.led and are NEVER placed under .fan, so the
+// graph-only sqPulse animation can never reach them.
+function renderSubsTree(panelEl, byNode, nodeLabel) {
+  if (!panelEl) return;
+  const labelOf = typeof nodeLabel === 'function' ? nodeLabel : (id) => id;
+  const groups = byNode && typeof byNode === 'object' ? byNode : {};
+  panelEl.innerHTML =
+    '<div class="subs-legend">' +
+      '<span class="lk"><span class="sq on"></span>active</span>' +
+      '<span class="lk"><span class="sq off"></span>finished</span>' +
+    '</div>';
+
+  for (const nodeId of Object.keys(groups)) {
+    const list = Array.isArray(groups[nodeId]) ? groups[nodeId] : [];
+    if (list.length === 0) continue;
+    const gstat = subGroupStatus(list);
+    const step = document.createElement('div');
+    step.className = 'subs-step';
+    step.innerHTML =
+      '<div class="subs-step-head">' +
+        `<span class="dot" style="background:${SUBS_DOT_COLOR[gstat]}"></span>` +
+        `<b>${escapeHtml(labelOf(nodeId))}</b>` +
+        `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat]}</span>` +
+        `<span class="subs-n">${list.length} sub-agents</span>` +
+      '</div>';
+    const ul = document.createElement('ul');
+    ul.className = 'subs-tree';
+    for (const s of list) {
+      const rstat = subRowStatus(s && s.status);
+      const li = document.createElement('li');
+      li.innerHTML =
+        `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
+        `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
+        `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>`;
+      ul.appendChild(li);
+    }
+    step.appendChild(ul);
+    panelEl.appendChild(step);
+  }
+}
+
+// nodeId -> display label for the tree step headers. Takes a raw stepper and
+// normalizes via manifestFor ONCE (callers pass r.stepper / data.state.stepper,
+// not a pre-normalized manifest — avoids a redundant double manifestFor). Falls
+// back to the raw id for unknown nodes.
+function nodeLabelLookup(stepper) {
+  const m = manifestFor(stepper);
+  const map = {};
+  m.steps.forEach((cell) => cell.nodes.forEach((n) => { map[n.id] = n.label || n.id; }));
+  return (id) => map[id] || id;
+}
+
 function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
@@ -4585,6 +4827,7 @@ function paintStepper(r) {
     live: true,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
+    subsOf: (id) => subAgentsOf(r, id),
   });
 }
 
@@ -4623,6 +4866,13 @@ function paintRunCard(r) {
   }
 
   paintStepper(r);
+  // subsByNode returns Map<nodeId,{subs,spawned,active}>; paintSubsBar (and the
+  // pill/tree helpers) consume a plain {nodeId: Array<{status}>} grouping, which
+  // subsByNodeArrays projects from the Map's .subs arrays. (Plan wrote
+  // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
+  // would never show; see report.)
+  const subsBar = r.el.querySelector('.subs-bar');
+  if (subsBar) paintSubsBar(subsBar, subsByNodeArrays(r.subAgents), nodeLabelLookup(r.stepper));
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');

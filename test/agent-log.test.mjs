@@ -37,12 +37,17 @@ test('assistant tool_use is logged as a readable tool call, not bare "assistant"
   assert.equal(logs[0].text, '→ Read src/app.js');
 });
 
-test('bare user (tool_result) envelope events are dropped', () => {
-  const logs = capture('planner', {
+test('bare user (tool_result) envelope events are dropped (log) and emit no subagent', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const logs = []; const subs = [];
+  orch.on('log', (l) => logs.push(l));
+  orch.on('subagent', (m) => subs.push(m));
+  orch._onAgentEvent('planner', {
     type: 'user',
     raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } },
   });
-  assert.equal(logs.length, 0, 'tool_result echoes carry no information and must not be logged');
+  assert.equal(logs.length, 0, 'tool_result echoes carry no log line');
+  assert.equal(subs.length, 0, 'an untracked tool_use_id is not a sub-agent finish');
 });
 
 test('system init envelope events are dropped', () => {

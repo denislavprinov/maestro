@@ -68,6 +68,32 @@ test('wireRun: state.id is captured onto entry.pipelineId; null does not clobber
   }
 });
 
+// ── unit: 'subagent' is a wired event — buffered + tagged, no status side-effect ──
+test("wireRun: 'subagent' events are buffered/tagged and do NOT mutate status", () => {
+  const entry = makeEntry({ id: 'uuid-SUB1', status: 'running' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('subagent', {
+      transition: 'spawn', id: 'tool_1', label: 'research auth',
+      nodeId: 's0_0', stepKey: '0:s0_0', stepIndex: 0, cycle: 0,
+      status: 'running', ts: 123,
+    });
+    const buffered = entry.events.filter((e) => e.type === 'subagent');
+    assert.equal(buffered.length, 1, "subagent event is buffered for replay");
+    assert.equal(buffered[0].runId, 'uuid-SUB1', 'tagged with runId for client routing');
+    assert.equal(buffered[0].transition, 'spawn');
+    assert.equal(buffered[0].id, 'tool_1');
+    assert.equal(entry.status, 'running', "a 'subagent' event must not change run status");
+
+    entry.orch.emit('subagent', { transition: 'finish', id: 'tool_1', status: 'finished', ts: 456 });
+    assert.equal(entry.events.filter((e) => e.type === 'subagent').length, 2, 'finish also buffered');
+    assert.equal(entry.status, 'running', 'finish still does not change run status');
+  } finally {
+    runs.delete(entry.id);
+  }
+});
+
 // ── integration: /api/runs exposes id=pipelineId, runId=uuid so dedup works ──
 test('/api/runs: live entries expose the pipeline short id when known', async () => {
   const projectDir = await makeProjectDir();

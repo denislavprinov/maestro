@@ -796,6 +796,58 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 @keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
 @keyframes nodeGlowAmber{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
 
+/* Sub-agent square strip on a run-graph node. The node wraps so the strip
+   drops to its own full-width row under the meta/cost block. PULSE LIVES HERE
+   AND NOWHERE ELSE: sqPulse attaches only to .run-flow .node .fan .sq.on, so
+   the tree/legend squares (.led/.sq) never animate and history (terminal
+   statuses -> no .on) never pulses. */
+.run-flow .node.run-node{flex-wrap:wrap;}
+.run-flow .node .fan{flex:0 0 100%;display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line);}
+.run-flow .node .fan .sq{width:7px;height:7px;border-radius:2px;background:var(--ink-3);opacity:.5;}
+.run-flow .node .fan .sq.on{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
+.run-flow .node .fan .fl{font-size:9.5px;font-weight:700;color:var(--ink-3);margin-left:5px;letter-spacing:.02em;}
+.run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
+@keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
+
+/* "Sub-agents" disclosure pill + its tree panel (shared by Run + History). */
+.subs-bar{margin-top:14px;}
+.subs-bar[hidden]{display:none;}
+.btn-subs{display:inline-flex;align-items:center;gap:9px;background:var(--field);border:none;border-radius:999px;padding:9px 15px 9px 13px;font-family:inherit;font-weight:600;font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:background .15s;}
+.btn-subs:hover{background:var(--line-2);}
+.btn-subs .ico{width:15px;height:15px;stroke:var(--ink-2);stroke-width:1.9;}
+.btn-subs .sb-count{display:inline-flex;align-items:center;gap:6px;background:var(--blue-bg);color:var(--blue-ink);font-weight:700;font-size:11px;padding:3px 9px;border-radius:999px;}
+.btn-subs .sb-count.grey{background:#fff;color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--line-2);}
+.btn-subs .chev{transition:transform .2s;stroke:var(--ink-3);}
+.btn-subs[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.subs-panel{margin-top:14px;border:1px solid var(--line);border-radius:18px;background:#FBFBF9;padding:8px 20px 16px;}
+.subs-panel[hidden]{display:none;}
+.subs-legend{display:flex;align-items:center;gap:18px;padding:12px 0 4px;font-size:11.5px;font-weight:600;color:var(--ink-3);}
+.subs-legend .lk{display:flex;align-items:center;gap:7px;}
+.subs-legend .sq{width:9px;height:9px;border-radius:2px;}
+.subs-legend .sq.on{background:var(--blue);}
+.subs-legend .sq.off{background:var(--ink-3);opacity:.5;}
+.subs-step{padding:13px 0;border-top:1px solid var(--line);}
+.subs-step:first-of-type{border-top:none;}
+.subs-step-head{display:flex;align-items:center;gap:10px;}
+.subs-step-head .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
+.subs-step-head b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
+.subs-step-head .subs-stat{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;letter-spacing:.02em;text-transform:uppercase;}
+.subs-step-head .subs-stat.run{background:var(--blue-bg);color:var(--blue-ink);}
+.subs-step-head .subs-stat.done{background:var(--green-bg);color:var(--green-ink);}
+.subs-step-head .subs-stat.stop{background:var(--red-bg);color:var(--red-ink);}
+.subs-step-head .subs-n{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--ink-3);}
+.subs-tree{list-style:none;margin:8px 0 0;padding:0 0 0 5px;}
+.subs-tree li{position:relative;padding:6px 0 6px 28px;font-size:12.5px;font-weight:500;color:var(--ink-2);display:flex;align-items:center;gap:9px;}
+.subs-tree li::before{content:"";position:absolute;left:5px;top:-3px;height:calc(50% + 3px);width:1.5px;background:var(--line-2);}
+.subs-tree li::after{content:"";position:absolute;left:5px;top:50%;width:15px;height:1.5px;background:var(--line-2);}
+.subs-tree li .led{width:7px;height:7px;border-radius:2px;flex:0 0 auto;background:var(--ink-3);opacity:.55;}
+.subs-tree li .led.on{background:var(--blue);opacity:1;}
+.subs-tree li .ag-name{min-width:0;}
+.subs-tree li .st{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;padding:2px 8px;border-radius:6px;white-space:nowrap;}
+.subs-tree li .st.done{background:var(--green-bg);color:var(--green-ink);}
+.subs-tree li .st.run{background:var(--blue-bg);color:var(--blue-ink);}
+.subs-tree li .st.stop{background:var(--red-bg);color:var(--red-ink);}
+
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */
 .run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
 
@@ -808,4 +860,5 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent),var(--shadow-soft);}
   .run-flow .node.is-paused{box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent),var(--shadow-soft);}
   .run-flow .wires path.wire-live{animation:none;}
+  .run-flow .node .fan .sq.on{animation:none;}
 }

@@ -59,6 +59,35 @@ export function buildEffortArgs(effort) {
 }
 
 /**
+ * Whether per-sub-agent telemetry via Claude's hook-events is enabled. Feature-
+ * detected and DEFAULT OFF: only `MAESTRO_SUBAGENT_HOOKS` set to a truthy value
+ * (anything but "", "0", "false") turns it on. OFF ⇒ runReal adds NO extra flags
+ * and the baseline sub-agent lifecycle (tool_use/tool_result) is unaffected.
+ */
+export function subagentHooksEnabled() {
+  const v = process.env.MAESTRO_SUBAGENT_HOOKS;
+  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+}
+
+/**
+ * Gated argv for sub-agent telemetry. Returns [] when subagentHooksEnabled() is
+ * false (the default), so the baseline run path is byte-identical. When on, adds
+ * `--include-hook-events` (surfaces hook lifecycle on the SAME stdout stream) and
+ * a `--settings` inline JSON registering a no-op `true` PostToolUse hook matched
+ * to `Agent` — just enough to make `claude` run+emit the PostToolUse event whose
+ * `tool_response` carries totalDurationMs/totalTokens/usage. We read telemetry off
+ * the surfaced stream-json event, NOT the hook command's stdout. `--bare`-proof
+ * (inline settings need no settings file).
+ */
+export function buildHookArgs() {
+  if (!subagentHooksEnabled()) return [];
+  const settings = JSON.stringify({
+    hooks: { PostToolUse: [{ matcher: 'Agent', hooks: [{ type: 'command', command: 'true', async: true }] }] },
+  });
+  return ['--include-hook-events', '--settings', settings];
+}
+
+/**
  * Whether mock mode is active. Driven by MAESTRO_MOCK or an explicit opts.mock
  * passed through by the orchestrator (handled by caller mapping mock->env or
  * by passing systemPrompt/prompt markers; we also honor a `mock` field).
@@ -137,6 +166,10 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       args.push('--model', model);
     }
     for (const a of buildEffortArgs(effort)) args.push(a);
+    // Gated, default-off per-sub-agent telemetry (MAESTRO_SUBAGENT_HOOKS). [] when
+    // off, so the baseline argv is unchanged; a CLI that rejects these flags would
+    // only ever fail when the operator opted in.
+    for (const a of buildHookArgs()) args.push(a);
     if (Array.isArray(allowedTools) && allowedTools.length) {
       args.push('--allowedTools', allowedTools.join(','));
     }
@@ -209,6 +242,15 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
           errorDetail;
       } else if (!errorDetail && typeof evt?.error === 'string' && evt.error.trim()) {
         errorDetail = evt.error.trim();
+      }
+      // Surface Claude's hook-event lines (only present under --include-hook-events)
+      // as a stable type:'hook-event' the orchestrator reads for sub-agent telemetry.
+      // The exact envelope key varies by CLI build; match the documented shapes.
+      const isHook = evt?.type === 'hook-event' || evt?.type === 'hook_event' ||
+        (typeof evt?.hook_event_name === 'string');
+      if (isHook) {
+        safeEmit(onEvent, { type: 'hook-event', raw: evt });
+        return;
       }
       const cost = extractResultCost(evt);
       safeEmit(onEvent, {
@@ -333,6 +375,44 @@ async function emitLog(onEvent, text) {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+/**
+ * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
+ * roles whose real runs may spawn sub-agents. Keyed by the MOCK_ROLE strings.
+ */
+const MOCK_FANOUT_ROLES = new Set([
+  'planner-plan', 'refiner', 'implementer', 'plan-review',
+  'workspace-reviewer', 'workspace-scan',
+]);
+
+/**
+ * Emit a couple of fake sub-agent spawn (assistant.tool_use Agent) + finish
+ * (user.tool_result) events for a fan-out-eligible role so the offline mock
+ * exercises the sub-agent lifecycle indicator. No-op for other roles. The ids are
+ * role-namespaced so concurrent mock nodes never collide on a tool_use id.
+ */
+async function emitMockSubAgents(role, onEvent, signal) {
+  if (!MOCK_FANOUT_ROLES.has(role)) return;
+  const labels = ['investigate area A', 'investigate area B'];
+  const ids = labels.map((_, i) => `mock_${role}_${i + 1}`);
+  // Spawns first (one assistant event carrying both tool_use blocks), then a brief
+  // running window, then the matching tool_result finishes.
+  safeEmit(onEvent, {
+    type: 'assistant',
+    raw: { type: 'assistant', message: { content: ids.map((id, i) => ({
+      type: 'tool_use', id, name: 'Agent', input: { description: labels[i], subagent_type: 'general-purpose' },
+    })) } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  abortIfNeeded(signal);
+  for (const id of ids) {
+    safeEmit(onEvent, {
+      type: 'user',
+      raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
 function abortIfNeeded(signal) {
   if (signal?.aborted) {
     const err = new Error('aborted');
@@ -390,6 +470,14 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
       break;
   }
 
+  abortIfNeeded(signal);
+  // Offline sub-agent indicator: for the fan-out-eligible roles, emit a couple of
+  // fake Task/Agent spawn tool_use blocks + matching tool_result finishes so
+  // `npm run smoke` exercises the sub-agent lifecycle (squares/pill) with no real
+  // claude. Shapes mirror the real stream: spawn = assistant.tool_use(Agent) with
+  // an id; finish = user.tool_result with that tool_use_id. Non-fan-out roles emit
+  // nothing, so their mock output is unchanged.
+  await emitMockSubAgents(role, onEvent, signal);
   abortIfNeeded(signal);
   // No model was called, so the truthful spend is $0. Emit a result event the
   // orchestrator attributes to the current phase, so mock/demo runs still show

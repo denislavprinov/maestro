@@ -28,6 +28,7 @@ import {
   slugify,
   today,
   recordArtifact,
+  upsertSubAgent,
   writeClarify,
   writeReview,
   reviewKindOf,
@@ -193,6 +194,11 @@ class Orchestrator extends EventEmitter {
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
       branch: null,     // { source, feature, worktreeDir, reusedExisting } after _setupWorktree
+      // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
+      // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
+      // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
+      // status ∈ 'running'|'finished'|'error'|'stopped'.
+      subAgents: [],
     };
   }
 
@@ -1298,6 +1304,20 @@ class Orchestrator extends EventEmitter {
     this.state.cycle = cycle;
     this.state.updatedAt = now;
     this._emit('phase', { phase: this.state.phase, cycle, status, nodeId: node.nodeId });
+    // Backstop (§5.2): when a step reaches its terminal marker, force-close any
+    // sub-agent still 'running' for THIS step so the UI never shows a stuck-active
+    // square if a tool_result finish was missed. 'start' never closes anything;
+    // the close status is 'stopped' iff the whole run was stopped, else 'finished'.
+    if (status === 'done' || status === 'error' || status === 'stopped') {
+      const closeTo = this.state.status === 'stopped' ? 'stopped' : 'finished';
+      for (const rec of this.state.subAgents) {
+        if (rec.stepKey !== key || rec.status !== 'running') continue;
+        rec.status = closeTo;
+        rec.finishedAt = new Date().toISOString();
+        this._upsertSubAgent(rec);
+        this._subAgentTransition('finish', rec);
+      }
+    }
     this._emit('state', this.getState());
     this._persist().catch(() => {});
   }
@@ -1305,6 +1325,15 @@ class Orchestrator extends EventEmitter {
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */
   _onAgentEvent(role, e, attr = null) {
     if (!e) return;
+    // Sub-agent telemetry (feature-detected, gated by MAESTRO_SUBAGENT_HOOKS). A
+    // surfaced PostToolUse:Agent hook-event carries the parent tool_use_id +
+    // tool_response telemetry; enrich the matching record's columns, keyed by
+    // tool_use_id (the canonical key — never agent_id). Returns early: a hook
+    // event has no human text and no cost to attribute.
+    if (e.type === 'hook-event') {
+      this._recordSubAgentTelemetry(e.raw);
+      return;
+    }
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
@@ -1326,7 +1355,16 @@ class Orchestrator extends EventEmitter {
 
     // Learn Task/Agent descriptions from MAIN-agent events (subId == null) so the
     // child events below can be labeled by what their sub-agent was asked to do.
-    if (subId == null) registerSubAgents(e.raw, this._subAgentLabels);
+    if (subId == null) {
+      registerSubAgents(e.raw, this._subAgentLabels);
+      // Lifecycle: a NEW Task/Agent tool_use on the MAIN stream = a sub-agent spawn.
+      // Needs `attr` to pin nodeId/stepIndex/cycle/stepKey; the clarify pre-step
+      // (attr === null) carries no node, so it is logged but not lifecycle-tracked.
+      if (attr) this._recordSubAgentSpawns(e.raw, attr);
+      // Finish: a tool_result on the MAIN stream whose tool_use_id is a tracked
+      // sub-agent → finished/error. These `user` envelopes were previously dropped.
+      this._recordSubAgentFinishes(e.raw);
+    }
 
     // Display source: parent role for main events; "role ▸ label" for sub-agent
     // events. `sub` drives the indented/dimmed web styling.
@@ -1359,6 +1397,109 @@ class Orchestrator extends EventEmitter {
     for (const call of describeToolUses(e.raw, this.projectDir)) {
       this._log(source, 'debug', `→ ${call}`, logAttr);
     }
+  }
+
+  /**
+   * Lifecycle spawn reducer: for every NEW Task/Agent tool_use block in a
+   * MAIN-stream event, push a `running` sub-agent record (attributed to the
+   * step via `attr`), mirror it to the sub_agents table, and emit a `spawn`
+   * delta. Idempotent per tool_use id (re-seen ids are skipped). `attr` is
+   * required (the caller only invokes this when a node is in scope).
+   */
+  _recordSubAgentSpawns(raw, attr) {
+    const content = raw?.message?.content;
+    if (!Array.isArray(content)) return;
+    for (const c of content) {
+      if (c?.type !== 'tool_use' || (c.name !== 'Task' && c.name !== 'Agent') || !c.id) continue;
+      if (this.state.subAgents.some((s) => s.id === c.id)) continue; // idempotent
+      const label = this._subAgentLabels.get(c.id) || clip(c.input?.description || c.input?.prompt, SUBAGENT_LABEL_MAX);
+      const rec = {
+        id: c.id,
+        label: label || null,
+        nodeId: attr.nodeId ?? null,
+        stepIndex: attr.stepIndex ?? null,
+        cycle: attr.cycle ?? null,
+        stepKey: attr.stepKey ?? null,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+      };
+      this.state.subAgents.push(rec);
+      this._upsertSubAgent(rec);
+      this._subAgentTransition('spawn', rec);
+    }
+  }
+
+  /**
+   * Lifecycle finish reducer: scan a MAIN-stream event's content for a
+   * tool_result whose tool_use_id is a tracked sub-agent. Set status =
+   * is_error ? 'error' : 'finished' and stamp finishedAt, but ONLY while the
+   * record is still 'running' (a late/duplicate tool_result must not flip a
+   * terminal record back or re-emit). Mirrors to the table + emits a `finish`
+   * delta. The finish envelope is `{type:'user', message:{content:[{type:
+   * 'tool_result', tool_use_id, is_error?:true}]}}` — previously dropped.
+   */
+  _recordSubAgentFinishes(raw) {
+    const content = raw?.message?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (b?.type !== 'tool_result' || !b.tool_use_id) continue;
+      const rec = this.state.subAgents.find((s) => s.id === b.tool_use_id);
+      if (!rec || rec.status !== 'running') continue; // unknown id or already terminal
+      rec.status = b.is_error ? 'error' : 'finished';
+      rec.finishedAt = new Date().toISOString();
+      this._upsertSubAgent(rec);
+      this._subAgentTransition('finish', rec);
+    }
+  }
+
+  /** Best-effort mirror of a sub-agent record to the sub_agents table. Guarded
+   *  exactly like _persist/_artifact: no pipeline → in-memory only (unit ctx). */
+  _upsertSubAgent(rec) {
+    if (!this.pipeline) return;
+    try { upsertSubAgent(this.pipeline.id, rec); } catch { /* best-effort */ }
+  }
+
+  /** Emit a hybrid `subagent` delta. The full `state` snapshot remains the
+   *  reconcile/late-join source of truth (it carries subAgents). */
+  _subAgentTransition(transition, rec) {
+    this._emit('subagent', {
+      runId: this.state.id,
+      transition,
+      id: rec.id,
+      label: rec.label ?? null,
+      nodeId: rec.nodeId ?? null,
+      stepKey: rec.stepKey ?? null,
+      stepIndex: rec.stepIndex ?? null,
+      cycle: rec.cycle ?? null,
+      status: rec.status,
+      ...(rec.durationMs != null ? { durationMs: rec.durationMs } : {}),
+      ...(rec.tokens != null ? { tokens: rec.tokens } : {}),
+      ...(rec.costUsd != null ? { costUsd: rec.costUsd } : {}),
+      ts: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Telemetry enrichment from a surfaced PostToolUse:Agent hook-event. Reads the
+   * parent tool_use_id + tool_response.{totalDurationMs,totalTokens,usage} and
+   * fills the matching sub-agent record's durationMs/tokens/costUsd (only those
+   * present), mirrors to the table, and emits an `update` delta. No-op for an
+   * unknown id or a non-Agent hook. Strictly additive — the baseline lifecycle
+   * needs none of this.
+   */
+  _recordSubAgentTelemetry(raw) {
+    const id = raw?.tool_use_id ?? raw?.tool_response?.tool_use_id ?? null;
+    if (!id) return;
+    const rec = this.state.subAgents.find((s) => s.id === id);
+    if (!rec) return;
+    const tr = raw?.tool_response || {};
+    if (Number.isFinite(Number(tr.totalDurationMs))) rec.durationMs = Number(tr.totalDurationMs);
+    if (Number.isFinite(Number(tr.totalTokens))) rec.tokens = Number(tr.totalTokens);
+    const cost = tr.usage?.cost_usd ?? tr.usage?.total_cost_usd ?? tr.cost_usd;
+    if (Number.isFinite(Number(cost))) rec.costUsd = Number(cost);
+    this._upsertSubAgent(rec);
+    this._subAgentTransition('update', rec);
   }
 
   // ── git checkpoint ─────────────────────────────────────────────────────────

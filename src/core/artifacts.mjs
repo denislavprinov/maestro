@@ -236,6 +236,99 @@ export function readPipelineExtras(pipelineId) {
   return { clarify, reviews };
 }
 
+/**
+ * Upsert one sub_agents row (a Task/Agent child agent of a pipeline node). Idempotent
+ * on the (pipeline_id, id) PK: the spawn writes the full record; later lifecycle updates
+ * (finish / telemetry) pass only the changed fields and DO NOT clobber the rest. The
+ * UPDATE arm COALESCE-guards label/started_at/duration_ms/tokens/cost_usd exactly like
+ * writeState guards base_name/date_prefix (a NULL excluded never overwrites a set value),
+ * so a status-only finish update can never null the spawn-time label or accrued telemetry.
+ * status/finished_at/node_id/step_index/cycle/step_key always take the newest non-null.
+ *
+ * This is the IDEMPOTENT UPSERT path, NEVER the delete-all path — sub_agents must outlive
+ * writeState's pipeline_steps DELETE-all + re-INSERT (which is why the table FKs to
+ * pipelines, not pipeline_steps). Best-effort under WAL contention (mirrors writeReview/
+ * recordArtifact): the orchestrator's live `state.subAgents` snapshot is the reconcile
+ * source of truth, so a swallowed write surfaces in tests, never as a crashed run. A
+ * missing id/pipelineId is a no-op. The pipelines row must already exist (FK).
+ * @param {string} pipelineId
+ * @param {{id:string, label?:string, nodeId?:string, stepIndex?:number, cycle?:number,
+ *          stepKey?:string, status?:string, startedAt?:string, finishedAt?:string,
+ *          durationMs?:number, tokens?:number, costUsd?:number}} rec
+ */
+export function upsertSubAgent(pipelineId, rec) {
+  if (!pipelineId || !rec || !rec.id) return;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd)
+        VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd)
+        ON CONFLICT(pipeline_id, id) DO UPDATE SET
+          status      = excluded.status,
+          step_key    = COALESCE(excluded.step_key, step_key),
+          node_id     = COALESCE(excluded.node_id, node_id),
+          step_index  = COALESCE(excluded.step_index, step_index),
+          cycle       = COALESCE(excluded.cycle, cycle),
+          label       = COALESCE(excluded.label, label),
+          started_at  = COALESCE(excluded.started_at, started_at),
+          finished_at = COALESCE(excluded.finished_at, finished_at),
+          duration_ms = COALESCE(excluded.duration_ms, duration_ms),
+          tokens      = COALESCE(excluded.tokens, tokens),
+          cost_usd    = COALESCE(excluded.cost_usd, cost_usd)
+      `).run({
+        pipeline_id: pipelineId,
+        id: rec.id,
+        step_key: rec.stepKey ?? null,
+        node_id: rec.nodeId ?? null,
+        step_index: Number.isFinite(rec.stepIndex) ? rec.stepIndex : null,
+        cycle: Number.isFinite(rec.cycle) ? rec.cycle : null,
+        label: rec.label ?? null,
+        status: rec.status ?? 'running',
+        started_at: rec.startedAt ?? null,
+        finished_at: rec.finishedAt ?? null,
+        duration_ms: Number.isFinite(rec.durationMs) ? rec.durationMs : null,
+        tokens: Number.isFinite(rec.tokens) ? rec.tokens : null,
+        cost_usd: Number.isFinite(rec.costUsd) ? rec.costUsd : null,
+      });
+    });
+  } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
+}
+
+/**
+ * List a pipeline's sub-agents as the shared camelCase record array, ordered by
+ * (started_at, id) — the same order the UI groups/renders. Inverse of upsertSubAgent's
+ * column mapping (snake_case row -> camelCase record), mirroring stepRowToStep. Always
+ * returns an array (never null) so callers render unconditionally; nullable telemetry
+ * columns surface as null. Wired into rowToState so it rides every detail response.
+ * @param {string} pipelineId
+ * @returns {Array<{id:string, label:string|null, nodeId:string|null, stepIndex:number|null,
+ *   cycle:number|null, stepKey:string|null, status:string, startedAt:string|null,
+ *   finishedAt:string|null, durationMs:number|null, tokens:number|null, costUsd:number|null}>}
+ */
+export function listSubAgents(pipelineId) {
+  if (!pipelineId) return [];
+  return getDb().prepare(`
+    SELECT id, label, node_id, step_index, cycle, step_key, status,
+           started_at, finished_at, duration_ms, tokens, cost_usd
+    FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
+  `).all(pipelineId).map((r) => ({
+    id: r.id,
+    label: r.label ?? null,
+    nodeId: r.node_id ?? null,
+    stepIndex: r.step_index ?? null,
+    cycle: r.cycle ?? null,
+    stepKey: r.step_key ?? null,
+    status: r.status,
+    startedAt: r.started_at ?? null,
+    finishedAt: r.finished_at ?? null,
+    durationMs: r.duration_ms ?? null,
+    tokens: r.tokens ?? null,
+    costUsd: r.cost_usd ?? null,
+  }));
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 
@@ -1054,6 +1147,7 @@ function rowToState(row) {
              active_ms, running_since, cost_usd
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
+    subAgents: listSubAgents(row.id),
   };
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;

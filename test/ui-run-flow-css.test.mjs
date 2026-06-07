@@ -134,3 +134,88 @@ test('prefers-reduced-motion disables node glow + marching-ants', () => {
   assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node\.is-active/);
   assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.wires path\.wire-live[\s\S]*animation:\s*none/);
 });
+
+test('.fan square strip: wrap row, 7px squares, blue .on pulses via sqPulse', () => {
+  assert.match(css, /\.run-flow \.node\.run-node\{[^}]*flex-wrap:\s*wrap/,
+    'run-node wraps so the fan drops to its own row');
+  const fan = ruleBody('.run-flow .node .fan');
+  assert.ok(fan, '.fan rule missing');
+  assert.match(fan, /flex:\s*0 0 100%/, 'fan takes a full row');
+  assert.match(fan, /border-top:\s*1px solid var\(--line\)/);
+  const sq = ruleBody('.run-flow .node .fan .sq');
+  assert.ok(sq, '.fan .sq rule missing');
+  assert.match(sq, /width:\s*7px/);
+  assert.match(sq, /background:\s*var\(--ink-3\)/, 'idle square is grey');
+  const on = ruleBody('.run-flow .node .fan .sq.on');
+  assert.ok(on, '.fan .sq.on rule missing');
+  assert.match(on, /background:\s*var\(--blue\)/);
+  assert.match(on, /animation:\s*sqPulse/, 'only the graph .fan .sq.on pulses');
+  assert.match(css, /@keyframes sqPulse\b/, 'sqPulse keyframes defined');
+});
+
+test('sqPulse is scoped to the graph fan ONLY (never .subs-tree / .led / .subs-legend)', () => {
+  // Every selector that attaches animation:sqPulse must be the graph fan square.
+  const animRules = [...css.matchAll(/([^{}]+)\{[^}]*animation:\s*sqPulse[^}]*\}/g)].map((m) => m[1].trim());
+  assert.ok(animRules.length >= 1, 'at least one sqPulse user');
+  for (const sel of animRules) {
+    assert.equal(sel, '.run-flow .node .fan .sq.on',
+      `sqPulse may only attach to .run-flow .node .fan .sq.on, found: ${sel}`);
+  }
+});
+
+test('reduced-motion disables the fan square pulse', () => {
+  assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node \.fan \.sq\.on[\s\S]*animation:\s*none/);
+});
+
+test('Sub-agents pill: rounded button, sb-count blue default + grey variant, chev rotate', () => {
+  const bar = ruleBody('.subs-bar');
+  assert.ok(bar, '.subs-bar rule missing');
+  assert.match(bar, /margin-top:\s*14px/);
+  const btn = ruleBody('.btn-subs');
+  assert.ok(btn, '.btn-subs rule missing');
+  assert.match(btn, /border-radius:\s*999px/, 'pill is fully rounded');
+  assert.match(btn, /cursor:\s*pointer/);
+  const cnt = ruleBody('.btn-subs .sb-count');
+  assert.ok(cnt, '.sb-count rule missing');
+  assert.match(cnt, /background:\s*var\(--blue-bg\)/, 'default count is blue');
+  assert.match(cnt, /color:\s*var\(--blue-ink\)/);
+  assert.ok(ruleBody('.btn-subs .sb-count.grey'), '.sb-count.grey variant missing');
+  const panel = ruleBody('.subs-panel');
+  assert.ok(panel, '.subs-panel rule missing');
+  assert.match(panel, /border-radius:\s*18px/);
+  assert.match(css, /\.subs-panel\[hidden\]\{[^}]*display:\s*none/);
+  assert.match(css, /\.btn-subs\[aria-expanded="true"\] \.chev\{[^}]*rotate\(180deg\)/,
+    'open pill rotates the chevron');
+});
+
+test('tree legend + step + connector-row CSS, and NO animation on tree squares', () => {
+  assert.ok(ruleBody('.subs-legend'), '.subs-legend rule missing');
+  assert.ok(ruleBody('.subs-legend .sq.on'), 'legend active swatch');
+  assert.ok(ruleBody('.subs-legend .sq.off'), 'legend finished swatch');
+  const step = ruleBody('.subs-step');
+  assert.ok(step, '.subs-step rule missing');
+  assert.match(step, /border-top:\s*1px solid var\(--line\)/);
+  assert.ok(ruleBody('.subs-step-head .dot'), '.dot rule missing');
+  assert.match(css, /\.subs-step-head \.subs-stat\.run\{[^}]*background:\s*var\(--blue-bg\)/);
+  assert.match(css, /\.subs-step-head \.subs-stat\.done\{[^}]*background:\s*var\(--green-bg\)/);
+  assert.match(css, /\.subs-step-head \.subs-stat\.stop\{[^}]*background:\s*var\(--red-bg\)/);
+  assert.ok(ruleBody('.subs-step-head .subs-n'), '.subs-n rule missing');
+
+  const li = ruleBody('.subs-tree li');
+  assert.ok(li, '.subs-tree li rule missing');
+  assert.match(li, /position:\s*relative/, 'rows are positioned for ::before/::after connectors');
+  assert.ok(ruleBody('.subs-tree li::before') || /\.subs-tree li::before/.test(css), 'vertical connector');
+  assert.ok(ruleBody('.subs-tree li::after') || /\.subs-tree li::after/.test(css), 'horizontal connector');
+  assert.ok(ruleBody('.subs-tree li .led'), 'row .led rule missing');
+  assert.ok(ruleBody('.subs-tree li .led.on'), 'lit row .led variant missing');
+  assert.match(css, /\.subs-tree li \.st\.run\{[^}]*background:\s*var\(--blue-bg\)/);
+  assert.match(css, /\.subs-tree li \.st\.done\{[^}]*background:\s*var\(--green-bg\)/);
+  assert.match(css, /\.subs-tree li \.st\.stop\{[^}]*background:\s*var\(--red-bg\)/);
+
+  // The ONLY sqPulse user stays the graph fan (re-assert the scoping after the tree CSS lands).
+  const animRules = [...css.matchAll(/([^{}]+)\{[^}]*animation:\s*sqPulse[^}]*\}/g)].map((m) => m[1].trim());
+  for (const sel of animRules) assert.equal(sel, '.run-flow .node .fan .sq.on');
+  // No tree rule may reference sqPulse / any animation on .led or .subs squares.
+  assert.doesNotMatch(css, /\.subs-tree[^{]*\{[^}]*animation/, 'tree rows never animate');
+  assert.doesNotMatch(css, /\.subs-legend[^{]*\{[^}]*animation/, 'legend never animates');
+});
