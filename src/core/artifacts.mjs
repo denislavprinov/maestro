@@ -262,9 +262,9 @@ export function upsertSubAgent(pipelineId, rec) {
     tx(() => {
       getDb().prepare(`
         INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
-          label, status, started_at, finished_at, duration_ms, tokens, cost_usd)
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase)
         VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
-          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd)
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase)
         ON CONFLICT(pipeline_id, id) DO UPDATE SET
           status      = excluded.status,
           step_key    = COALESCE(excluded.step_key, step_key),
@@ -276,7 +276,8 @@ export function upsertSubAgent(pipelineId, rec) {
           finished_at = COALESCE(excluded.finished_at, finished_at),
           duration_ms = COALESCE(excluded.duration_ms, duration_ms),
           tokens      = COALESCE(excluded.tokens, tokens),
-          cost_usd    = COALESCE(excluded.cost_usd, cost_usd)
+          cost_usd    = COALESCE(excluded.cost_usd, cost_usd),
+          ui_phase    = COALESCE(excluded.ui_phase, ui_phase)
       `).run({
         pipeline_id: pipelineId,
         id: rec.id,
@@ -291,6 +292,7 @@ export function upsertSubAgent(pipelineId, rec) {
         duration_ms: Number.isFinite(rec.durationMs) ? rec.durationMs : null,
         tokens: Number.isFinite(rec.tokens) ? rec.tokens : null,
         cost_usd: Number.isFinite(rec.costUsd) ? rec.costUsd : null,
+        ui_phase: rec.uiPhase ?? null,
       });
     });
   } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
@@ -311,7 +313,7 @@ export function listSubAgents(pipelineId) {
   if (!pipelineId) return [];
   return getDb().prepare(`
     SELECT id, label, node_id, step_index, cycle, step_key, status,
-           started_at, finished_at, duration_ms, tokens, cost_usd
+           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase
     FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
   `).all(pipelineId).map((r) => ({
     id: r.id,
@@ -326,6 +328,7 @@ export function listSubAgents(pipelineId) {
     durationMs: r.duration_ms ?? null,
     tokens: r.tokens ?? null,
     costUsd: r.cost_usd ?? null,
+    uiPhase: r.ui_phase ?? null,
   }));
 }
 
