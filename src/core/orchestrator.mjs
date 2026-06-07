@@ -1536,19 +1536,17 @@ class Orchestrator extends EventEmitter {
   // ── small utilities ─────────────────────────────────────────────────────────
 
   async _writeClarifyAnswers(questions, answers) {
-    // Delegate to protocol's writer via dynamic import to keep this module's
-    // import surface focused; protocol is already loaded so this is cheap.
-    const { writeClarifyAnswers } = await import('./protocol.mjs');
+    // M1: clarify answers live ONLY in the clarify DB row (the authoritative store).
+    // The dead FS clarify-answers.json (never read back; the single-round loop passes
+    // prior answers in-memory) is gone. Enrich each answer with its question text so
+    // the row + History UI render the full Q&A without a join.
     const byId = new Map(questions.map((q) => [q.id, q]));
     const enriched = answers.map((a) => ({
       id: a.id,
       question: byId.get(a.id)?.question || '',
       choice: a.choice,
     }));
-    await writeClarifyAnswers(this.pipeline.dir, { answers: enriched });
-    // Phase 3.10: mirror the enriched answers into the durable clarify row (history
-    // reads the DB; the live loop already consumed the FS file). Best-effort.
-    await writeClarify(this.pipeline.id, { answers: { answers: enriched } }).catch(() => {});
+    await writeClarify(this.pipeline.id, { answers: { answers: enriched } });
     return enriched;
   }
 

@@ -160,3 +160,8 @@ test('runPlannerClarify still works (FS fallback) when ctx has no pipelineId', a
   const r = await runPlannerClarify(ctx, { round: 1, priorAnswers: [] });
   assert.ok(r.questions.length > 0, 'falls back to the FS-parsed clarify when no pipelineId');
 });
+
+test('protocol no longer exports writeClarifyAnswers (dead FS write removed)', async () => {
+  const protocol = await import('../src/core/protocol.mjs');
+  assert.equal(protocol.writeClarifyAnswers, undefined, 'writeClarifyAnswers removed');
+});

@@ -55,3 +55,18 @@ test('a full mock run persists per-cycle review verdicts authoritatively (impl k
   assert.ok(c2, 'cycle 2 impl verdict persisted');
   assert.equal(c2.issues.some((i) => i.severity === 'major'), false, 'cycle 2 cleared the blocker');
 });
+
+test('no clarify-answers.json is written; answers live only in the clarify DB row', async () => {
+  const projectDir = await makeTmpDir();
+  const orch = createOrchestrator({ projectDir, prompt: 'demo task', auto: true, claude: { mock: true } });
+  const res = await orch.run();
+  assert.equal(res.status, 'done');
+  const id = orch.getState().id;
+  const runDir = orch.getState().pipelineDir;
+  assert.equal(existsSync(join(runDir, 'clarify-answers.json')), false, 'dead FS write removed');
+  const row = readClarifyRow(id);
+  assert.ok(row.answers, 'answers persisted to the clarify row');
+  assert.ok(Array.isArray(row.answers.answers), 'answers payload shape');
+  assert.ok(row.answers.answers.length > 0, 'mock auto-answered the question');
+  assert.ok(row.answers.answers[0].choice, 'answer carries a choice');
+});
