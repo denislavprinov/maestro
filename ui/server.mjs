@@ -234,7 +234,11 @@ function wireRun(entry) {
   const { id, orch } = entry;
 
   const record = (event) => {
-    const tagged = { runId: id, ...event };
+    // runId LAST so the runs-Map key always wins. The orchestrator's `subagent`
+    // delta historically carried its own runId (state.id = pipeline SHORT id, NOT
+    // this UUID); tagging the UUID last stops the client spawning a phantom run.
+    // Mirrors wireScan's identical `{ ...event, scanId }` contract below.
+    const tagged = { ...event, runId: id };
     entry.events.push(tagged);
     if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
     broadcast(tagged);
