@@ -1574,6 +1574,9 @@ if (typeof window !== 'undefined') {
     subFanHtml,
     subsPillText,
     paintSubsBar,
+    subGroupStatus,
+    renderSubsTree,
+    nodeLabelLookup,
   });
 }
 
@@ -4339,7 +4342,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, Object.fromEntries([...subsByNode(data.state.subAgents)].map(([k, g]) => [k, g.subs])));
+    if (histSubsBar) paintSubsBar(histSubsBar, Object.fromEntries([...subsByNode(data.state.subAgents)].map(([k, g]) => [k, g.subs])), nodeLabelLookup(data.state.stepper));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4666,7 +4669,7 @@ function subsPillText(byNode) {
 // Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
 // [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
 // handler is bound once (dataset guard), the count/text repaint every call.
-function paintSubsBar(barEl, byNode) {
+function paintSubsBar(barEl, byNode, labelOf) {
   if (!barEl) return;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
   const total = Object.values(groups).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
@@ -4684,7 +4687,7 @@ function paintSubsBar(barEl, byNode) {
 
   // Re-render the open panel in place so live spawns/finishes reflect immediately.
   if (panel && btn && btn.getAttribute('aria-expanded') === 'true' && typeof renderSubsTree === 'function') {
-    renderSubsTree(panel, groups);
+    renderSubsTree(panel, groups, paintSubsBar._labelOf);
   }
 
   if (btn && btn.dataset.bound !== '1') {
@@ -4694,11 +4697,89 @@ function paintSubsBar(barEl, byNode) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open && typeof renderSubsTree === 'function') renderSubsTree(panel, paintSubsBar._last || {});
+        if (!open && typeof renderSubsTree === 'function') renderSubsTree(panel, paintSubsBar._last || {}, paintSubsBar._labelOf);
       }
     });
   }
   paintSubsBar._last = groups; // last grouping, for the open-on-click render
+  paintSubsBar._labelOf = typeof labelOf === 'function' ? labelOf : (id) => id;
+}
+
+// Group rollup for a step's sub-agents: anyStop (stop|error) -> 'stop',
+// else anyRun -> 'run', else 'done'. Drives the .subs-stat / .dot colour.
+function subGroupStatus(list) {
+  const arr = Array.isArray(list) ? list : [];
+  if (arr.some((s) => s && (s.status === 'stopped' || s.status === 'error'))) return 'stop';
+  if (arr.some((s) => s && s.status === 'running')) return 'run';
+  return 'done';
+}
+
+// Per-sub-agent row status -> the mono badge / .led class. running -> run (lit),
+// stopped|error -> stop, else done.
+function subRowStatus(status) {
+  if (status === 'running') return 'run';
+  if (status === 'stopped' || status === 'error') return 'stop';
+  return 'done';
+}
+
+// .dot colour per group status (matches the .subs-stat palette).
+const SUBS_DOT_COLOR = { run: 'var(--blue)', done: 'var(--green)', stop: 'var(--red)' };
+const SUBS_STAT_TEXT = { run: 'running', done: 'done', stop: 'stopped' };
+
+// Build the tree panel body from a {nodeId: Array<{id,label,status}>} grouping.
+// legend + one .subs-step per node (dot+name+status pill+count) + a .subs-tree
+// <li> per sub-agent (led + name + mono status). nodeLabel(id)->display name
+// (defaults to the id). Idempotent: the panel is fully rebuilt each call.
+// NOTE: squares here are .sq/.led and are NEVER placed under .fan, so the
+// graph-only sqPulse animation can never reach them.
+function renderSubsTree(panelEl, byNode, nodeLabel) {
+  if (!panelEl) return;
+  const labelOf = typeof nodeLabel === 'function' ? nodeLabel : (id) => id;
+  const groups = byNode && typeof byNode === 'object' ? byNode : {};
+  panelEl.innerHTML =
+    '<div class="subs-legend">' +
+      '<span class="lk"><span class="sq on"></span>active</span>' +
+      '<span class="lk"><span class="sq off"></span>finished</span>' +
+    '</div>';
+
+  for (const nodeId of Object.keys(groups)) {
+    const list = Array.isArray(groups[nodeId]) ? groups[nodeId] : [];
+    if (list.length === 0) continue;
+    const gstat = subGroupStatus(list);
+    const step = document.createElement('div');
+    step.className = 'subs-step';
+    step.innerHTML =
+      '<div class="subs-step-head">' +
+        `<span class="dot" style="background:${SUBS_DOT_COLOR[gstat]}"></span>` +
+        `<b>${escapeHtml(labelOf(nodeId))}</b>` +
+        `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat]}</span>` +
+        `<span class="subs-n">${list.length} sub-agents</span>` +
+      '</div>';
+    const ul = document.createElement('ul');
+    ul.className = 'subs-tree';
+    for (const s of list) {
+      const rstat = subRowStatus(s && s.status);
+      const li = document.createElement('li');
+      li.innerHTML =
+        `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
+        `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
+        `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>`;
+      ul.appendChild(li);
+    }
+    step.appendChild(ul);
+    panelEl.appendChild(step);
+  }
+}
+
+// nodeId -> display label for the tree step headers. Takes a raw stepper and
+// normalizes via manifestFor ONCE (callers pass r.stepper / data.state.stepper,
+// not a pre-normalized manifest — avoids a redundant double manifestFor). Falls
+// back to the raw id for unknown nodes.
+function nodeLabelLookup(stepper) {
+  const m = manifestFor(stepper);
+  const map = {};
+  m.steps.forEach((cell) => cell.nodes.forEach((n) => { map[n.id] = n.label || n.id; }));
+  return (id) => map[id] || id;
 }
 
 function paintStepper(r) {
@@ -4778,7 +4859,7 @@ function paintRunCard(r) {
   // directly, but that Map yields Object.values()===[] -> the bar would never
   // show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, Object.fromEntries([...subsByNode(r.subAgents)].map(([k, g]) => [k, g.subs])));
+  if (subsBar) paintSubsBar(subsBar, Object.fromEntries([...subsByNode(r.subAgents)].map(([k, g]) => [k, g.subs])), nodeLabelLookup(r.stepper));
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
