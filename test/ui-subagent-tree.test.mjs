@@ -85,3 +85,34 @@ test('renderSubsTree builds legend + per-node step + li rows; NO pulse class any
   window.__np.renderSubsTree(panel, byNode, (id) => id);
   assert.equal(panel.querySelectorAll('.subs-step').length, 2, 're-render does not duplicate steps');
 });
+
+// Sub-agent label/id come from attacker-influenced task descriptions and are
+// interpolated into innerHTML — they MUST be HTML-escaped. Guards against a
+// future regression (escapeHtml already protects this path today).
+test('renderSubsTree escapes sub-agent labels (no HTML injection)', async () => {
+  const { window } = await bootLive();
+  const panel = window.document.createElement('div');
+  panel.className = 'subs-panel';
+  const evil = '<img src=x onerror=alert(1)>';
+  window.__np.renderSubsTree(panel, { s0_0: [{ id: 't1', label: evil, status: 'running' }] }, (id) => id);
+
+  // No live <img> element must be created from the malicious label.
+  assert.equal(panel.querySelectorAll('img').length, 0, 'malicious label does not create an <img> element');
+  // The label is rendered as escaped text, not parsed markup.
+  const name = panel.querySelector('.ag-name');
+  assert.ok(name, '.ag-name row present');
+  assert.match(name.innerHTML, /&lt;img/, 'label rendered as escaped text (&lt;img…)');
+  assert.equal(name.textContent, evil, 'visible text is the raw, un-executed label');
+  assert.equal(name.querySelector('img'), null, 'no img child inside .ag-name');
+});
+
+// The node label (step header) is likewise escaped.
+test('renderSubsTree escapes node labels in the step header', async () => {
+  const { window } = await bootLive();
+  const panel = window.document.createElement('div');
+  panel.className = 'subs-panel';
+  const evil = '<img src=x onerror=alert(1)>';
+  window.__np.renderSubsTree(panel, { s0_0: [{ id: 't1', label: 'ok', status: 'finished' }] }, () => evil);
+  assert.equal(panel.querySelectorAll('.subs-step-head img').length, 0, 'malicious node label does not create an <img>');
+  assert.match(panel.querySelector('.subs-step-head b').innerHTML, /&lt;img/, 'node label escaped in header');
+});
