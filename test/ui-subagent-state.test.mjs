@@ -38,3 +38,74 @@ test('makeRun seeds an empty r.subAgents array (read via __np.makeRun)', async (
   assert.ok(Array.isArray(r.subAgents), 'subAgents is an array');
   assert.equal(r.subAgents.length, 0, 'starts empty');
 });
+
+test('onSubagent: spawn inserts a running record keyed by id', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  ctx.window.__np.onSubagent(r, {
+    type: 'subagent', runId: 'p1', transition: 'spawn',
+    id: 'tool_1', label: 'research auth', nodeId: 's0_0',
+    stepKey: '0:s0_0', stepIndex: 0, cycle: 0, status: 'running', ts: 1,
+  });
+  assert.equal(r.subAgents.length, 1);
+  const rec = r.subAgents[0];
+  assert.equal(rec.id, 'tool_1');
+  assert.equal(rec.status, 'running');
+  assert.equal(rec.label, 'research auth');
+  assert.equal(rec.nodeId, 's0_0');
+  assert.equal(rec.stepKey, '0:s0_0');
+});
+
+test('onSubagent: a second spawn for the same id updates in place (no duplicate)', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  ctx.window.__np.onSubagent(r, { transition: 'spawn', id: 'tool_1', label: 'first', nodeId: 's0_0', status: 'running' });
+  ctx.window.__np.onSubagent(r, { transition: 'spawn', id: 'tool_1', label: 'second', nodeId: 's0_0', status: 'running' });
+  assert.equal(r.subAgents.length, 1, 'still one record for tool_1');
+  assert.equal(r.subAgents[0].label, 'second', 'label updated in place');
+});
+
+test('onSubagent: finish updates status + finishedAt + telemetry by id', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  ctx.window.__np.onSubagent(r, { transition: 'spawn', id: 'tool_1', label: 'x', nodeId: 's0_0', status: 'running', ts: 1 });
+  ctx.window.__np.onSubagent(r, {
+    transition: 'finish', id: 'tool_1', status: 'finished', ts: 2,
+    durationMs: 4200, tokens: 1500, costUsd: 0.02,
+  });
+  assert.equal(r.subAgents.length, 1, 'finish does not add a row');
+  const rec = r.subAgents[0];
+  assert.equal(rec.status, 'finished');
+  assert.equal(rec.durationMs, 4200);
+  assert.equal(rec.tokens, 1500);
+  assert.equal(rec.costUsd, 0.02);
+  assert.ok(rec.finishedAt != null, 'finishedAt stamped');
+  assert.equal(rec.label, 'x', 'spawn label preserved when finish omits it');
+});
+
+test('onSubagent: a finish for an unknown id inserts a terminal record', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  ctx.window.__np.onSubagent(r, { transition: 'finish', id: 'late_1', status: 'error', nodeId: 's1_0', ts: 9 });
+  assert.equal(r.subAgents.length, 1);
+  assert.equal(r.subAgents[0].id, 'late_1');
+  assert.equal(r.subAgents[0].status, 'error');
+});
+
+test('switch routes a subagent frame through onSubagent onto the live run model', async () => {
+  const ctx = await boot();
+  ctx.selectProject();
+  ctx.window.location.hash = 'running';
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  ctx.recv({ type: 'phase', runId: 'p1', phase: 'plan', cycle: 0 }); // mounts the card + run model
+  ctx.recv({
+    type: 'subagent', runId: 'p1', transition: 'spawn',
+    id: 'tool_1', label: 'sub one', nodeId: 's0_0', stepKey: '0:s0_0',
+    stepIndex: 0, cycle: 0, status: 'running', ts: 1,
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  const r = ctx.window.__np.getRun('p1');
+  assert.ok(r, 'run model exists');
+  assert.equal(r.subAgents.length, 1, 'subagent frame reached the model via the switch');
+  assert.equal(r.subAgents[0].id, 'tool_1');
+});

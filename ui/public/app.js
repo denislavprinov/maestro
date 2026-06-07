@@ -249,6 +249,9 @@ function handleServerMessage(msg) {
     case 'state':
       onState(r, msg);
       break;
+    case 'subagent':
+      onSubagent(r, msg);
+      break;
     case 'done':
       onDone(r, msg);
       break;
@@ -801,6 +804,31 @@ function onState(r, msg) {
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
   if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
+  paintRunCard(r);
+}
+
+// Per-run sub-agent lifecycle delta. Upsert into r.subAgents by `id`: a spawn
+// inserts/updates the record; a finish updates status + finishedAt + telemetry.
+// Then repaint via the same path onState/onPhase use (paintRunCard -> paintStepper),
+// so the graph card the render layer builds reflects the change immediately. The
+// authoritative full set still arrives on the `state` snapshot (see onState).
+function onSubagent(r, msg) {
+  if (!msg || !msg.id) return;
+  let rec = r.subAgents.find((s) => s.id === msg.id);
+  if (!rec) {
+    rec = { id: msg.id };
+    r.subAgents.push(rec);
+  }
+  // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
+  // label/nodeId/stepKey; never overwrite a known value with undefined).
+  for (const k of ['label', 'nodeId', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
+    if (msg[k] !== undefined) rec[k] = msg[k];
+  }
+  if (msg.transition === 'finish') {
+    if (msg.status === undefined) rec.status = rec.status === 'running' || rec.status == null ? 'finished' : rec.status;
+    rec.finishedAt = msg.finishedAt !== undefined ? msg.finishedAt
+      : (msg.ts != null ? new Date(msg.ts).toISOString() : new Date().toISOString());
+  }
   paintRunCard(r);
 }
 
@@ -1477,6 +1505,8 @@ if (typeof window !== 'undefined') {
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
     makeRun,
+    onSubagent,
+    getRun: (id) => runs.get(id),
     durByNode,
     costByNode,
     composerPaintWires,
