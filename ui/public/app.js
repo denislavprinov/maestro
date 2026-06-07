@@ -280,7 +280,7 @@ function onHello(msg) {
   const list = Array.isArray(msg.runs) ? msg.runs : [];
   for (const r0 of list) {
     if (!r0 || !r0.runId) continue;
-    upsertRun({
+    const rr = upsertRun({
       runId: r0.runId,
       title: r0.title,
       projectDir: r0.projectDir,
@@ -288,6 +288,14 @@ function onHello(msg) {
       startedAt: r0.startedAt,
       pendingQuestion: r0.pendingQuestion || null,
     });
+    // Seed the run's stepper from the hello summary so the live card resolves
+    // sub-agents to their real (s0_0-keyed) nodes BEFORE any subagent delta paints
+    // — closing the window where r.stepper is null and the graph falls back to the
+    // legacy default (mismatched ids → no squares + a raw "s0_0" dropdown group).
+    if (r0.stepper && rr.stepper == null) {
+      rr.stepper = r0.stepper;
+      if (rr.el) rebuildStepperDom(rr);
+    }
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || (r0.pendingQuestion != null);
