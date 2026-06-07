@@ -470,6 +470,21 @@ function nodeModelLine(node) {
   return `${modelLabel} · ${effort || 'default'}`;
 }
 
+// Sub-agent square strip for a run-graph node. One <span.sq> per sub-agent
+// (.on iff that sub is still `running`), plus an exact ×N count. Squares are
+// render-capped (the count text stays exact); no subs -> empty string so a
+// node without sub-agents gets no border row. Pulse is CSS-only (.sq.on).
+const SUB_SQUARE_CAP = 24;
+function subFanHtml(subs) {
+  const list = Array.isArray(subs) ? subs : [];
+  if (list.length === 0) return '';
+  const squares = list
+    .slice(0, SUB_SQUARE_CAP)
+    .map((s) => `<span class="sq${s && s.status === 'running' ? ' on' : ''}"></span>`)
+    .join('');
+  return `<div class="fan">${squares}<span class="fl">×${list.length}</span></div>`;
+}
+
 // Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
 // isSelf => the node is its own self-cycle target (gets the .iterates ring).
 function runNode(node, status, isSelf) {
@@ -556,7 +571,8 @@ function manifestStepsForWires(manifest) {
 
 // Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
 // view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
-//          live:boolean, durText(id)->str, costText(id)->str }.
+//          live:boolean, durText(id)->str, costText(id)->str,
+//          subsOf?(id)->Array<{status}> (optional; sub-agent squares) }.
 const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
 function paintRunGraph(host, manifest, view) {
   const m = manifestFor(manifest);
@@ -585,6 +601,13 @@ function paintRunGraph(host, manifest, view) {
     if (durEl) durEl.textContent = view.durText(id) || '';
     const costEl = el.querySelector('.cost');
     if (costEl) costEl.textContent = view.costText(id) || '';
+
+    // Sub-agent square strip (graph view only; optional adapter). Idempotent:
+    // drop the old strip, inject the current one. Empty -> no strip / no row.
+    const oldFan = el.querySelector('.fan');
+    if (oldFan) oldFan.remove();
+    const fanHtml = view.subsOf ? subFanHtml(view.subsOf(id)) : '';
+    if (fanHtml) el.insertAdjacentHTML('beforeend', fanHtml);
   });
 
   // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
@@ -1548,6 +1571,7 @@ if (typeof window !== 'undefined') {
     paintRunGraph,
     histNodeCycle,
     renderHistClarifyReviews,
+    subFanHtml,
   });
 }
 
