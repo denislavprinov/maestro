@@ -59,6 +59,35 @@ export function buildEffortArgs(effort) {
 }
 
 /**
+ * Whether per-sub-agent telemetry via Claude's hook-events is enabled. Feature-
+ * detected and DEFAULT OFF: only `MAESTRO_SUBAGENT_HOOKS` set to a truthy value
+ * (anything but "", "0", "false") turns it on. OFF ⇒ runReal adds NO extra flags
+ * and the baseline sub-agent lifecycle (tool_use/tool_result) is unaffected.
+ */
+export function subagentHooksEnabled() {
+  const v = process.env.MAESTRO_SUBAGENT_HOOKS;
+  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+}
+
+/**
+ * Gated argv for sub-agent telemetry. Returns [] when subagentHooksEnabled() is
+ * false (the default), so the baseline run path is byte-identical. When on, adds
+ * `--include-hook-events` (surfaces hook lifecycle on the SAME stdout stream) and
+ * a `--settings` inline JSON registering a no-op `true` PostToolUse hook matched
+ * to `Agent` — just enough to make `claude` run+emit the PostToolUse event whose
+ * `tool_response` carries totalDurationMs/totalTokens/usage. We read telemetry off
+ * the surfaced stream-json event, NOT the hook command's stdout. `--bare`-proof
+ * (inline settings need no settings file).
+ */
+export function buildHookArgs() {
+  if (!subagentHooksEnabled()) return [];
+  const settings = JSON.stringify({
+    hooks: { PostToolUse: [{ matcher: 'Agent', hooks: [{ type: 'command', command: 'true', async: true }] }] },
+  });
+  return ['--include-hook-events', '--settings', settings];
+}
+
+/**
  * Whether mock mode is active. Driven by MAESTRO_MOCK or an explicit opts.mock
  * passed through by the orchestrator (handled by caller mapping mock->env or
  * by passing systemPrompt/prompt markers; we also honor a `mock` field).
@@ -137,6 +166,10 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       args.push('--model', model);
     }
     for (const a of buildEffortArgs(effort)) args.push(a);
+    // Gated, default-off per-sub-agent telemetry (MAESTRO_SUBAGENT_HOOKS). [] when
+    // off, so the baseline argv is unchanged; a CLI that rejects these flags would
+    // only ever fail when the operator opted in.
+    for (const a of buildHookArgs()) args.push(a);
     if (Array.isArray(allowedTools) && allowedTools.length) {
       args.push('--allowedTools', allowedTools.join(','));
     }
@@ -209,6 +242,15 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
           errorDetail;
       } else if (!errorDetail && typeof evt?.error === 'string' && evt.error.trim()) {
         errorDetail = evt.error.trim();
+      }
+      // Surface Claude's hook-event lines (only present under --include-hook-events)
+      // as a stable type:'hook-event' the orchestrator reads for sub-agent telemetry.
+      // The exact envelope key varies by CLI build; match the documented shapes.
+      const isHook = evt?.type === 'hook-event' || evt?.type === 'hook_event' ||
+        (typeof evt?.hook_event_name === 'string');
+      if (isHook) {
+        safeEmit(onEvent, { type: 'hook-event', raw: evt });
+        return;
       }
       const cost = extractResultCost(evt);
       safeEmit(onEvent, {

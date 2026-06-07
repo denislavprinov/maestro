@@ -1325,6 +1325,15 @@ class Orchestrator extends EventEmitter {
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */
   _onAgentEvent(role, e, attr = null) {
     if (!e) return;
+    // Sub-agent telemetry (feature-detected, gated by MAESTRO_SUBAGENT_HOOKS). A
+    // surfaced PostToolUse:Agent hook-event carries the parent tool_use_id +
+    // tool_response telemetry; enrich the matching record's columns, keyed by
+    // tool_use_id (the canonical key — never agent_id). Returns early: a hook
+    // event has no human text and no cost to attribute.
+    if (e.type === 'hook-event') {
+      this._recordSubAgentTelemetry(e.raw);
+      return;
+    }
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
@@ -1469,6 +1478,28 @@ class Orchestrator extends EventEmitter {
       ...(rec.costUsd != null ? { costUsd: rec.costUsd } : {}),
       ts: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Telemetry enrichment from a surfaced PostToolUse:Agent hook-event. Reads the
+   * parent tool_use_id + tool_response.{totalDurationMs,totalTokens,usage} and
+   * fills the matching sub-agent record's durationMs/tokens/costUsd (only those
+   * present), mirrors to the table, and emits an `update` delta. No-op for an
+   * unknown id or a non-Agent hook. Strictly additive — the baseline lifecycle
+   * needs none of this.
+   */
+  _recordSubAgentTelemetry(raw) {
+    const id = raw?.tool_use_id ?? raw?.tool_response?.tool_use_id ?? null;
+    if (!id) return;
+    const rec = this.state.subAgents.find((s) => s.id === id);
+    if (!rec) return;
+    const tr = raw?.tool_response || {};
+    if (Number.isFinite(Number(tr.totalDurationMs))) rec.durationMs = Number(tr.totalDurationMs);
+    if (Number.isFinite(Number(tr.totalTokens))) rec.tokens = Number(tr.totalTokens);
+    const cost = tr.usage?.cost_usd ?? tr.usage?.total_cost_usd ?? tr.cost_usd;
+    if (Number.isFinite(Number(cost))) rec.costUsd = Number(cost);
+    this._upsertSubAgent(rec);
+    this._subAgentTransition('update', rec);
   }
 
   // ── git checkpoint ─────────────────────────────────────────────────────────
