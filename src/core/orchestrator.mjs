@@ -978,14 +978,15 @@ class Orchestrator extends EventEmitter {
     let stageNeeded = false;
     for (const { node, result, ctx } of results) {
       this._publishNodeIo(node, result, ctx.outputs, bus); // deterministic, node order
-      // Phase 3.11: mirror a verifier's parsed verdict into the reviews table (cycle
-      // is in scope). ctx.outputs.review.reviewKind is the allocate() base;
-      // result.review is the normalized { issues, summary } the verifier runner
-      // returns. The agent still writes *-review-cycleN.json (protocol.readReview
-      // parses it for the live loop); this is the durable history record. Best-effort.
+      // M1: the reviews table is the AUTHORITATIVE per-cycle verdict store. Persist
+      // synchronously (awaited) before the step returns so the History UI and any
+      // post-run reader see every cycle's verdict; a write failure must surface (no
+      // best-effort swallow) now that the DB is the record of truth. The live
+      // refine/review->fix loop still gates on result.review in-memory (_loopFired),
+      // which the runner parsed from the agent's scratch json — the FS json stays a
+      // transient subprocess artifact swept with the run dir.
       if (this.pipeline && ctx.outputs?.review?.reviewKind && result?.review) {
-        writeReview(this.pipeline.id, reviewKindOf(ctx.outputs.review.reviewKind), cycle, result.review)
-          .catch(() => {});
+        await writeReview(this.pipeline.id, reviewKindOf(ctx.outputs.review.reviewKind), cycle, result.review);
       }
       if ((node.produces || []).includes('code')) stageNeeded = true;
     }
