@@ -5,6 +5,11 @@
 // projects.json, workflows). projects.mjs#maestroHome() reads this to resolve
 // where everything lives.
 //
+// node:sqlite migration note: `root` deliberately stays here in settings.json and
+// is NOT moved into the DB — it is the bootstrap that LOCATES the DB file
+// (maestroHome()/maestro.db), so it cannot live inside the DB (chicken/egg). The
+// v1 schema has no settings table by design (YAGNI: root is the only setting).
+//
 // IMPORTANT: this module imports NOTHING from the core graph (Node builtins
 // only). projects.mjs imports it, so importing projects.mjs back would make
 // maestroHome() -> getMaestroRoot() -> projects.mjs an infinite cycle.

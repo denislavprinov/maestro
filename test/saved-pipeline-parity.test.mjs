@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 
 const SHAPES = {
   'default':       { steps: [['planner'],['refiner'],['implementer'],['reviewer']],
@@ -25,6 +26,7 @@ async function runShapeUnderMock(shape) {
   const home = await mkdtemp(join(tmpdir(), 'maestro-parity-home-'));
   const prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = home;                         // sandbox the global store
+  _resetForTests();                                        // fresh DB singleton at this home
   try {
     const steps = shape.steps.map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
     const feedbacks = (shape.feedbacks || []).map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
@@ -55,12 +57,17 @@ async function runShapeUnderMock(shape) {
     orch.on('state', (s) => { lastState = s; });
     const res = await orch.run();
     assert.equal(res.status, 'done', 'pipeline converges');
+    // State now persists to the pipelines row (was state.json). Read the row back
+    // and reconstruct just the fields these tests assert on (the stepper manifest).
     let persistedState = null;
     try {
-      persistedState = JSON.parse(await readFile(join(orch.getState().pipelineDir, 'state.json'), 'utf8'));
+      const id = orch.getState().id;
+      const row = getDb().prepare('SELECT stepper FROM pipelines WHERE id = ?').get(id);
+      if (row) persistedState = { stepper: row.stepper == null ? null : JSON.parse(row.stepper) };
     } catch { /* some shapes may not persist; assert per-test */ }
     return { modes, artifacts, planReads, state: lastState, persistedState };
   } finally {
+    _resetForTests();
     if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   }
 }

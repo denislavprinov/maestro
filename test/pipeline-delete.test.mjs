@@ -8,10 +8,16 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
+import { recordArtifact, listArtifacts, writeStoreMeta } from '../src/core/artifacts.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 import { listLocalBranches, createWorktree } from '../src/core/worktree.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 const created = [];
-after(() => Promise.all(created.map((d) => rm(d, { recursive: true, force: true }))));
+after(() => {
+  _resetForTests();
+  return Promise.all(created.map((d) => rm(d, { recursive: true, force: true })));
+});
 
 // A real git repo so branch/worktree teardown is exercised for real.
 async function freshRepo() {
@@ -26,39 +32,49 @@ async function freshRepo() {
 }
 
 // A store key dir with one pipeline + its plan/review files, plus a sibling that
-// must survive (proves name-matching never over-deletes). The pipeline dir is
-// named exactly like the real one: <datePrefix>-<base>-<id>.
+// must survive (proves the index-based deleter only ever unlinks the EXACT
+// recorded files). The pipeline dir is named exactly like the real one:
+// <datePrefix>-<base>-<id>. The plan/review md live on the FS (still markdown);
+// the durable record is the DB pipelines row + the artifacts index pointing at
+// those store-root-relative paths.
 async function freshStore(repoDir, { id, base, datePrefix, status, branch, title }) {
   const home = await mkdtemp(join(tmpdir(), 'maestro-del-store-'));
   created.push(home);
+  _resetForTests(); process.env.MAESTRO_HOME = home;           // DB opens under this home
   const key = 'proj-00000001';
   const root = join(home, '.maestro', 'store', key);
   const pdir = join(root, 'pipelines', `${datePrefix}-${base}-${id}`);
   await mkdir(join(pdir, 'extras'), { recursive: true });
-  const state = { id, title: title ?? 'Add login screen', status, projectDir: repoDir, projectKey: key };
-  if (branch !== undefined) state.branch = branch;
-  await writeFile(join(pdir, 'state.json'), JSON.stringify(state), 'utf8');
   await writeFile(join(pdir, 'prompt.md'), `# ${title ?? 'Add login screen'}\n`, 'utf8');
-  await writeFile(join(pdir, 'impl-review-cycle1.json'), '{}', 'utf8');
   await mkdir(join(root, 'plans'), { recursive: true });
   await mkdir(join(root, 'reviews'), { recursive: true });
   await writeFile(join(root, 'plans', `${datePrefix}-${base}.md`), '# plan', 'utf8');
   await writeFile(join(root, 'plans', `${datePrefix}-${base}-v2.md`), '# plan v2', 'utf8');
   await writeFile(join(root, 'reviews', `${datePrefix}-${base}-impl-review.md`), '# r', 'utf8');
   await writeFile(join(root, 'reviews', `${datePrefix}-${base}-plan-review.md`), '# r', 'utf8');
-  // Sibling that shares the date but a longer base — must NOT be deleted.
-  await writeFile(join(root, 'plans', `${datePrefix}-${base}-extra.md`), '# keep', 'utf8');
+  await writeFile(join(root, 'plans', `${datePrefix}-${base}-extra.md`), '# keep', 'utf8'); // NOT indexed -> survives
+  // DB: the project store_meta (so rowToState reconstructs state.projectDir, the
+  // teardown repo), the pipeline row, and the indexed artifacts (store-root-relative
+  // for plan/review). Mirrors what createPipeline's ensureMeta + INSERT persist.
+  writeStoreMeta(key, 'project', { key, name: 'Proj', path: repoDir });
+  seedPipelineRow({ id, projectKey: key, title: title ?? 'Add login screen', status,
+    baseName: base, datePrefix,
+    branch: branch === undefined ? null : branch });
+  recordArtifact(id, 'plan', `plans/${datePrefix}-${base}.md`);
+  recordArtifact(id, 'plan', `plans/${datePrefix}-${base}-v2.md`);
+  recordArtifact(id, 'review', `reviews/${datePrefix}-${base}-impl-review.md`);
+  recordArtifact(id, 'review', `reviews/${datePrefix}-${base}-plan-review.md`);
   return { home, key, root, pdir };
 }
 
-// store.mjs reads MAESTRO_HOME and appends '.maestro', so MAESTRO_HOME = <home>.
-const homeOf = (root) => join(root, '..', '..', '..');
-
 // A workspace store dir (store/workspaces/<wkey>/) with one pipeline whose
-// state.branches is the per-project map. `members` is [{ projectDir, branch }].
+// workspaceMeta.branches is the per-project map. `members` is [{ projectDir, branch }].
+// The ws row stores branches/projects in the workspace_meta JSON column; the
+// reconstructed state.branches/state.projects drive the per-member teardown.
 async function freshWorkspaceStore({ wkey, id, base, datePrefix, status, title, members }) {
   const home = await mkdtemp(join(tmpdir(), 'maestro-del-ws-'));
   created.push(home);
+  _resetForTests(); process.env.MAESTRO_HOME = home;           // DB opens under this home
   const root = join(home, '.maestro', 'store', 'workspaces', wkey);
   const pdir = join(root, 'pipelines', `${datePrefix}-${base}-${id}`);
   await mkdir(pdir, { recursive: true });
@@ -69,22 +85,24 @@ async function freshWorkspaceStore({ wkey, id, base, datePrefix, status, title, 
     projects.push({ projectKey: pk, projectDir: members[i].projectDir, projectName: `m${i}` });
     branches[pk] = members[i].branch; // { source, feature, worktreeDir, reusedExisting }
   }
-  const state = {
-    id, title: title ?? 'Add login screen', status, target: 'workspace',
-    workspaceKey: wkey, workspaceId: wkey, projects, branches,
-  };
-  await writeFile(join(pdir, 'state.json'), JSON.stringify(state), 'utf8');
   await writeFile(join(pdir, 'prompt.md'), `# ${title ?? 'Add login screen'}\n`, 'utf8');
   await mkdir(join(root, 'plans'), { recursive: true });
   await mkdir(join(root, 'reviews'), { recursive: true });
   await writeFile(join(root, 'plans', `${datePrefix}-${base}.md`), '# plan', 'utf8');
   await writeFile(join(root, 'reviews', `${datePrefix}-${base}-impl-review.md`), '# r', 'utf8');
-  await writeFile(join(root, 'plans', `${datePrefix}-${base}-extra.md`), '# keep', 'utf8');
-  // MAESTRO_HOME = <home>; root nests 4 deep (.maestro/store/workspaces/<wkey>).
+  await writeFile(join(root, 'plans', `${datePrefix}-${base}-extra.md`), '# keep', 'utf8'); // NOT indexed -> survives
+  // DB: ws pipeline row (workspace_meta carries branches/projects) + indexed md.
+  seedPipelineRow({
+    id, projectKey: 'ws-primary-00000001', workspaceKey: wkey, target: 'workspace',
+    title: title ?? 'Add login screen', status, baseName: base, datePrefix,
+    workspaceMeta: { workspaceId: wkey, workspaceName: 'demo', projectKeys: projects.map((p) => p.projectKey), projects, branches },
+  });
+  recordArtifact(id, 'plan', `plans/${datePrefix}-${base}.md`);
+  recordArtifact(id, 'review', `reviews/${datePrefix}-${base}-impl-review.md`);
   return { home, root, pdir };
 }
 
-test('deletePipeline removes dir, plan/review files, local branch; keeps siblings + remote', async () => {
+test('deletePipeline removes dir, indexed plan/review files, local branch; keeps non-indexed siblings + remote', async () => {
   const repo = await freshRepo();
   // Real worktree + feature branch off main.
   const { worktreeDir, branch } = await createWorktree({
@@ -96,15 +114,14 @@ test('deletePipeline removes dir, plan/review files, local branch; keeps sibling
     id: 'abc123', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done',
     title: 'Add login screen', branch: { source: 'main', feature: branch, worktreeDir },
   });
-  process.env.MAESTRO_HOME = homeOf(root);
   try {
     const report = await deletePipeline({ key: 'proj-00000001', id: 'abc123' });
     assert.ok(report && report.ok);
     assert.equal(existsSync(pdir), false, 'pipeline dir removed');
     const plans = await readdir(join(root, 'plans'));
-    assert.deepEqual(plans.sort(), ['04-06-26-add-login-screen-extra.md'], 'only the sibling survives');
+    assert.deepEqual(plans.sort(), ['04-06-26-add-login-screen-extra.md'], 'only the non-indexed sibling survives');
     const reviews = await readdir(join(root, 'reviews'));
-    assert.equal(reviews.length, 0, 'both review md removed');
+    assert.equal(reviews.length, 0, 'both indexed review md removed');
     assert.equal(existsSync(worktreeDir), false, 'worktree gone');
     assert.ok(!(await listLocalBranches(repo)).includes(branch), 'local branch deleted');
   } finally {
@@ -112,35 +129,35 @@ test('deletePipeline removes dir, plan/review files, local branch; keeps sibling
   }
 });
 
-test('deletePipeline recovers the base from the dir slug / prompt when title is auto', async () => {
-  // No persisted baseName, and the stored title is the AUTO title (equals the
-  // pipeline dir basename), exactly the case _deriveBaseName ignores. Recovery
-  // must come from the dir slug (and/or prompt.md first line), not the title.
+test('deletePipeline needs no title/slug heuristic: indexed files are removed even when title equals the dir basename', async () => {
+  // The OLD hard case for the name-pattern deleter: no usable title (it equals the
+  // auto dir basename), so deriveNames had to fall back to the dir slug / prompt.
+  // The index-based deleter unlinks the EXACT recorded rel_paths regardless of title.
   const repo = await freshRepo();
   const prev = process.env.MAESTRO_HOME;
   const { root, pdir } = await freshStore(repo, {
     id: 'zz', base: 'rename-widget', datePrefix: '04-06-26', status: 'done',
     title: '04-06-26-rename-widget-zz', branch: null,
   });
-  process.env.MAESTRO_HOME = homeOf(root);
   try {
     const report = await deletePipeline({ key: 'proj-00000001', id: 'zz' });
     assert.ok(report && report.ok);
     assert.equal(existsSync(pdir), false, 'pipeline dir removed');
     const plans = await readdir(join(root, 'plans'));
-    assert.deepEqual(plans.sort(), ['04-06-26-rename-widget-extra.md'], 'dir-slug recovery removed v1+v2, kept sibling');
+    assert.deepEqual(plans.sort(), ['04-06-26-rename-widget-extra.md'], 'indexed v1+v2 removed, non-indexed sibling kept');
+    const reviews = await readdir(join(root, 'reviews'));
+    assert.equal(reviews.length, 0, 'indexed review md removed');
   } finally {
     if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
   }
 });
 
-test('deletePipeline refuses a running pipeline', async () => {
+test('deletePipeline refuses a running pipeline (status from the DB row)', async () => {
   const repo = await freshRepo();
   const prev = process.env.MAESTRO_HOME;
-  const { root } = await freshStore(repo, {
+  await freshStore(repo, {
     id: 'run1', base: 'add-login-screen', datePrefix: '04-06-26', status: 'running', branch: null,
   });
-  process.env.MAESTRO_HOME = homeOf(root);
   try {
     await assert.rejects(() => deletePipeline({ key: 'proj-00000001', id: 'run1' }),
       (e) => e && e.code === 'RUNNING');
@@ -152,10 +169,9 @@ test('deletePipeline refuses a running pipeline', async () => {
 test('deletePipeline returns null for an unknown id', async () => {
   const repo = await freshRepo();
   const prev = process.env.MAESTRO_HOME;
-  const { root } = await freshStore(repo, {
+  await freshStore(repo, {
     id: 'x', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done', branch: null,
   });
-  process.env.MAESTRO_HOME = homeOf(root);
   try {
     assert.equal(await deletePipeline({ key: 'proj-00000001', id: 'nope' }), null);
   } finally {
@@ -165,7 +181,8 @@ test('deletePipeline returns null for an unknown id', async () => {
 
 test('deletePipeline({workspaceKey}) removes the ws-store dir + iterates state.branches per project', async () => {
   // Two real repos, each with its own worktree + feature branch, recorded in the
-  // per-project state.branches map. Delete must clean BOTH and remove the ws dir.
+  // per-project workspace_meta.branches map. Delete must clean BOTH and remove the
+  // ws dir + the indexed ws-store markdown.
   const repoA = await freshRepo();
   const repoB = await freshRepo();
   const wtA = await createWorktree({
@@ -178,7 +195,7 @@ test('deletePipeline({workspaceKey}) removes the ws-store dir + iterates state.b
   });
   const prev = process.env.MAESTRO_HOME;
   const wkey = 'wks-demo-9f3a1c20';
-  const { home, root, pdir } = await freshWorkspaceStore({
+  const { root, pdir } = await freshWorkspaceStore({
     wkey, id: 'ws01', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done',
     title: 'Add login screen',
     members: [
@@ -186,16 +203,15 @@ test('deletePipeline({workspaceKey}) removes the ws-store dir + iterates state.b
       { projectDir: repoB, branch: { source: 'main', feature: wtB.branch, worktreeDir: wtB.worktreeDir, reusedExisting: false } },
     ],
   });
-  process.env.MAESTRO_HOME = home;
   try {
     const report = await deletePipeline({ workspaceKey: wkey, id: 'ws01' });
     assert.ok(report && report.ok);
     assert.equal(existsSync(pdir), false, 'workspace pipeline dir removed');
-    // Shared plan/review markdown in the WORKSPACE store removed (sibling kept).
+    // Indexed plan/review markdown in the WORKSPACE store removed (sibling kept).
     const plans = await readdir(join(root, 'plans'));
-    assert.deepEqual(plans.sort(), ['04-06-26-add-login-screen-extra.md'], 'only the sibling survives');
+    assert.deepEqual(plans.sort(), ['04-06-26-add-login-screen-extra.md'], 'only the non-indexed sibling survives');
     const reviews = await readdir(join(root, 'reviews'));
-    assert.equal(reviews.length, 0, 'review md removed');
+    assert.equal(reviews.length, 0, 'indexed review md removed');
     // BOTH per-project worktrees + branches cleaned.
     assert.equal(existsSync(wtA.worktreeDir), false, 'member A worktree gone');
     assert.equal(existsSync(wtB.worktreeDir), false, 'member B worktree gone');
@@ -211,14 +227,13 @@ test('deletePipeline({workspaceKey}) refuses a running workspace pipeline', asyn
   const repoB = await freshRepo();
   const prev = process.env.MAESTRO_HOME;
   const wkey = 'wks-demo-9f3a1c20';
-  const { home } = await freshWorkspaceStore({
+  await freshWorkspaceStore({
     wkey, id: 'wsrun', base: 'add-login-screen', datePrefix: '04-06-26', status: 'running',
     members: [
       { projectDir: repoA, branch: null },
       { projectDir: repoB, branch: null },
     ],
   });
-  process.env.MAESTRO_HOME = home;
   try {
     await assert.rejects(() => deletePipeline({ workspaceKey: wkey, id: 'wsrun' }),
       (e) => e && e.code === 'RUNNING');
@@ -232,16 +247,31 @@ test('deletePipeline({workspaceKey}) returns null for an unknown workspace id', 
   const repoB = await freshRepo();
   const prev = process.env.MAESTRO_HOME;
   const wkey = 'wks-demo-9f3a1c20';
-  const { home } = await freshWorkspaceStore({
+  await freshWorkspaceStore({
     wkey, id: 'present', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done',
     members: [
       { projectDir: repoA, branch: null },
       { projectDir: repoB, branch: null },
     ],
   });
-  process.env.MAESTRO_HOME = home;
   try {
     assert.equal(await deletePipeline({ workspaceKey: wkey, id: 'nope' }), null);
+  } finally {
+    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
+  }
+});
+
+test('deletePipeline cascades: child rows (artifacts) are gone after delete', async () => {
+  const repo = await freshRepo();
+  const prev = process.env.MAESTRO_HOME;
+  await freshStore(repo, {
+    id: 'cas1', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done', branch: null,
+  });
+  try {
+    assert.equal((await listArtifacts('cas1')).length, 4, 'artifacts indexed before delete');
+    const report = await deletePipeline({ key: 'proj-00000001', id: 'cas1' });
+    assert.ok(report && report.ok);
+    assert.equal((await listArtifacts('cas1')).length, 0, 'FK cascade cleared the artifacts rows');
   } finally {
     if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
   }

@@ -1,16 +1,25 @@
 // test/artifacts-branch-stats.test.mjs
+// Phase 3.6 — rowToHistoryEntry computes survived + sourceBranch + added/removed
+// from the row's branch JSON via the SAME (unchanged) git helpers. Fixtures seed
+// DB rows via the production writers (seedPipeline -> createPipeline + writeState)
+// + store_meta instead of state.json + meta.json. seedPipeline mints the id; look
+// up by the RETURNED id (A15(3)).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { _resetForTests } from '../src/core/db.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
 
 let home, prevHome, repo;
+let pp1Id; // minted id of the surviving-branch pipeline (test 1), reused by test 3
 
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'maestro-bs-'));
   prevHome = process.env.MAESTRO_HOME; process.env.MAESTRO_HOME = home;
+  _resetForTests(); // open the DB under this temp home
   // A real repo whose feature branch adds one line over main.
   repo = await mkdtemp(join(tmpdir(), 'maestro-repo-'));
   const g = (a) => spawnSync('git', a, { cwd: repo });
@@ -21,23 +30,22 @@ before(async () => {
 });
 
 after(async () => {
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
   await rm(repo, { recursive: true, force: true });
 });
 
-test('pipelineEntry adds survived + sourceBranch + added/removed for a live branch', async () => {
-  const { listPipelines, artifactPaths } = await import('../src/core/artifacts.mjs');
-  // Seed a pipeline whose state.branch points at the repo's feature branch.
-  const dir = join(artifactPaths(repo).pipelines, 'pp-1');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'pp-1', title: 'Feat', status: 'stopped', projectDir: repo,
+test('rowToHistoryEntry adds survived + sourceBranch + added/removed for a live branch', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  // Seed a pipeline row whose branch points at the repo's feature branch.
+  const { id } = await seedPipeline(repo, {
+    title: 'Feat', status: 'stopped', startedAt: '2026-06-01T00:00:00Z',
     branch: { source: 'main', feature: 'maestro/feat-1', branchKept: true },
-  }), 'utf8');
-
+  });
+  pp1Id = id; // reused by the machine-wide test below
   const rows = await listPipelines(repo);
-  const row = rows.find((r) => r.id === 'pp-1');
+  const row = rows.find((r) => r.id === id);
   assert.equal(row.branch, 'maestro/feat-1');
   assert.equal(row.sourceBranch, 'main');
   assert.equal(row.survived, true);
@@ -45,32 +53,30 @@ test('pipelineEntry adds survived + sourceBranch + added/removed for a live bran
   assert.equal(row.removed, 0);
 });
 
-test('pipelineEntry reports survived=false when the branch is gone', async () => {
-  const { listPipelines, artifactPaths } = await import('../src/core/artifacts.mjs');
-  const dir = join(artifactPaths(repo).pipelines, 'pp-2');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'pp-2', title: 'Gone', status: 'done', projectDir: repo,
+test('rowToHistoryEntry reports survived=false when the branch is gone', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  const { id } = await seedPipeline(repo, {
+    title: 'Gone', status: 'done', startedAt: '2026-06-01T00:00:00Z',
     branch: { source: 'main', feature: 'maestro/deleted', branchKept: true },
-  }), 'utf8');
-  const row = (await listPipelines(repo)).find((r) => r.id === 'pp-2');
+  });
+  const row = (await listPipelines(repo)).find((r) => r.id === id);
   assert.equal(row.survived, false);
   assert.equal(row.added, 0);
   assert.equal(row.removed, 0);
 });
 
-test('listAllPipelines threads meta.path so survived/added are computed machine-wide', async () => {
-  const { listAllPipelines } = await import('../src/core/artifacts.mjs');
-  // Register the repo as an onboarded project via its store meta.json so that
-  // listAllPipelines hands meta.path into pipelineEntry as the git repo root.
-  const { projectKey, projectStorePath } = await import('../src/core/store.mjs');
+test('listAllPipelines threads store_meta.path so survived/added are computed machine-wide', async () => {
+  const { listAllPipelines, writeStoreMeta } = await import('../src/core/artifacts.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
   const key = projectKey(repo);
-  await writeFile(join(projectStorePath(key), 'meta.json'),
-    JSON.stringify({ key, name: 'Repo', path: repo }), 'utf8');
+  // Pin the repo's store_meta path to the literal `repo` (createPipeline's ensureMeta
+  // wrote a realpath'd path) so listAllPipelines hands meta.path into rowToHistoryEntry
+  // as the git repo root AND row.projectDir === repo holds.
+  writeStoreMeta(key, 'project', { key, name: 'Repo', path: repo });
 
   const rows = await listAllPipelines();
-  const row = rows.find((r) => r.id === 'pp-1');
-  assert.ok(row, 'pp-1 present in machine-wide history');
+  const row = rows.find((r) => r.id === pp1Id);
+  assert.ok(row, 'the surviving-branch pipeline is present in machine-wide history');
   assert.equal(row.projectDir, repo);
   assert.equal(row.survived, true);
   assert.equal(row.added, 1);

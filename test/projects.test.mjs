@@ -1,7 +1,7 @@
 // test/projects.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,17 +10,19 @@ import {
   removeProject,
   listProjects,
   normalizeProjectPath,
-  projectsFile,
 } from '../src/core/projects.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 
 const created = [];
 async function freshHome() {
   const dir = await mkdtemp(join(tmpdir(), 'maestro-home-'));
   created.push(dir);
+  _resetForTests();
   process.env.MAESTRO_HOME = dir;
   return dir;
 }
 after(async () => {
+  _resetForTests();
   delete process.env.MAESTRO_HOME;
   await Promise.all(created.map((d) => rm(d, { recursive: true, force: true })));
 });
@@ -68,10 +70,9 @@ test('missing registry file yields an empty list', async () => {
   assert.deepEqual(await listProjects(), []);
 });
 
-test('corrupt registry JSON yields an empty list', async () => {
-  const home = await freshHome();
-  await mkdir(join(home, '.maestro'), { recursive: true });
-  await writeFile(projectsFile(), 'not json at all', 'utf8');
+test('an empty registry yields an empty list (never throws)', async () => {
+  await freshHome();
+  // No JSON file exists under SQLite; a fresh home simply has no project rows.
   assert.deepEqual(await listProjects(), []);
 });
 

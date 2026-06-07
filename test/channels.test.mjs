@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocate, bindInputs, publish, legacyFields, CHANNEL_IDS } from '../src/core/channels.mjs';
+import { reviewKindOf } from '../src/core/artifacts.mjs';
 
 const ALLOC = { projectDir: '/p', pipelineDir: '/pipe', baseName: 'feat', datePrefix: '03-06-26', cycle: 1 };
 
@@ -113,4 +114,22 @@ test('▲ C3: legacyFields reproduces the runner ABI for ALL six roles', () => {
     legacyFields({ key: 'planReviewer' }, { plan: { path: '/p.md' } }, { review: { mdPath: '/pr.md', jsonPath: '/pr.json' } }, 1, baseName),
     { planPath: '/p.md', reviewMdPath: '/pr.md', reviewJsonPath: '/pr.json', cycle: 1 },
   );
+});
+
+// ── Task 3.12 — allocate() surfaces a stable reviewKind for the reviews-table map ──
+// Verification-only: no production change. allocate('review') already mints the FS
+// json path the agent writes AND carries reviewKind, the exact discriminator Task
+// 3.11's reviews-table mapping (reviewKindOf) consumes. Pin it for all 5 verifiers.
+test('allocate(review) exposes a stable reviewKind for the reviews-table mapping', () => {
+  const ctx = { projectDir: '/p', pipelineDir: '/p/dir', baseName: 'feat', datePrefix: '01-06-26', cycle: 1 };
+  assert.equal(allocate('review', { ...ctx, key: 'reviewer' }).reviewKind, 'impl-review');
+  assert.equal(allocate('review', { ...ctx, key: 'refiner' }).reviewKind, 'refine-review');
+  assert.equal(allocate('review', { ...ctx, key: 'planReviewer' }).reviewKind, 'plan-review');
+  assert.equal(allocate('review', { ...ctx, key: 'workspaceReviewer' }).reviewKind, 'ws-review');
+  assert.equal(allocate('review', { ...ctx, key: 'manualWebUiTesting' }).reviewKind, 'webui-review');
+  // A2: the discriminator maps cleanly onto the 5-value reviews.kind open set.
+  assert.deepEqual(
+    ['reviewer', 'refiner', 'planReviewer', 'workspaceReviewer', 'manualWebUiTesting']
+      .map((key) => reviewKindOf(allocate('review', { ...ctx, key }).reviewKind)).sort(),
+    ['impl', 'plan', 'refine', 'webui', 'ws']);
 });

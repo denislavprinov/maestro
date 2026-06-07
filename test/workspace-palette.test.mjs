@@ -8,12 +8,18 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
 
-let homeDir, srv, base;
+let homeDir, srv, base, prevHome;
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-palettehome-'));
+  prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
+  // /api/agents here is FS-source-backed (loadAgentRegistry reads files, not the
+  // DB), so this reset is DEFENSIVE-ONLY (A15(4)) — kept for consistency so this
+  // file never inherits/leaks a singleton handle in the shared `node --test` run.
+  _resetForTests();
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -22,7 +28,8 @@ before(async () => {
 
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
-  delete process.env.MAESTRO_HOME;
+  _resetForTests();
+  if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(homeDir, { recursive: true, force: true });
 });
 

@@ -5,12 +5,19 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
 
-let homeDir, srv, base;
+let homeDir, srv, base, prevHome;
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-apihome-'));
+  prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
+  // /api/projects drives addProject/listProjects/removeProject (now DB-backed).
+  // Reset the db.mjs singleton so it reopens against THIS home before the first
+  // request, and again in teardown, isolating these writes from neighbours in
+  // the shared `node --test` run.
+  _resetForTests();
   // Imported (not run as main) -> the module must NOT bind its own port.
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
@@ -20,7 +27,8 @@ before(async () => {
 
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
-  delete process.env.MAESTRO_HOME;
+  _resetForTests();
+  if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(homeDir, { recursive: true, force: true });
 });
 

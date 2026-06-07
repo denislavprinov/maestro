@@ -1,36 +1,55 @@
 // test/config.test.mjs
-import { test, after } from 'node:test';
+import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   readConfig, setStep, addCustomModel, removeCustomModel,
-  listModels, resolveStepModels, configFile,
+  listModels, resolveStepModels,
 } from '../src/core/config.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
+import { getDb, _resetForTests } from '../src/core/db.mjs';
+import { projectKey } from '../src/core/store.mjs';
 
+// node:sqlite migration: config now lives in the DB. Each test isolates the DB
+// under a throwaway MAESTRO_HOME and resets the singleton so the next getDb()
+// reopens against it (mirrors config-db.test.mjs).
+const homes = [];
 const dirs = [];
+async function freshHome() {
+  const dir = await mkdtemp(join(tmpdir(), 'maestro-cfg-home-'));
+  homes.push(dir);
+  _resetForTests();
+  process.env.MAESTRO_HOME = dir;
+  return dir;
+}
 async function freshProject() {
   const d = await mkdtemp(join(tmpdir(), 'maestro-proj-'));
   dirs.push(d);
   return d;
 }
-after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
+beforeEach(freshHome);
+after(async () => {
+  _resetForTests();
+  delete process.env.MAESTRO_HOME;
+  await Promise.all([...homes, ...dirs].map((d) => rm(d, { recursive: true, force: true })));
+});
 
 test('missing config yields the empty default', async () => {
   const p = await freshProject();
   assert.deepEqual(await readConfig(p), { steps: {}, customModels: [] });
 });
 
-test('setStep persists model + effort to <project>/.maestro/config.json', async () => {
+test('setStep persists model + effort to the project_config row (SQLite)', async () => {
   const p = await freshProject();
   const cfg = await setStep(p, 'planner', { model: 'claude-opus-4-8', effort: 'xhigh' });
   assert.deepEqual(cfg.steps.planner, { model: 'claude-opus-4-8', effort: 'xhigh' });
-  const onDisk = JSON.parse(await readFile(configFile(p), 'utf8'));
-  assert.equal(onDisk.steps.planner.effort, 'xhigh');
+  const key = projectKey(p);
+  const row = getDb().prepare('SELECT steps FROM project_config WHERE project_key = ?').get(key);
+  assert.equal(JSON.parse(row.steps).planner.effort, 'xhigh');
 });
 
 test('rejects an effort the model does not support', async () => {

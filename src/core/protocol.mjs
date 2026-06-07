@@ -5,7 +5,7 @@
 // shape rather than throwing. Writers serialize canonical JSON shapes that the
 // agent prompts (agents/*.md) are instructed to produce.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
@@ -170,34 +170,6 @@ export async function readClarify(pipelineDir) {
   }
   const parsed = safeParseJson(text);
   return normalizeClarify(parsed);
-}
-
-/**
- * Persist the user's answers to clarify-answers.json.
- * Accepts either a raw array of answers or an object { answers: [...] }.
- * Each answer is normalized to { id, question, choice }.
- *
- * @param {string} pipelineDir
- * @param {{answers: Array}|Array} answers
- * @returns {Promise<{answers: Array}>} the written shape
- */
-export async function writeClarifyAnswers(pipelineDir, answers) {
-  const incoming = Array.isArray(answers)
-    ? answers
-    : Array.isArray(answers?.answers)
-      ? answers.answers
-      : [];
-  const normalized = incoming
-    .filter((a) => a && typeof a === 'object')
-    .map((a, i) => ({
-      id: asString(a.id).trim() || `q${i + 1}`,
-      question: asString(a.question),
-      choice: asString(a.choice),
-    }));
-  const payload = { answers: normalized };
-  const file = join(pipelineDir, 'clarify-answers.json');
-  await writeFile(file, JSON.stringify(payload, null, 2) + '\n', 'utf8');
-  return payload;
 }
 
 /**

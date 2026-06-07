@@ -1,7 +1,7 @@
 // test/workflows.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,13 +17,16 @@ import {
 } from '../src/core/workflows.mjs';
 import { setNodeModel, setFeedbackCycles, setStep } from '../src/core/config.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs'; // ▲ v3: add (not yet imported)
+import { getDb, _resetForTests } from '../src/core/db.mjs';
 
 // Each test gets its own ~/.maestro via MAESTRO_HOME so the global store is
-// isolated and nothing touches the developer's real home dir.
+// isolated and nothing touches the developer's real home dir. The DB singleton is
+// reset so the next getDb() reopens against the fresh MAESTRO_HOME.
 const homes = [];
 async function freshHome() {
   const d = await mkdtemp(join(tmpdir(), 'maestro-home-'));
   homes.push(d);
+  _resetForTests();
   process.env.MAESTRO_HOME = d;
   return d;
 }
@@ -85,9 +88,9 @@ test('writeWorkflow stamps id/createdAt/updatedAt and roundtrips through readWor
   assert.equal(saved.version, 1);
   assert.ok(saved.createdAt && saved.updatedAt, 'timestamps stamped');
 
-  // Persisted on disk as <id>.json.
-  const onDisk = JSON.parse(await readFile(join(workflowsDir(), `${saved.id}.json`), 'utf8'));
-  assert.equal(onDisk.name, 'Quick Fix');
+  // Persisted as a row in the workflows table (storage is SQLite now, not <id>.json).
+  const row = getDb().prepare('SELECT name FROM workflows WHERE id = ?').get(saved.id);
+  assert.equal(row.name, 'Quick Fix');
 
   const got = await readWorkflow(saved.id);
   assert.deepEqual(got.steps, saved.steps);
@@ -135,8 +138,8 @@ test('deleteWorkflow removes a saved template and returns true', async () => {
   const saved = await writeWorkflow({ id: 'wf_del', name: 'Del', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
   assert.equal(await deleteWorkflow(saved.id), true);
   assert.equal(await readWorkflow(saved.id), null);
-  const files = await readdir(workflowsDir());
-  assert.ok(!files.includes('wf_del.json'));
+  const row = getDb().prepare('SELECT 1 FROM workflows WHERE id = ?').get('wf_del');
+  assert.equal(row, undefined, 'row gone after delete');
 });
 
 test('deleteWorkflow returns false for a missing id', async () => {
@@ -151,26 +154,23 @@ test('deleteWorkflow refuses to delete the built-in default (returns false, leav
   assert.equal(still.id, 'wf_default'); // DEFAULT_WORKFLOW is always present
 });
 
-// --- Security: path-traversal guard on workflow ids -----------------------
-// workflowFile(id) builds <workflowsDir>/<id>.json; an id containing path
-// separators or ".." would escape the store. The id is a filename stem, so the
-// guard accepts only ^[A-Za-z0-9_-]+$ (covers wf_default + wf_<slug>).
+// --- Security: unsafe-id guard on workflow ids -----------------------------
+// The id keys the workflows table (no path is built from it anymore). The guard
+// still rejects anything outside ^[A-Za-z0-9_-]+$ (covers wf_default + wf_<slug>),
+// so unsafe ids never read or mutate a row.
 test('readWorkflow rejects path-traversal / unsafe ids (returns null)', async () => {
   await freshHome();
   for (const bad of ['../foo', '../../etc/passwd', 'a/b', '..%2f..%2fx', 'foo.bar', 'foo bar', '', '.', '..']) {
     assert.equal(await readWorkflow(bad), null, `readWorkflow must reject "${bad}"`);
   }
 });
-test('deleteWorkflow refuses unsafe ids (returns false, deletes nothing)', async () => {
-  const home = await freshHome();
-  // plant a sentinel OUTSIDE the workflows dir, inside MAESTRO_HOME/.maestro
-  const { writeFile, mkdir } = await import('node:fs/promises');
-  const { existsSync } = await import('node:fs');
-  const sentinel = join(home, '.maestro', 'SENTINEL.json');
-  await mkdir(join(home, '.maestro'), { recursive: true });
-  await writeFile(sentinel, JSON.stringify({ steps: [] }), 'utf8');
-  assert.equal(await deleteWorkflow('../SENTINEL'), false);
-  assert.equal(existsSync(sentinel), true, 'sentinel must survive a traversal delete');
+test('deleteWorkflow refuses unsafe ids and deletes nothing real', async () => {
+  await freshHome();
+  const saved = await writeWorkflow({ id: 'wf_keep', name: 'Keep', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  assert.equal(await deleteWorkflow('../wf_keep'), false);
+  assert.equal(await deleteWorkflow('a/b'), false);
+  assert.ok(await readWorkflow('wf_keep'), 'a real saved workflow survives an unsafe-id delete');
+  void saved;
 });
 test('writeWorkflow still works and ids round-trip (guard does not break valid ids)', async () => {
   await freshHome();

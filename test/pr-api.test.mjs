@@ -1,27 +1,37 @@
 // test/pr-api.test.mjs
+// Phase 3.7 — the server's POST /api/pr + /api/runs routes read the DB: the
+// pipeline's branch + projectDir come back through rowToState (branch JSON column;
+// projectDir from the project's store_meta path). Fixtures seed pipelines rows via
+// the production writers (seedPipeline -> createPipeline + writeState) + store_meta
+// (writeStoreMeta) instead of state.json/meta.json. The projectKey/id the POST body
+// carries are content-derived/minted (A15(3)) — use the RETURNED key/id (module vars).
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { projectKey } from '../src/core/store.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
 
-let srv, base, home, prevHome;
+let srv, base, home, prevHome, betaKey, betaId, betaRepo;
 
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'maestro-pr-'));
   prevHome = process.env.MAESTRO_HOME; process.env.MAESTRO_HOME = home;
-  const dir = join(home, '.maestro', 'store', 'beta-00000002', 'pipelines', 'pp');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'pp', title: 'My feature', status: 'stopped', projectDir: '/repo/beta',
-    branch: { source: 'main', feature: 'maestro/my-feature-pp', branchKept: true, commit: 'abc' },
-  }), 'utf8');
-  await writeFile(join(home, '.maestro', 'store', 'beta-00000002', 'meta.json'),
-    JSON.stringify({ key: 'beta-00000002', name: 'Beta', path: '/repo/beta' }), 'utf8');
+  _resetForTests(); // open the DB under this temp home
+  // Seed via the production writer; createPipeline's ensureMeta writes the store_meta
+  // (path = the repo dir) the PR route reads for projectDir. Pin name to 'Beta'.
+  betaRepo = await mkdtemp(join(tmpdir(), 'maestro-pr-repo-'));
+  const seeded = await seedPipeline(betaRepo, { title: 'My feature', status: 'stopped',
+    startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'maestro/my-feature-pp', branchKept: true, commit: 'abc' } });
+  betaId = seeded.id; betaKey = seeded.key;
+  writeStoreMeta(betaKey, 'project', { key: betaKey, name: 'Beta', path: betaRepo });
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -30,6 +40,7 @@ before(async () => {
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   gitInfo.reset();
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });
@@ -41,14 +52,14 @@ const post = (body) => fetch(`${base}/api/pr`, {
 });
 
 test('POST /api/pr -> 400 when id is missing', async () => {
-  assert.equal((await post({ projectKey: 'beta-00000002' })).status, 400);
+  assert.equal((await post({ projectKey: betaKey })).status, 400);
 });
 
 test('POST /api/pr -> 409 when gh is unavailable', async () => {
   gitInfo.setRunner((cmd) => Promise.resolve(
     cmd === 'gh' ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
                  : { ok: true, stdout: '', stderr: '', code: 0 }));
-  assert.equal((await post({ projectKey: 'beta-00000002', id: 'pp' })).status, 409);
+  assert.equal((await post({ projectKey: betaKey, id: betaId })).status, 409);
 });
 
 test('POST /api/pr pushes, creates the PR, returns url + mergeable', async () => {
@@ -63,7 +74,7 @@ test('POST /api/pr pushes, creates the PR, returns url + mergeable', async () =>
       return Promise.resolve({ ok: true, stdout: 'MERGEABLE\n', stderr: '', code: 0 });
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
-  const r = await post({ projectKey: 'beta-00000002', id: 'pp' });
+  const r = await post({ projectKey: betaKey, id: betaId });
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.equal(j.url, 'https://github.com/x/y/pull/7');
@@ -95,7 +106,7 @@ test('GET /api/history is PR-light: no inline pr even when an OPEN PR exists', a
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
   const j = await (await fetch(`${base}/api/history`)).json();
-  const row = j.pipelines.find((p) => p.id === 'pp');
+  const row = j.pipelines.find((p) => p.id === betaId);
   assert.equal('pr' in row, false, 'history skeleton omits inline pr');
   assert.equal(prListCalled, false, 'GET /api/history does not run `gh pr list`');
 });
@@ -105,14 +116,10 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   // and must still attach pr inline. Seed under the real projectKey so the lookup hits.
   const repoDir = await mkdtemp(join(tmpdir(), 'maestro-runs-repo-'));
   const key = projectKey(repoDir);
-  const dir = join(home, '.maestro', 'store', key, 'pipelines', 'rp');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'state.json'), JSON.stringify({
-    id: 'rp', title: 'Runs feat', status: 'stopped', projectDir: repoDir,
-    branch: { source: 'main', feature: 'maestro/runs-rp', branchKept: true },
-  }), 'utf8');
-  await writeFile(join(home, '.maestro', 'store', key, 'meta.json'),
-    JSON.stringify({ key, name: 'RunsRepo', path: repoDir }), 'utf8');
+  const { id: rpId } = await seedPipeline(repoDir, { title: 'Runs feat', status: 'stopped',
+    startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'maestro/runs-rp', branchKept: true } });
+  writeStoreMeta(key, 'project', { key, name: 'RunsRepo', path: repoDir });
   gitInfo.setRunner((cmd, args) => {
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')
@@ -121,6 +128,6 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
   const j = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(repoDir)}`)).json();
-  const row = j.pipelines.find((p) => p.id === 'rp');
+  const row = j.pipelines.find((p) => p.id === rpId);
   assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
 });

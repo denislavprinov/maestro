@@ -17,30 +17,94 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+import { mkdtemp, rm, mkdir, writeFile, readdir } from 'node:fs/promises';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { seedWorkspacePipeline } from './helpers/db-seed.mjs';
+import { writeStoreMeta, recordArtifact } from '../src/core/artifacts.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
+
+// ── Robust temp-repo teardown (fixes a full-suite-only ENOTEMPTY flake) ──────
+// The two run-returns-200 workspace tests POST a workspace run; the route fires
+// orch.run() fire-and-forget. A workspace run creates a per-member worktree under
+// <member>/.git/worktrees/<id>, and run()'s finally tears it down with
+// `git worktree remove` that runs with ignoreAbort:true (orchestrator._commitWork
+// / removeWorktree) — i.e. it deliberately OUTLIVES orch.stop(). So after stop()
+// a git child can still be mutating <member>/.git when after() begins the
+// recursive rm of created[], and the final `rmdir .git` loses the race ->
+// ENOTEMPTY. It only surfaces under full-suite event-loop load (the teardown git
+// finishes promptly when this file runs alone). Two layers, defense-in-depth:
+//   (1) drainWorktrees(): after stopping, wait (bounded) for each member's
+//       .git/worktrees to drain + git lock files to clear, so the teardown
+//       `worktree remove` is done before we touch the dir;
+//   (2) rmWithRetry(): a bounded ENOTEMPTY/EBUSY retry on the recursive rm, so a
+//       teardown git that lands in the residual window can't fail cleanup.
+
+/** True while a member repo still has a live worktree entry or a git lock. */
+async function gitBusy(dir) {
+  try {
+    if (!existsSync(join(dir, '.git'))) return false;
+    const wt = join(dir, '.git', 'worktrees');
+    if (existsSync(wt) && (await readdir(wt)).length > 0) return true;
+    for (const lock of ['index.lock', 'HEAD.lock', 'config.lock']) {
+      if (existsSync(join(dir, '.git', lock))) return true;
+    }
+    return false;
+  } catch {
+    return false; // a dir vanishing mid-check is not "busy"
+  }
+}
+
+/** Wait (bounded) for in-flight teardown git to release every member repo. */
+async function drainWorktrees(dirs, { timeoutMs = 4000, stepMs = 25 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const busy = [];
+    for (const d of dirs) if (await gitBusy(d)) busy.push(d);
+    if (busy.length === 0 || Date.now() >= deadline) return;
+    await delay(stepMs);
+  }
+}
+
+/** Recursive rm that retries on ENOTEMPTY/EBUSY (late git writes into .git). */
+async function rmWithRetry(dir, { attempts = 12, stepMs = 25 } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = err?.code || '';
+      if ((code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'ENOENT') && i < attempts) {
+        await delay(stepMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 // Outer isolation that outlives the per-suite before/after: a fire-and-forget
 // orch.run() can write to the store after teardown restores MAESTRO_HOME.
 useTempHome(after);
 
 // CONTAINMENT (test-leak guard). The two run-returns-200 workspace tests POST a
-// workspace run that fires orch.run() in the background. At M2 the orchestrator
-// does NOT yet consume opts.workspace, so it resolves this.projectDir =
-// process.cwd() and runs `git worktree add` there — mock mode short-circuits the
-// graph build + claude spawn, NOT worktree setup. To keep ZERO pollution of the
-// real maestro repo, we chdir the whole file's process into a throwaway git repo
-// for the duration (node runs each test FILE in its own process and tests within
-// this file run sequentially, so a process-wide chdir is safe and isolated): any
-// worktree the orchestrator creates lands inside the sandbox and dies with the
-// `rm -rf` in after(). All other paths in this file are absolute, so chdir is
-// otherwise inert. The defensive after() also stops every registered orch (which
-// aborts in-flight worktree creation) before removing the sandbox.
+// workspace run that fires orch.run() in the background. The orchestrator now
+// consumes the workspace and creates one worktree PER MEMBER under each member's
+// own <member>/.git/worktrees/<id> (mock mode short-circuits the graph build +
+// claude spawn, NOT worktree setup) — the members are the freshRepo() dirs in
+// created[]. As a belt for the scalar primary/cwd resolution, we ALSO chdir the
+// whole file's process into a throwaway git repo for the duration (node runs each
+// test FILE in its own process and tests within this file run sequentially, so a
+// process-wide chdir is safe and isolated); any worktree resolved against cwd
+// lands inside the sandbox and dies with the rm in after(). All other paths in
+// this file are absolute, so chdir is otherwise inert. The defensive after()
+// stops every registered orch, then drains the in-flight (ignoreAbort) teardown
+// git before removing the member repos + sandbox (see drainWorktrees/rmWithRetry).
 const origCwd = process.cwd();
 let cwdSandbox = null;
 
@@ -63,6 +127,7 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-wsapi-'));
   prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
+  _resetForTests(); // reopen the DB singleton against THIS home before any /api/workspaces call
   process.env.MAESTRO_MOCK = '1'; // keep /api/run offline
   const mod = await import('../ui/server.mjs'); // imported => no port bind
   runs = mod.runs;
@@ -80,14 +145,22 @@ after(async () => {
     try { r.orch && typeof r.orch.stop === 'function' && r.orch.stop(); } catch { /* best-effort */ }
   }
   runs.clear();
+  // stop() aborts the run, but run()'s finally tears down each member worktree with
+  // ignoreAbort git that outlives the abort. Wait for that teardown to release the
+  // member repos BEFORE removing them, so `git worktree remove` can't race the rm
+  // and leave .git non-empty (the full-suite-only ENOTEMPTY flake). See header.
+  await drainWorktrees([...created, cwdSandbox].filter(Boolean));
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   delete process.env.MAESTRO_MOCK;
+  _resetForTests(); // next file reopens the DB singleton clean
   // Restore cwd BEFORE removing the sandbox so the rm cannot fail on a cwd that
   // is being deleted; the sandbox (with any worktree inside it) goes with it.
   process.chdir(origCwd);
-  if (cwdSandbox) await rm(cwdSandbox, { recursive: true, force: true });
-  await rm(homeDir, { recursive: true, force: true });
-  await Promise.all(created.map((d) => rm(d, { recursive: true, force: true })));
+  // rmWithRetry absorbs any teardown git that lands in the residual window after
+  // the drain (bounded ENOTEMPTY/EBUSY retry) so cleanup is resilient regardless.
+  if (cwdSandbox) await rmWithRetry(cwdSandbox);
+  await rmWithRetry(homeDir);
+  await Promise.all(created.map((d) => rmWithRetry(d)));
 });
 
 /** A real git repo so the server's per-member isGitRepo resolution passes. */
@@ -409,39 +482,56 @@ test('summarizeRuns carries a kind discriminator + scanId/workspaceId fields', a
 // ?workspaceId= list / detail / delete (route through the M1 ws-store helpers)
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Seed a workspace + a finished pipeline directly in its store namespace. */
+/** Seed a workspace + a finished pipeline in its store namespace through the
+ *  PRODUCTION writers. Phase 3.6/3.7: the list (listWorkspacePipelines) + detail
+ *  (readWorkspacePipeline) read the DB; seedWorkspacePipeline -> createPipeline +
+ *  writeState inserts the workspace pipelines row, writes the REAL run dir (prompt.md
+ *  + workspace-description.md) under store/workspaces/<id>/pipelines, AND writes the
+ *  workspace store_meta. The run id is MINTED (A15(3)) — capture it; createPipeline's
+ *  dir basename ends in -<id> so runDirIndex/lookupPipelineRow resolve it. Phase 3.13:
+ *  the delete is INDEX-BASED, so we add the shared plans/reviews markdown on the FS +
+ *  recordArtifact (store-root-relative) — that is what deletePipeline unlinks. */
 async function seedWorkspaceWithPipeline(name) {
   const a = await freshRepo();
   const b = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name, projectPaths: [a, b] })).json();
   const wsRoot = join(homeDir, '.maestro', 'store', 'workspaces', workspace.id);
-  const pdir = join(wsRoot, 'pipelines', '04-06-26-ws-feature-ww');
-  await mkdir(pdir, { recursive: true });
-  await writeFile(join(pdir, 'state.json'), JSON.stringify({
-    id: 'ww', title: 'WS feature', status: 'done', target: 'workspace',
-    workspaceId: workspace.id, workspaceKey: workspace.id, workspaceName: name,
+  // Production-writer seed: createPipeline mints the id + writes the run dir, writeState
+  // persists the workspace row. projects[] (index-aligned with the workspace) supplies
+  // the workspace superset. The returned dir IS the on-disk run dir (ends in -<id>).
+  const projects = workspace.projectKeys.map((k, i) => ({
+    projectKey: k, projectDir: workspace.projectPaths[i], projectName: 'm',
+  }));
+  const { id: runId, dir: pdir } = await seedWorkspacePipeline(a, workspace.id, {
+    title: 'WS feature', status: 'done', workspaceName: name,
     baseName: 'ws-feature', datePrefix: '04-06-26',
-    projectKeys: workspace.projectKeys,
-    projects: workspace.projectKeys.map((k, i) => ({ projectKey: k, projectDir: workspace.projectPaths[i], projectName: 'm' })),
-    branches: {}, checkpointRefs: {},
-  }), 'utf8');
-  await writeFile(join(pdir, 'prompt.md'), '# WS feature\n', 'utf8');
-  await writeFile(join(pdir, 'pipeline.md'), '# WS feature\n', 'utf8');
+    startedAt: '2026-06-04T00:00:00Z',
+  }, projects);
+  // Pin the ws store_meta (createPipeline wrote one already) so name + projectPaths
+  // (the primaryDir / projectDir the list+detail routes resolve) are deterministic.
+  writeStoreMeta(workspace.id, 'workspace', {
+    key: workspace.id, id: workspace.id, name,
+    projectKeys: workspace.projectKeys, projectPaths: workspace.projectPaths,
+  });
+  // Shared markdown on the FS + indexed so the index-based delete (3.13) unlinks it.
+  // createPipeline does NOT write plan/review md (only the orchestrator does), so add
+  // them here at the paths the delete asserts, keyed on the MINTED run id.
   await mkdir(join(wsRoot, 'plans'), { recursive: true });
   await mkdir(join(wsRoot, 'reviews'), { recursive: true });
   await writeFile(join(wsRoot, 'plans', '04-06-26-ws-feature.md'), '# p', 'utf8');
   await writeFile(join(wsRoot, 'reviews', '04-06-26-ws-feature-impl-review.md'), '# r', 'utf8');
-  await writeFile(join(wsRoot, 'meta.json'), JSON.stringify({ key: workspace.id, id: workspace.id, name }), 'utf8');
-  return { workspace, wsRoot };
+  recordArtifact(runId, 'plan', 'plans/04-06-26-ws-feature.md');
+  recordArtifact(runId, 'review', 'reviews/04-06-26-ws-feature-impl-review.md');
+  return { workspace, wsRoot, runId, pdir };
 }
 
 test('GET /api/runs?workspaceId= lists workspace-store pipelines; bad/unknown id -> 404', async () => {
-  const { workspace } = await seedWorkspaceWithPipeline('List WS Runs');
+  const { workspace, runId } = await seedWorkspaceWithPipeline('List WS Runs');
   const r = await get(`/api/runs?workspaceId=${encodeURIComponent(workspace.id)}`);
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.ok(Array.isArray(j.pipelines));
-  assert.ok(j.pipelines.some((p) => p.id === 'ww'), 'lists the seeded workspace pipeline');
+  assert.ok(j.pipelines.some((p) => p.id === runId), 'lists the seeded workspace pipeline');
 
   // Malformed / unknown workspaceId -> 404.
   assert.equal((await get('/api/runs?workspaceId=not-a-ws-id')).status, 404);
@@ -465,23 +555,23 @@ test('GET /api/runs?workspaceId= includes live workspace runs filtered by worksp
 });
 
 test('GET /api/workspaces/:id/runs/:runId returns detail; unknown -> 404; bad key -> 404', async () => {
-  const { workspace } = await seedWorkspaceWithPipeline('Detail WS Runs');
-  const r = await get(`/api/workspaces/${workspace.id}/runs/ww`);
+  const { workspace, runId } = await seedWorkspaceWithPipeline('Detail WS Runs');
+  const r = await get(`/api/workspaces/${workspace.id}/runs/${runId}`);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).state.title, 'WS feature');
 
   // Unknown run id under a known workspace -> 404.
   assert.equal((await get(`/api/workspaces/${workspace.id}/runs/nope`)).status, 404);
   // Malformed workspace id -> 404 (no path-traversal surface; key validated).
-  assert.equal((await get('/api/workspaces/not-a-ws-id/runs/ww')).status, 404);
-  assert.equal((await get('/api/workspaces/wks-nope-00000000/runs/ww')).status, 404);
+  assert.equal((await get(`/api/workspaces/not-a-ws-id/runs/${runId}`)).status, 404);
+  assert.equal((await get(`/api/workspaces/wks-nope-00000000/runs/${runId}`)).status, 404);
 });
 
 test('DELETE /api/runs/:id?workspaceId= removes the workspace pipeline dir + shared files', async () => {
-  const { workspace, wsRoot } = await seedWorkspaceWithPipeline('Delete WS Run');
-  const r = await del(`/api/runs/ww?workspaceId=${encodeURIComponent(workspace.id)}`);
+  const { workspace, wsRoot, runId, pdir } = await seedWorkspaceWithPipeline('Delete WS Run');
+  const r = await del(`/api/runs/${runId}?workspaceId=${encodeURIComponent(workspace.id)}`);
   assert.equal(r.status, 200);
-  assert.equal(existsSync(join(wsRoot, 'pipelines', '04-06-26-ws-feature-ww')), false, 'pipeline dir removed');
+  assert.equal(existsSync(pdir), false, 'pipeline dir removed');
   assert.equal(existsSync(join(wsRoot, 'plans', '04-06-26-ws-feature.md')), false, 'shared plan removed');
   assert.equal(existsSync(join(wsRoot, 'reviews', '04-06-26-ws-feature-impl-review.md')), false, 'shared review removed');
 });
@@ -492,9 +582,9 @@ test('DELETE /api/runs/:id?workspaceId= with a malformed workspaceId -> 404', as
 });
 
 test('DELETE /api/runs/:id?workspaceId= is 409 while the workspace pipeline is live', async () => {
-  const { workspace } = await seedWorkspaceWithPipeline('Delete Live WS Run');
-  runs.set('uuid-ws', { id: 'uuid-ws', pipelineId: 'ww', status: 'running', workspaceId: workspace.id, kind: 'workspace-run' });
-  const r = await del(`/api/runs/ww?workspaceId=${encodeURIComponent(workspace.id)}`);
+  const { workspace, runId } = await seedWorkspaceWithPipeline('Delete Live WS Run');
+  runs.set('uuid-ws', { id: 'uuid-ws', pipelineId: runId, status: 'running', workspaceId: workspace.id, kind: 'workspace-run' });
+  const r = await del(`/api/runs/${runId}?workspaceId=${encodeURIComponent(workspace.id)}`);
   assert.equal(r.status, 409, 'a live workspace pipeline cannot be deleted');
   runs.clear();
 });

@@ -12,9 +12,11 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
+import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { listPipelines, readPipeline, listAllPipelines, readPipelineByKey, enrichPipelinesPr } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
@@ -39,6 +41,22 @@ import {
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
+
+// ── node:sqlite runtime guard + warning filter ──────────────────────────────────
+// Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
+// stable enough for our use but still flagged experimental). Everything else (deprec-
+// ations, etc.) is re-printed unchanged. Belt-and-suspenders with the npm scripts'
+// --disable-warning=ExperimentalWarning (the primary suppressor): this filter is the
+// direct-bin fallback. We removeAllListeners('warning') FIRST so Node's default
+// printer no longer fires (a bare listener would NOT suppress the warning and would
+// double-print every OTHER warning), then attach our single filtering listener.
+process.removeAllListeners('warning');
+process.on('warning', (w) => {
+  if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
+  process.stderr.write(`${w?.stack || w?.message || w}\n`);
+});
+// Fail fast on an unsupported Node / missing node:sqlite BEFORE any DB is opened.
+preflightNode();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

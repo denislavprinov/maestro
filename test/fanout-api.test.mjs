@@ -5,6 +5,7 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { _resetForTests } from '../src/core/db.mjs';
 
 let proj, srv, base, prevHome, homeDir;
 const JSONH = { 'Content-Type': 'application/json' };
@@ -14,6 +15,11 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'maestro-fanout-home-'));
   prevHome = process.env.MAESTRO_HOME;
   process.env.MAESTRO_HOME = homeDir;
+  // /api/config (POST step + PATCH node) drives setStep/setNodeModel, persisting
+  // fanOut to the DB. Reset the db.mjs singleton so it reopens against THIS home
+  // before the first request and again in teardown, isolating these writes in the
+  // shared `node --test` run.
+  _resetForTests();
   proj = await mkdtemp(join(tmpdir(), 'maestro-fanout-proj-'));
   const { app } = await import('../ui/server.mjs'); // imported => no port bind
   srv = http.createServer(app);
@@ -22,6 +28,7 @@ before(async () => {
 });
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
+  _resetForTests();
   if (prevHome === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prevHome;
   await rm(homeDir, { recursive: true, force: true });
   await rm(proj, { recursive: true, force: true });
