@@ -643,6 +643,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
+    subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     el: null,
     _finished: false,
   };
@@ -1475,6 +1476,7 @@ if (typeof window !== 'undefined') {
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
+    makeRun,
     durByNode,
     costByNode,
     composerPaintWires,
