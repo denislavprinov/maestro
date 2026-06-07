@@ -802,6 +802,10 @@ function onState(r, msg) {
     r.costByNode = costByNode(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
+  // Sub-agents: the state snapshot is authoritative (covers late-join/replay and
+  // any missed `subagent` delta). Replace wholesale when present; a snapshot that
+  // omits the field (older runs / partial snapshots) leaves the delta-built array.
+  r.subAgents = msg.subAgents || r.subAgents;
   if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
   paintRunCard(r);
@@ -1506,6 +1510,7 @@ if (typeof window !== 'undefined') {
     manifestFor,
     makeRun,
     onSubagent,
+    onState,
     getRun: (id) => runs.get(id),
     durByNode,
     costByNode,

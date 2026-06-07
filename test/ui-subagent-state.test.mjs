@@ -109,3 +109,44 @@ test('switch routes a subagent frame through onSubagent onto the live run model'
   assert.equal(r.subAgents.length, 1, 'subagent frame reached the model via the switch');
   assert.equal(r.subAgents[0].id, 'tool_1');
 });
+
+test('onState replaces r.subAgents from an authoritative snapshot (covers late-join)', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  // A stale delta-built record that the snapshot should overwrite wholesale.
+  ctx.window.__np.onSubagent(r, { transition: 'spawn', id: 'stale', nodeId: 's0_0', status: 'running' });
+  ctx.window.__np.onState(r, {
+    type: 'state', status: 'running',
+    subAgents: [
+      { id: 'tool_1', label: 'a', nodeId: 's0_0', stepKey: '0:s0_0', stepIndex: 0, cycle: 0, status: 'finished' },
+      { id: 'tool_2', label: 'b', nodeId: 's0_0', stepKey: '0:s0_0', stepIndex: 0, cycle: 0, status: 'running' },
+    ],
+  });
+  assert.equal(r.subAgents.length, 2, 'snapshot is authoritative — stale record dropped');
+  assert.deepEqual(r.subAgents.map((s) => s.id), ['tool_1', 'tool_2']);
+});
+
+test('onState without a subAgents field leaves the delta-built array intact', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  ctx.window.__np.onSubagent(r, { transition: 'spawn', id: 'tool_1', nodeId: 's0_0', status: 'running' });
+  ctx.window.__np.onState(r, { type: 'state', status: 'running' }); // legacy/partial snapshot
+  assert.equal(r.subAgents.length, 1, 'no subAgents key → keep what deltas built');
+  assert.equal(r.subAgents[0].id, 'tool_1');
+});
+
+test('a state frame with subAgents reconciles the live run model (end-to-end)', async () => {
+  const ctx = await boot();
+  ctx.selectProject();
+  ctx.window.location.hash = 'running';
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  ctx.recv({ type: 'phase', runId: 'p1', phase: 'plan', cycle: 0 });
+  ctx.recv({
+    type: 'state', runId: 'p1', status: 'running',
+    subAgents: [{ id: 'tool_1', label: 'x', nodeId: 's0_0', stepKey: '0:s0_0', stepIndex: 0, cycle: 0, status: 'running' }],
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  const r = ctx.window.__np.getRun('p1');
+  assert.equal(r.subAgents.length, 1);
+  assert.equal(r.subAgents[0].id, 'tool_1');
+});
