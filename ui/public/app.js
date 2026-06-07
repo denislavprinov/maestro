@@ -816,6 +816,29 @@ function subAgentsOf(r, nodeId) {
   return list.filter((s) => s && s.nodeId === nodeId);
 }
 
+// Find the manifest node with this id across all cells (null if absent).
+function findManifestNode(stepper, nodeId) {
+  const m = manifestFor(stepper);
+  for (const cell of m.steps) for (const n of cell.nodes) if (n.id === nodeId) return n;
+  return null;
+}
+
+// Sub-agents to render on a graph node. Exact nodeId match first; if none, fall
+// back to the node's uiPhase — covers the window before the real s0_0-keyed stepper
+// arrives, when the graph is built from the legacy uiPhase-keyed default (its node
+// ids ARE uiPhases, and the sub-agents carry uiPhase). `src` = live run r or
+// history state st (both expose .subAgents + .stepper).
+function subAgentsForNode(src, nodeId) {
+  const exact = subAgentsOf(src, nodeId);
+  if (exact.length) return exact;
+  const node = findManifestNode(src && src.stepper, nodeId);
+  if (node && node.uiPhase) {
+    const list = src && Array.isArray(src.subAgents) ? src.subAgents : [];
+    return list.filter((s) => s && s.uiPhase === node.uiPhase);
+  }
+  return exact;
+}
+
 // Group sub-agents by nodeId for display (the DB keys by step_key, but the UI
 // groups by node — §7). Map<nodeId, {subs, spawned, active}>; active = running.
 // Records with no nodeId are skipped (cannot be placed on a card).
@@ -1571,6 +1594,8 @@ if (typeof window !== 'undefined') {
     subsByNode,
     subsByNodeArrays,
     subAgentsOf,
+    findManifestNode,
+    subAgentsForNode,
     composerPaintWires,
     buildRunGraph,
     runNode,
@@ -4469,7 +4494,7 @@ function paintHistStepper(detail, st) {
     live: false,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsOf(st, id),
+    subsOf: (id) => subAgentsForNode(st, id),
   });
 }
 
@@ -4827,7 +4852,7 @@ function paintStepper(r) {
     live: true,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsOf(r, id),
+    subsOf: (id) => subAgentsForNode(r, id),
   });
 }
 
