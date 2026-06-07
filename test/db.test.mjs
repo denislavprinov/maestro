@@ -276,7 +276,7 @@ test('getDb() first-launch is concurrency-safe across N processes (no lock/exist
     `all ${N} concurrent first-launch processes must open without crashing; failures: ` +
     failed.map((f) => f.err).join(' | '));
 
-  // The shared DB is migrated exactly once: v1 stamped, exactly one projects table.
+  // The shared DB is migrated exactly once: v2 stamped, exactly one projects table.
   const db = getDb();
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2, 'migrated to v2');
   assert.equal(
