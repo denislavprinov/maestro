@@ -660,3 +660,60 @@ test('getDb() runs the fs->db migration automatically on first open', () => {
   assert.equal(readdirSync(home).filter((n) => n.startsWith('backup-')).length, 1,
     'reopen created no second backup dir');
 });
+
+// ── M3 — completion marker latch (re-run safety independent of row counts) ───────
+const MIGRATION_MARKER_KEY = '__fs_migration__';
+function markerRow(db) {
+  return db.prepare('SELECT kind, data FROM store_meta WHERE key = ?').get(MIGRATION_MARKER_KEY);
+}
+
+test('M3: a successful import stamps the completion marker inside the tx', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  buildFixture(home);
+  const db = getDb();
+  maybeMigrateFromFs(db);
+
+  const m = markerRow(db);
+  assert.ok(m, 'marker row present after a successful import');
+  assert.equal(m.kind, '_meta', 'marker uses the reserved _meta kind');
+  const data = JSON.parse(m.data);
+  assert.equal(data.migrated, true, 'marker payload records completion');
+  assert.ok(typeof data.at === 'string' && data.at.length > 0, 'marker stamps a timestamp');
+});
+
+test('M3: re-run is gated on the marker, not the row counts', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  buildFixture(home);
+  const db = getDb();
+  maybeMigrateFromFs(db);
+  assert.ok(markerRow(db), 'marker stamped on first import');
+
+  // Wipe the rows the OLD proxy keyed on, but KEEP the marker. The importer must
+  // STILL be a no-op (the marker says "done"), proving it no longer trusts counts.
+  db.exec('DELETE FROM pipelines; DELETE FROM projects;');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, 0);
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, 0,
+    're-import suppressed by the marker even with zero project rows');
+});
+
+test('M3: a DB with rows but NO marker still imports (handles a pre-marker DB)', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  buildFixture(home);
+  const db = getDb();
+  maybeMigrateFromFs(db);
+
+  // Simulate a DB migrated by a pre-marker build: rows exist, but the marker does
+  // not. Removing it must let a subsequent run proceed (re-stamping it). We first
+  // re-seed the legacy JSON the prior archive moved away, so there IS data to import.
+  db.exec('DELETE FROM store_meta WHERE key = \'__fs_migration__\';');
+  assert.equal(markerRow(db), undefined, 'marker removed');
+  // Re-create a minimal legacy registry so legacyPresent() + collectLegacy() see rows.
+  writeJson(join(home, 'projects.json'), [{ name: 'Reappear', path: home }]);
+
+  assert.doesNotThrow(() => maybeMigrateFromFs(db));
+  assert.ok(markerRow(db), 'marker re-stamped after a marker-less re-import');
+});

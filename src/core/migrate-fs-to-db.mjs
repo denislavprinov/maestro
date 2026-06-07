@@ -71,6 +71,15 @@ const REVIEW_FILE_RE = /^(refine|impl|plan|ws|webui)-review-cycle(\d+)\.json$/;
 // every call, before any early return) and preserves that frozen Phase-1 contract.
 let _callCount = 0;
 
+// M3: one-time completion latch. The old guard (projects>0 OR pipelines>0) was a
+// row-count PROXY: a DB with projects but zero finished pipelines read as "done",
+// so a legacy pipeline JSON reappearing under store/ would be skipped forever; and
+// legacyPresent() can never go false (store/ keeps markdown). Instead we stamp a
+// sentinel store_meta row INSIDE the import tx and gate re-runs on it. store_meta
+// has no CHECK on `kind`, and every reader looks it up by an exact key (never scans
+// the table), so this reserved key is invisible to the service layer.
+const MIGRATION_MARKER_KEY = '__fs_migration__';
+
 // ─────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -111,11 +120,14 @@ function legacyPresent(home) {
   );
 }
 
-/** SELF-GUARD: the DB already holds migrated data when projects OR pipelines is non-empty. */
+/**
+ * SELF-GUARD (M3): the fs->db import already completed when the one-time marker row
+ * exists. This is a real latch (stamped in the same tx as the import), NOT the old
+ * row-count proxy — so a legacy JSON file reappearing after a partial-looking DB
+ * (e.g. projects>0 but pipelines==0) is still imported until the marker is present.
+ */
 function alreadyMigrated(db) {
-  const p = db.prepare('SELECT count(*) AS n FROM projects').get().n;
-  const r = db.prepare('SELECT count(*) AS n FROM pipelines').get().n;
-  return p > 0 || r > 0;
+  return db.prepare('SELECT 1 FROM store_meta WHERE key = ?').get(MIGRATION_MARKER_KEY) !== undefined;
 }
 
 // ── collection (pure reads) ────────────────────────────────────────────────────────
@@ -519,6 +531,7 @@ function insertAll(db, plan) {
     clarify: db.prepare('INSERT OR IGNORE INTO clarify (pipeline_id,questions,answers) VALUES (?,?,?)'),
     review: db.prepare('INSERT OR IGNORE INTO reviews (pipeline_id,kind,cycle,verdict) VALUES (?,?,?,?)'),
     artifact: db.prepare('INSERT OR IGNORE INTO artifacts (pipeline_id,kind,rel_path) VALUES (?,?,?)'),
+    marker: db.prepare('INSERT OR REPLACE INTO store_meta (key,kind,data) VALUES (?,?,?)'),
   };
   for (const r of plan.projects) ins.project.run(...r);
   // m14: emit a workspace's member rows ONLY when its parent `workspaces` row
@@ -542,6 +555,9 @@ function insertAll(db, plan) {
   for (const r of plan.clarify) ins.clarify.run(...r);
   for (const r of plan.reviews) ins.review.run(...r);
   for (const r of plan.artifacts) ins.artifact.run(...r);
+  // M3: stamp the one-time completion marker LAST, in this same tx (committed by the
+  // caller's COMMIT). INSERT OR REPLACE so a marker-less pre-marker DB re-stamps clean.
+  ins.marker.run(MIGRATION_MARKER_KEY, '_meta', JSON.stringify({ migrated: true, at: nowIso() }));
 }
 
 // ── archive (after commit; best-effort) ──────────────────────────────────────────
