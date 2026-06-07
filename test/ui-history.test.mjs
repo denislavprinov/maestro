@@ -449,7 +449,7 @@ test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice ->
   assert.equal(node.querySelector('.cost').textContent, '$0.03');
 });
 
-test('expanded history card renders clarify Q&A and per-cycle review issues', async () => {
+test('expanded history card renders clarify Q&A but not reviews', async () => {
   const detailPayload = {
     state: { phase: 'done', status: 'done', cycle: 2, steps: [] },
     auditMarkdown: '',
@@ -457,6 +457,7 @@ test('expanded history card renders clarify Q&A and per-cycle review issues', as
       questions: [{ id: 'q1', question: 'Postgres or SQLite?', options: ['pg', 'sqlite', ''], allowFreeText: true }],
       answers: [{ id: 'q1', question: 'Postgres or SQLite?', choice: 'sqlite' }],
     },
+    // Server still sends reviews; the History expand must IGNORE them (not render).
     reviews: [
       { kind: 'impl', cycle: 1, issues: [{ severity: 'major', title: 'Missing null-check', detail: 'guard input', location: 'src/x.mjs:10' }], summary: 'one issue' },
       { kind: 'impl', cycle: 2, issues: [], summary: 'resolved' },
@@ -487,15 +488,9 @@ test('expanded history card renders clarify Q&A and per-cycle review issues', as
   assert.match(clarify.textContent, /sqlite/);
   assert.equal(clarify.querySelectorAll('input,button').length, 0, 'clarify is read-only in History');
 
-  // Reviews: two cycle blocks; the major issue surfaces with severity + location.
-  const reviews = detail.querySelector('.hist-reviews');
-  assert.ok(reviews, 'reviews section rendered');
-  const cycleTags = [...reviews.querySelectorAll('.hist-cycle-tag')].map((e) => e.textContent);
-  assert.deepEqual(cycleTags, ['impl · cycle 1', 'impl · cycle 2']);
-  const issue = reviews.querySelector('.issue.sev-major');
-  assert.ok(issue, 'major issue rendered with severity class');
-  assert.match(issue.querySelector('.issue-title').textContent, /Missing null-check/);
-  assert.match(issue.querySelector('.issue-loc').textContent, /src\/x\.mjs:10/);
+  // Reviews must NOT render in History anymore, even though the payload carries them.
+  assert.equal(detail.querySelector('.hist-reviews'), null, 'reviews section is not rendered');
+  assert.equal(detail.querySelector('.hist-cycle-tag'), null, 'no review cycle tags rendered');
 });
 
 test('history detail omits clarify/reviews sections when both are empty', async () => {
