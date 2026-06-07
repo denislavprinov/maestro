@@ -879,7 +879,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
