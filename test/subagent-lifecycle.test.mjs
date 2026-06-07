@@ -58,3 +58,56 @@ test('a spawn with no attr in scope (clarify pre-step) is ignored, not crashed',
   orch._onAgentEvent('planner', spawnEvt('toolu_A')); // attr === null
   assert.equal(orch.state.subAgents.length, 0, 'no attr → no record (cannot attribute to a step)');
 });
+
+const ATTR2 = { nodeId: 'n1', stepIndex: 2, cycle: 1, stepKey: '2:n1' };
+const finishEvt = (toolUseId, isError = false) => ({
+  type: 'user',
+  raw: { type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: toolUseId, ...(isError ? { is_error: true } : {}) },
+  ] } },
+});
+
+test('a tool_result matching a tracked spawn marks it finished + stamps finishedAt', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  orch._onAgentEvent('planner', spawnEvt('toolu_A'), ATTR2);
+  orch._onAgentEvent('planner', finishEvt('toolu_A'));
+  const r = orch.state.subAgents.find((s) => s.id === 'toolu_A');
+  assert.equal(r.status, 'finished');
+  assert.ok(r.finishedAt, 'finishedAt stamped');
+});
+
+test('a tool_result with is_error:true marks the sub-agent error', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  orch._onAgentEvent('planner', spawnEvt('toolu_A'), ATTR2);
+  orch._onAgentEvent('planner', finishEvt('toolu_A', true));
+  assert.equal(orch.state.subAgents.find((s) => s.id === 'toolu_A').status, 'error');
+});
+
+test('finish emits a subagent event with transition:finish + terminal status', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const evts = [];
+  orch.on('subagent', (m) => evts.push(m));
+  orch._onAgentEvent('planner', spawnEvt('toolu_A'), ATTR2);
+  orch._onAgentEvent('planner', finishEvt('toolu_A'));
+  const fin = evts.find((m) => m.transition === 'finish');
+  assert.ok(fin, 'a finish delta is emitted');
+  assert.equal(fin.id, 'toolu_A');
+  assert.equal(fin.status, 'finished');
+});
+
+test('a tool_result for an UNKNOWN id is ignored (no record, no throw)', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  orch._onAgentEvent('planner', finishEvt('not_a_subagent'));
+  assert.equal(orch.state.subAgents.length, 0);
+});
+
+test('a finish for an already-terminal sub-agent does not flip it back or re-emit', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const evts = [];
+  orch.on('subagent', (m) => evts.push(m));
+  orch._onAgentEvent('planner', spawnEvt('toolu_A'), ATTR2);
+  orch._onAgentEvent('planner', finishEvt('toolu_A'));
+  orch._onAgentEvent('planner', finishEvt('toolu_A', true)); // late duplicate
+  assert.equal(orch.state.subAgents.find((s) => s.id === 'toolu_A').status, 'finished', 'stays finished');
+  assert.equal(evts.filter((m) => m.transition === 'finish').length, 1, 'finish emitted once');
+});

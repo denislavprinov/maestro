@@ -1407,8 +1407,28 @@ class Orchestrator extends EventEmitter {
     }
   }
 
-  /** Finish reducer — implemented in Task B3. Stub keeps the spawn-only tests green. */
-  _recordSubAgentFinishes(raw) { void raw; }
+  /**
+   * Lifecycle finish reducer: scan a MAIN-stream event's content for a
+   * tool_result whose tool_use_id is a tracked sub-agent. Set status =
+   * is_error ? 'error' : 'finished' and stamp finishedAt, but ONLY while the
+   * record is still 'running' (a late/duplicate tool_result must not flip a
+   * terminal record back or re-emit). Mirrors to the table + emits a `finish`
+   * delta. The finish envelope is `{type:'user', message:{content:[{type:
+   * 'tool_result', tool_use_id, is_error?:true}]}}` — previously dropped.
+   */
+  _recordSubAgentFinishes(raw) {
+    const content = raw?.message?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (b?.type !== 'tool_result' || !b.tool_use_id) continue;
+      const rec = this.state.subAgents.find((s) => s.id === b.tool_use_id);
+      if (!rec || rec.status !== 'running') continue; // unknown id or already terminal
+      rec.status = b.is_error ? 'error' : 'finished';
+      rec.finishedAt = new Date().toISOString();
+      this._upsertSubAgent(rec);
+      this._subAgentTransition('finish', rec);
+    }
+  }
 
   /** Best-effort mirror of a sub-agent record to the sub_agents table. Guarded
    *  exactly like _persist/_artifact: no pipeline → in-memory only (unit ctx). */
