@@ -1304,6 +1304,20 @@ class Orchestrator extends EventEmitter {
     this.state.cycle = cycle;
     this.state.updatedAt = now;
     this._emit('phase', { phase: this.state.phase, cycle, status, nodeId: node.nodeId });
+    // Backstop (§5.2): when a step reaches its terminal marker, force-close any
+    // sub-agent still 'running' for THIS step so the UI never shows a stuck-active
+    // square if a tool_result finish was missed. 'start' never closes anything;
+    // the close status is 'stopped' iff the whole run was stopped, else 'finished'.
+    if (status === 'done' || status === 'error' || status === 'stopped') {
+      const closeTo = this.state.status === 'stopped' ? 'stopped' : 'finished';
+      for (const rec of this.state.subAgents) {
+        if (rec.stepKey !== key || rec.status !== 'running') continue;
+        rec.status = closeTo;
+        rec.finishedAt = new Date().toISOString();
+        this._upsertSubAgent(rec);
+        this._subAgentTransition('finish', rec);
+      }
+    }
     this._emit('state', this.getState());
     this._persist().catch(() => {});
   }
