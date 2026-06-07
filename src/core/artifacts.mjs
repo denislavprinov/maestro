@@ -566,19 +566,6 @@ export async function createPipeline(projectDir, opts = {}) {
   if (workspaceKey) recordArtifact(id, 'workspace-description', 'workspace-description.md');
   for (const rel of copiedExtras) recordArtifact(id, 'extra', rel);
 
-  // Human-facing audit header. No longer the audit source (timeline lines now go
-  // to pipeline_events via appendAudit); kept because other code/humans open it.
-  const header =
-    `# Pipeline: ${resolvedTitle}\n\n` +
-    `- **id**: ${id}\n` +
-    `- **project**: ${resolve(projectDir)}\n` +
-    `- **started**: ${startedAt}\n` +
-    `- **prompt file**: prompt.md\n\n` +
-    `## Prompt\n\n` +
-    fenceIfNeeded(promptText) +
-    `\n## Timeline\n\n`;
-  await writeFile(join(dir, 'pipeline.md'), header, 'utf8');
-
   return { id, dir, promptText };
 }
 
@@ -589,12 +576,6 @@ function firstMeaningfulLine(text) {
     if (t) return t.slice(0, 80);
   }
   return '';
-}
-
-function fenceIfNeeded(text) {
-  const t = String(text ?? '').trim();
-  if (!t) return '_(empty prompt)_\n';
-  return t + '\n';
 }
 
 /**

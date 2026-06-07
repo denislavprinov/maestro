@@ -271,7 +271,7 @@ test('appendAudit trims the line and stores ISO ts (reproduces old audit semanti
 // MAESTRO_HOME is already a throwaway temp dir (beforeEach) with the DB reset, so
 // createPipeline writes its run dir under that home's store and INSERTs into that DB.
 
-test('createPipeline inserts a pipelines row, mkdirs the run dir, seeds prompt.md + header', async () => {
+test('createPipeline inserts a pipelines row, mkdirs the run dir, seeds prompt.md', async () => {
   const proj = await mkdtemp(join(tmpdir(), 'maestro-cp-'));
   homes.push(proj);
   const { id, dir, promptText } = await createPipeline(proj, { prompt: 'add pagination', title: 'Add pagination' });
@@ -280,7 +280,8 @@ test('createPipeline inserts a pipelines row, mkdirs the run dir, seeds prompt.m
   await stat(dir);
   assert.ok(existsSync(join(dir, 'prompt.md')), 'prompt.md seeded for humans');
   assert.equal(await readFile(join(dir, 'prompt.md'), 'utf8'), 'add pagination');
-  assert.ok(existsSync(join(dir, 'pipeline.md')), 'pipeline.md header seeded');
+  // M1: the redundant pipeline.md stub is no longer written (pipeline_events is authoritative).
+  assert.equal(existsSync(join(dir, 'pipeline.md')), false, 'pipeline.md stub removed');
   // NO state.json on disk anymore.
   assert.equal(existsSync(join(dir, 'state.json')), false, 'state is in the DB, not state.json');
   // The pipelines row exists with prompt + project key + status created.
@@ -375,4 +376,13 @@ test('writeReview upserts a per-cycle verdict keyed (kind,cycle)', async () => {
   writeReview('rrrr4444', 'impl', 1, { issues: [], summary: 'fixed' });
   assert.equal(readReviewRow('rrrr4444', 'impl', 1).summary, 'fixed');
   assert.equal(readReviewRow('rrrr4444', 'impl', 99), null);
+});
+
+// ── M1.5 — pipeline.md is no longer written (pipeline_events is authoritative) ────
+test('createPipeline does not write a redundant pipeline.md', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-nopmd-'));
+  const { dir } = await createPipeline(projectDir, { prompt: 'hello', title: 'T' });
+  assert.equal(existsSync(join(dir, 'pipeline.md')), false, 'pipeline.md stub removed');
+  assert.equal(existsSync(join(dir, 'prompt.md')), true, 'prompt.md still written');
+  await rm(projectDir, { recursive: true, force: true });
 });
