@@ -809,6 +809,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
 
+/* "Sub-agents" disclosure pill + its tree panel (shared by Run + History). */
+.subs-bar{margin-top:14px;}
+.subs-bar[hidden]{display:none;}
+.btn-subs{display:inline-flex;align-items:center;gap:9px;background:var(--field);border:none;border-radius:999px;padding:9px 15px 9px 13px;font-family:inherit;font-weight:600;font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:background .15s;}
+.btn-subs:hover{background:var(--line-2);}
+.btn-subs .ico{width:15px;height:15px;stroke:var(--ink-2);stroke-width:1.9;}
+.btn-subs .sb-count{display:inline-flex;align-items:center;gap:6px;background:var(--blue-bg);color:var(--blue-ink);font-weight:700;font-size:11px;padding:3px 9px;border-radius:999px;}
+.btn-subs .sb-count.grey{background:#fff;color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--line-2);}
+.btn-subs .chev{transition:transform .2s;stroke:var(--ink-3);}
+.btn-subs[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.subs-panel{margin-top:14px;border:1px solid var(--line);border-radius:18px;background:#FBFBF9;padding:8px 20px 16px;}
+.subs-panel[hidden]{display:none;}
+
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */
 .run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
 

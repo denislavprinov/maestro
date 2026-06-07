@@ -166,3 +166,24 @@ test('sqPulse is scoped to the graph fan ONLY (never .subs-tree / .led / .subs-l
 test('reduced-motion disables the fan square pulse', () => {
   assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node \.fan \.sq\.on[\s\S]*animation:\s*none/);
 });
+
+test('Sub-agents pill: rounded button, sb-count blue default + grey variant, chev rotate', () => {
+  const bar = ruleBody('.subs-bar');
+  assert.ok(bar, '.subs-bar rule missing');
+  assert.match(bar, /margin-top:\s*14px/);
+  const btn = ruleBody('.btn-subs');
+  assert.ok(btn, '.btn-subs rule missing');
+  assert.match(btn, /border-radius:\s*999px/, 'pill is fully rounded');
+  assert.match(btn, /cursor:\s*pointer/);
+  const cnt = ruleBody('.btn-subs .sb-count');
+  assert.ok(cnt, '.sb-count rule missing');
+  assert.match(cnt, /background:\s*var\(--blue-bg\)/, 'default count is blue');
+  assert.match(cnt, /color:\s*var\(--blue-ink\)/);
+  assert.ok(ruleBody('.btn-subs .sb-count.grey'), '.sb-count.grey variant missing');
+  const panel = ruleBody('.subs-panel');
+  assert.ok(panel, '.subs-panel rule missing');
+  assert.match(panel, /border-radius:\s*18px/);
+  assert.match(css, /\.subs-panel\[hidden\]\{[^}]*display:\s*none/);
+  assert.match(css, /\.btn-subs\[aria-expanded="true"\] \.chev\{[^}]*rotate\(180deg\)/,
+    'open pill rotates the chevron');
+});
