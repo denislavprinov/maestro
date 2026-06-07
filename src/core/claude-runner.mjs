@@ -375,6 +375,44 @@ async function emitLog(onEvent, text) {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+/**
+ * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
+ * roles whose real runs may spawn sub-agents. Keyed by the MOCK_ROLE strings.
+ */
+const MOCK_FANOUT_ROLES = new Set([
+  'planner-plan', 'refiner', 'implementer', 'plan-review',
+  'workspace-reviewer', 'workspace-scan',
+]);
+
+/**
+ * Emit a couple of fake sub-agent spawn (assistant.tool_use Agent) + finish
+ * (user.tool_result) events for a fan-out-eligible role so the offline mock
+ * exercises the sub-agent lifecycle indicator. No-op for other roles. The ids are
+ * role-namespaced so concurrent mock nodes never collide on a tool_use id.
+ */
+async function emitMockSubAgents(role, onEvent, signal) {
+  if (!MOCK_FANOUT_ROLES.has(role)) return;
+  const labels = ['investigate area A', 'investigate area B'];
+  const ids = labels.map((_, i) => `mock_${role}_${i + 1}`);
+  // Spawns first (one assistant event carrying both tool_use blocks), then a brief
+  // running window, then the matching tool_result finishes.
+  safeEmit(onEvent, {
+    type: 'assistant',
+    raw: { type: 'assistant', message: { content: ids.map((id, i) => ({
+      type: 'tool_use', id, name: 'Agent', input: { description: labels[i], subagent_type: 'general-purpose' },
+    })) } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  abortIfNeeded(signal);
+  for (const id of ids) {
+    safeEmit(onEvent, {
+      type: 'user',
+      raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
 function abortIfNeeded(signal) {
   if (signal?.aborted) {
     const err = new Error('aborted');
@@ -432,6 +470,14 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
       break;
   }
 
+  abortIfNeeded(signal);
+  // Offline sub-agent indicator: for the fan-out-eligible roles, emit a couple of
+  // fake Task/Agent spawn tool_use blocks + matching tool_result finishes so
+  // `npm run smoke` exercises the sub-agent lifecycle (squares/pill) with no real
+  // claude. Shapes mirror the real stream: spawn = assistant.tool_use(Agent) with
+  // an id; finish = user.tool_result with that tool_use_id. Non-fan-out roles emit
+  // nothing, so their mock output is unchanged.
+  await emitMockSubAgents(role, onEvent, signal);
   abortIfNeeded(signal);
   // No model was called, so the truthful spend is $0. Emit a result event the
   // orchestrator attributes to the current phase, so mock/demo runs still show
