@@ -870,6 +870,67 @@ function subsByNodeArrays(subAgents) {
   return Object.fromEntries([...subsByNode(subAgents)].map(([k, g]) => [k, g.subs]));
 }
 
+// Group key separator for (nodeId, cycle) dropdown groups. | never occurs
+// in a nodeId (alphanumerics + underscore) or an integer, so split is unambiguous.
+const CYCLE_KEY_SEP = '|';
+
+// {`${nodeId}|${cycle}`: Array<sub>} — like subsByNodeArrays but split per
+// cycle so refine/review loops show one dropdown group per cycle (records carry
+// `cycle`). Insertion order = encounter order (already (started_at,id)-sorted from
+// the DB / push order live). Skips records with no nodeId.
+function subsByNodeCycleArrays(subAgents) {
+  const out = {};
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (!s || s.nodeId == null) continue;
+    const key = `${s.nodeId}${CYCLE_KEY_SEP}${s.cycle ?? 0}`;
+    (out[key] ||= []).push(s);
+  }
+  return out;
+}
+
+// Map<nodeId, Set<cycle>> — distinct cycles each node spawned sub-agents in.
+// Drives whether a group header gets a "· cycle N" suffix. Record-driven: the
+// suffix appears when a node actually has sub-agents across >1 cycle, independent
+// of any manifest `cycles` flag.
+function cyclesPerNode(subAgents) {
+  const m = new Map();
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (!s || s.nodeId == null) continue;
+    let set = m.get(s.nodeId);
+    if (!set) { set = new Set(); m.set(s.nodeId, set); }
+    set.add(s.cycle ?? 0);
+  }
+  return m;
+}
+
+// Composite-key (nodeId|cycle) -> display label. Resolves the node label by
+// nodeId, then by uiPhase (id-agnostic fallback when the real stepper is absent),
+// then the raw id. Appends "· cycle N" only when that node spans >1 cycle (so
+// single-cycle steps like Plan render exactly as before).
+function cycleAwareLabel(stepper, subAgents) {
+  const byId = nodeLabelLookup(stepper);              // nodeId -> label (raw id fallback)
+  const m = manifestFor(stepper);
+  const phaseToLabel = {};                            // uiPhase -> label
+  m.steps.forEach((cell) => cell.nodes.forEach((n) => { if (n.uiPhase) phaseToLabel[n.uiPhase] = n.label || n.uiPhase; }));
+  const idToPhase = {};                               // nodeId -> uiPhase (from records)
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (s && s.nodeId != null && s.uiPhase != null) idToPhase[s.nodeId] = s.uiPhase;
+  }
+  const multi = cyclesPerNode(subAgents);
+  return (key) => {
+    const i = String(key).indexOf(CYCLE_KEY_SEP);
+    const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
+    const cycle = i >= 0 ? (Number(String(key).slice(i + 1)) || 0) : 0;
+    let label = byId(nodeId);
+    if (label === nodeId && idToPhase[nodeId] && phaseToLabel[idToPhase[nodeId]]) {
+      label = phaseToLabel[idToPhase[nodeId]];
+    }
+    const set = multi.get(nodeId);
+    if (set && set.size > 1) label += ` · cycle ${cycle}`;
+    return label;
+  };
+}
+
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
@@ -1601,6 +1662,9 @@ if (typeof window !== 'undefined') {
     costByNode,
     subsByNode,
     subsByNodeArrays,
+    subsByNodeCycleArrays,
+    cyclesPerNode,
+    cycleAwareLabel,
     subAgentsOf,
     findManifestNode,
     subAgentsForNode,
@@ -4383,7 +4447,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeArrays(data.state.subAgents), nodeLabelLookup(data.state.stepper));
+    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4905,7 +4969,7 @@ function paintRunCard(r) {
   // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
   // would never show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, subsByNodeArrays(r.subAgents), nodeLabelLookup(r.stepper));
+  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents));
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
