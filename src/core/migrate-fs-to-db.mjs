@@ -481,17 +481,19 @@ function collectSharedMarkdown(plan, keyDir, runIndex) {
 }
 
 /**
- * Parse the `## Timeline` section of a pipeline.md into { ts, text } events. Only
- * lines AFTER the first "## Timeline" header that match the strict ISO-ts pattern
- * are events (a prompt body can contain unrelated "- `...`" lines before it).
+ * Parse the `## Timeline` section of a pipeline.md into { ts, text } events. ONLY
+ * lines after the first "## Timeline" header that match the strict ISO-ts pattern
+ * are events. When there is NO "## Timeline" header we return [] rather than scanning
+ * the whole file: a prompt body can legitimately contain "- `<ISO ts>` ..." lines,
+ * and treating those as events would fabricate spurious pipeline_events rows.
  */
 function parseTimeline(md) {
   const lines = md.split(/\r?\n/);
-  let start = lines.findIndex((l) => l.trim() === '## Timeline');
-  start = start === -1 ? 0 : start + 1;       // if no header, scan whole file with strict regex
+  const header = lines.findIndex((l) => l.trim() === '## Timeline');
+  if (header === -1) return [];               // no Timeline section -> no events
   const RE = /^- `(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)` (.*)$/;
   const out = [];
-  for (let i = start; i < lines.length; i++) {
+  for (let i = header + 1; i < lines.length; i++) {
     const m = RE.exec(lines[i]);
     if (m) out.push({ ts: m[1], text: m[2] });
   }

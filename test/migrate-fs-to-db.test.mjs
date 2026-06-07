@@ -717,3 +717,39 @@ test('M3: a DB with rows but NO marker still imports (handles a pre-marker DB)',
   assert.doesNotThrow(() => maybeMigrateFromFs(db));
   assert.ok(markerRow(db), 'marker re-stamped after a marker-less re-import');
 });
+
+// M-min3a: parseTimeline must NOT scan a header-less pipeline.md with the ISO regex
+// (a prompt body can legitimately contain "- `<ISO ts>` ..." lines). Without a
+// "## Timeline" header the importer should record NO events. We assert through the
+// public effect (pipeline_events rows), since parseTimeline is module-private.
+test('M-min3a: a header-less pipeline.md fabricates no pipeline_events', () => {
+  const home = maestroHome();
+  mkdirSync(home, { recursive: true });
+  const proj = tempGitRepo('nohdr');
+  const key = projectKey(proj);
+  writeJson(join(home, 'projects.json'), [{ name: 'NoHdr', path: proj }]);
+
+  const keyDir = join(home, 'store', key);
+  writeJson(join(keyDir, 'meta.json'), { key, path: proj, name: 'NoHdr', firstSeenAt: '2026-06-01T00:00:00.000Z' });
+  const runId = 'deadbeef';
+  const runDir = join(keyDir, 'pipelines', `06-06-26-no-header-${runId}`);
+  writeJson(join(runDir, 'state.json'), {
+    id: runId, title: 'No header', projectDir: proj, status: 'done', phase: 'done',
+    cycle: 0, startedAt: '2026-06-06T00:00:00.000Z', updatedAt: '2026-06-06T01:00:00.000Z',
+    baseName: 'no-header', datePrefix: '06-06-26', steps: [],
+  });
+  // A pipeline.md with NO "## Timeline" header but WITH ISO-backtick lines in prose.
+  writeText(join(runDir, 'pipeline.md'),
+    '# Pipeline: No header\n\n## Prompt\n\n' +
+    'Please fix the thing.\n' +
+    '- `2026-06-06T07:04:15.010Z` this is quoted prompt text, NOT a timeline event\n' +
+    '- `2026-06-06T07:04:15.029Z` also prose, must be ignored\n');
+
+  const db = getDb();
+  maybeMigrateFromFs(db);
+
+  const n = db.prepare('SELECT count(*) AS n FROM pipeline_events WHERE pipeline_id = ?').get(runId).n;
+  assert.equal(n, 0, 'no events when pipeline.md has no "## Timeline" header');
+  // sanity: the pipeline itself imported (so we know parseTimeline ran on this run).
+  assert.ok(db.prepare('SELECT 1 FROM pipelines WHERE id = ?').get(runId), 'pipeline imported');
+});
