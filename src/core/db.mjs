@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -328,6 +328,45 @@ CREATE TABLE artifacts (
 `;
 
 /**
+ * Incremental v1 -> v2 migration (sub-agent indicators feature). Adds the sub_agents
+ * table: one row per Task/Agent child agent a pipeline node spawned, persisted so the
+ * History UI reconstructs the live "sub-agents" view. Applied by migrate()'s stepwise
+ * ladder only when the open DB is below v2 — it NEVER re-runs SCHEMA_V1.
+ *
+ * FK is to pipelines(id) ONLY (NOT pipeline_steps): writeState() does a DELETE-all +
+ * re-INSERT of pipeline_steps on every persist, so a FK to pipeline_steps would
+ * cascade-wipe these rows on the next state write. step_key is therefore a plain
+ * column (the "<stepIndex>:<nodeId>[#cycle]" key) used for grouping, not a foreign key.
+ * Writes are idempotent UPSERTs (upsertSubAgent), never the delete-all path.
+ */
+const SCHEMA_V2 = `
+-- sub_agents: one row per Task/Agent child agent a node spawned (canonical key is the
+-- spawning tool_use id). PK (pipeline_id, id); FK to pipelines ONLY (ON DELETE CASCADE).
+-- status ∈ running|finished|error|stopped. duration_ms/tokens/cost_usd are nullable
+-- telemetry (populated only by the feature-detected hook-events path). step_key is a
+-- plain grouping column (NO FK — survives writeState's pipeline_steps delete-all).
+CREATE TABLE sub_agents (
+  pipeline_id  TEXT NOT NULL,
+  id           TEXT NOT NULL,
+  step_key     TEXT,
+  node_id      TEXT,
+  step_index   INTEGER,
+  cycle        INTEGER,
+  label        TEXT,
+  status       TEXT NOT NULL DEFAULT 'running',
+  started_at   TEXT,
+  finished_at  TEXT,
+  duration_ms  INTEGER,
+  tokens       INTEGER,
+  cost_usd     REAL,
+  PRIMARY KEY (pipeline_id, id),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX idx_sub_agents_pipeline ON sub_agents (pipeline_id);
+CREATE INDEX idx_sub_agents_step     ON sub_agents (pipeline_id, step_key);
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -354,6 +393,7 @@ export function migrate(db) {
     const current = db.prepare('PRAGMA user_version').get().user_version; // re-check under lock
     if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); return; }
     if (current < 1) db.exec(SCHEMA_V1);
+    if (current < 2) db.exec(SCHEMA_V2);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
