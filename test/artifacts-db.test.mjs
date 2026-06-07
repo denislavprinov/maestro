@@ -12,7 +12,8 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
 import { ensureArtifactDirs, writeState, appendAudit, createPipeline } from '../src/core/artifacts.mjs';
 import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
-import { writeReview, readReviewRow } from '../src/core/artifacts.mjs';
+import { writeReview, readReviewRow, readPipelineExtras, readPipelineByKey, writeClarify } from '../src/core/artifacts.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
@@ -385,4 +386,46 @@ test('createPipeline does not write a redundant pipeline.md', async () => {
   assert.equal(existsSync(join(dir, 'pipeline.md')), false, 'pipeline.md stub removed');
   assert.equal(existsSync(join(dir, 'prompt.md')), true, 'prompt.md still written');
   await rm(projectDir, { recursive: true, force: true });
+});
+
+// ── M1.1 — readPipelineExtras enumerates clarify + every review row ──────────────
+test('readPipelineExtras returns clarify {questions,answers} and all review rows', async () => {
+  seedPipelineRow({ id: 'ex000001', projectKey: 'proj-00000001', status: 'done' });
+  await writeClarify('ex000001', {
+    questions: { questions: [{ id: 'q1', question: 'Which DB?', options: ['a', 'b', 'c'], allowFreeText: true }] },
+  });
+  await writeClarify('ex000001', {
+    answers: { answers: [{ id: 'q1', question: 'Which DB?', choice: 'a' }] },
+  });
+  await writeReview('ex000001', 'impl', 1, { issues: [{ severity: 'major', title: 't', detail: 'd', location: 'l' }], summary: 's1' });
+  await writeReview('ex000001', 'impl', 2, { issues: [], summary: 'clean' });
+  await writeReview('ex000001', 'refine', 1, { issues: [], summary: 'r-ok' });
+
+  const ex = readPipelineExtras('ex000001');
+  // clarify halves are the UNWRAPPED arrays (UI consumes .questions / .answers directly)
+  assert.equal(ex.clarify.questions.length, 1);
+  assert.equal(ex.clarify.questions[0].question, 'Which DB?');
+  assert.equal(ex.clarify.answers[0].choice, 'a');
+  // reviews: flat list, ordered (kind asc, cycle asc), each row carries its verdict
+  assert.deepEqual(ex.reviews.map((r) => [r.kind, r.cycle]), [['impl', 1], ['impl', 2], ['refine', 1]]);
+  assert.equal(ex.reviews[0].summary, 's1');
+  assert.equal(ex.reviews[0].issues[0].severity, 'major');
+  assert.equal(ex.reviews[1].issues.length, 0);
+});
+
+test('readPipelineExtras on a bare pipeline returns empty arrays (never null)', () => {
+  seedPipelineRow({ id: 'ex000002', projectKey: 'proj-00000001', status: 'done' });
+  const ex = readPipelineExtras('ex000002');
+  assert.deepEqual(ex, { clarify: { questions: [], answers: [] }, reviews: [] });
+});
+
+test('readPipelineByKey attaches clarify + reviews to the detail response', async () => {
+  seedPipelineRow({ id: 'ex000003', projectKey: 'proj-deadbeef', status: 'done', title: 'T' });
+  await writeReview('ex000003', 'impl', 1, { issues: [], summary: 'ok' });
+  const data = await readPipelineByKey('proj-deadbeef', 'ex000003');
+  assert.equal(data.state.title, 'T');                 // unchanged
+  assert.equal(typeof data.auditMarkdown, 'string');   // unchanged
+  assert.equal(data.reviews.length, 1);                // NEW
+  assert.equal(data.reviews[0].summary, 'ok');
+  assert.deepEqual(data.clarify, { questions: [], answers: [] }); // NEW
 });

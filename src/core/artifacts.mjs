@@ -202,6 +202,40 @@ export function readReviewRow(pipelineId, kind, cycle) {
   return row ? j(row.verdict, null) : null;
 }
 
+/**
+ * Enumerate the History-side "extras" for a pipeline: the clarify Q&A and EVERY
+ * per-cycle review verdict. The single-row readers (readClarifyRow/readReviewRow)
+ * need a key/cycle up front; History has neither, so this lists them. clarify
+ * halves are UNWRAPPED to plain arrays (the columns store {questions:[…]} /
+ * {answers:[…]} — see writeClarify); a missing clarify row yields empty arrays.
+ * reviews is a flat, deterministically ordered (kind, cycle) list, each entry the
+ * parsed verdict spread with its {kind,cycle} so the UI can group/label without a
+ * second lookup. Always returns arrays (never null) so callers render unconditionally.
+ * @param {string} pipelineId
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>}}
+ */
+export function readPipelineExtras(pipelineId) {
+  const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
+  const qWrap = c ? j(c.questions, null) : null;
+  const aWrap = c ? j(c.answers, null) : null;
+  const clarify = {
+    questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
+    answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+  };
+  const reviews = getDb().prepare(
+    'SELECT kind, cycle, verdict FROM reviews WHERE pipeline_id = ? ORDER BY kind, cycle'
+  ).all(pipelineId).map((r) => {
+    const v = j(r.verdict, {}) || {};
+    return {
+      kind: r.kind,
+      cycle: r.cycle,
+      issues: Array.isArray(v.issues) ? v.issues : [],
+      summary: typeof v.summary === 'string' ? v.summary : '',
+    };
+  });
+  return { clarify, reviews };
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 
@@ -1110,7 +1144,7 @@ export async function readPipeline(projectDir, id) {
 export async function readPipelineByKey(key, id) {
   const row = lookupPipelineRow(key, id);
   if (!row) return null;
-  return { state: rowToState(row), auditMarkdown: buildAuditMarkdown(row) };
+  return { state: rowToState(row), auditMarkdown: buildAuditMarkdown(row), ...readPipelineExtras(row.id) };
 }
 
 /**
