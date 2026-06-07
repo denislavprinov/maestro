@@ -832,6 +832,13 @@ function subsByNode(subAgents) {
   return out;
 }
 
+// {nodeId: Array<sub>} — the .subs arrays from subsByNode, the shape the pill/tree
+// helpers (paintSubsBar/subsPillText/renderSubsTree) consume. Bridges the C-layer
+// Map grouping to the D-layer object-of-arrays consumers.
+function subsByNodeArrays(subAgents) {
+  return Object.fromEntries([...subsByNode(subAgents)].map(([k, g]) => [k, g.subs]));
+}
+
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
@@ -1562,6 +1569,7 @@ if (typeof window !== 'undefined') {
     durByNode,
     costByNode,
     subsByNode,
+    subsByNodeArrays,
     subAgentsOf,
     composerPaintWires,
     buildRunGraph,
@@ -4342,7 +4350,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, Object.fromEntries([...subsByNode(data.state.subAgents)].map(([k, g]) => [k, g.subs])), nodeLabelLookup(data.state.stepper));
+    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeArrays(data.state.subAgents), nodeLabelLookup(data.state.stepper));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4679,15 +4687,22 @@ function paintSubsBar(barEl, byNode, labelOf) {
   const btn = barEl.querySelector('.btn-subs');
   const panel = barEl.querySelector('.subs-panel');
   const count = barEl.querySelector('.sb-count');
+  const labelFn = typeof labelOf === 'function' ? labelOf : (id) => id;
+  // Per-CARD state on the element (NOT a module-level function static) — the app
+  // paints multiple concurrent run cards; a function static would bleed the most
+  // recently painted card's grouping/labels into another card's open panel.
+  barEl._subsGroups = groups;
+  barEl._subsLabelOf = labelFn;
+
   const { text, active } = subsPillText(groups);
   if (count) {
     count.textContent = text;
     count.classList.toggle('grey', !active);
   }
 
-  // Re-render the open panel in place so live spawns/finishes reflect immediately.
-  if (panel && btn && btn.getAttribute('aria-expanded') === 'true' && typeof renderSubsTree === 'function') {
-    renderSubsTree(panel, groups, paintSubsBar._labelOf);
+  // Re-render an already-open panel in place so live spawns/finishes reflect immediately.
+  if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
+    renderSubsTree(panel, groups, labelFn);
   }
 
   if (btn && btn.dataset.bound !== '1') {
@@ -4697,12 +4712,10 @@ function paintSubsBar(barEl, byNode, labelOf) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open && typeof renderSubsTree === 'function') renderSubsTree(panel, paintSubsBar._last || {}, paintSubsBar._labelOf);
+        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf);
       }
     });
   }
-  paintSubsBar._last = groups; // last grouping, for the open-on-click render
-  paintSubsBar._labelOf = typeof labelOf === 'function' ? labelOf : (id) => id;
 }
 
 // Group rollup for a step's sub-agents: anyStop (stop|error) -> 'stop',
@@ -4854,12 +4867,12 @@ function paintRunCard(r) {
 
   paintStepper(r);
   // subsByNode returns Map<nodeId,{subs,spawned,active}>; paintSubsBar (and the
-  // pill/tree helpers) consume a plain {nodeId: Array<{status}>} grouping, so
-  // project the Map's .subs arrays into that shape. (Plan wrote subsByNode(...)
-  // directly, but that Map yields Object.values()===[] -> the bar would never
-  // show; see report.)
+  // pill/tree helpers) consume a plain {nodeId: Array<{status}>} grouping, which
+  // subsByNodeArrays projects from the Map's .subs arrays. (Plan wrote
+  // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
+  // would never show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, Object.fromEntries([...subsByNode(r.subAgents)].map(([k, g]) => [k, g.subs])), nodeLabelLookup(r.stepper));
+  if (subsBar) paintSubsBar(subsBar, subsByNodeArrays(r.subAgents), nodeLabelLookup(r.stepper));
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');

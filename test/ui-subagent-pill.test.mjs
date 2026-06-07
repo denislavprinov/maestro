@@ -92,3 +92,63 @@ test('paintSubsBar hides the whole bar when there are no sub-agents', async () =
   window.__np.paintSubsBar(bar, {});
   assert.ok(bar.hidden, 'empty -> the pill row is hidden entirely');
 });
+
+// REGRESSION (concurrency): the app renders MANY run cards at once, each
+// repainting independently on its own WS events. Per-card grouping/label state
+// must live on the element — a module-level function static bleeds the most
+// recently painted card's data into another card's open panel. Two independent
+// bars, painted A then B with DIFFERENT groupings + DIFFERENT label resolvers:
+// card A's panel must always show A's labels + A's rows, never B's.
+test('paintSubsBar: per-card state does not bleed across concurrent run cards', async () => {
+  const { window } = await bootLive();
+  const tpl = window.document.querySelector('#run-card-tpl');
+  const mkBar = () => tpl.content.firstElementChild.cloneNode(true).querySelector('.subs-bar');
+
+  const barA = mkBar();
+  const barB = mkBar();
+
+  // Card A: node "sA" labelled "Alpha", one running sub "alpha-task".
+  const groupsA = { sA: [{ id: 'a1', label: 'alpha-task', status: 'running' }] };
+  const labelA = (id) => ({ sA: 'Alpha' }[id] || id);
+  // Card B: node "sB" labelled "Beta", two finished subs.
+  const groupsB = { sB: [{ id: 'b1', label: 'beta-task', status: 'finished' }, { id: 'b2', label: 'beta-task-2', status: 'finished' }] };
+  const labelB = (id) => ({ sB: 'Beta' }[id] || id);
+
+  // Paint A first, then B (B is "most recently painted" — what a function static captures).
+  window.__np.paintSubsBar(barA, groupsA, labelA);
+  window.__np.paintSubsBar(barB, groupsB, labelB);
+
+  // ── Path 1: open A's panel while it is already collapsed; click renders A's tree.
+  const btnA = barA.querySelector('.btn-subs');
+  const panelA = barA.querySelector('.subs-panel');
+  btnA.dispatchEvent(new window.Event('click', { bubbles: true }));
+  assert.equal(btnA.getAttribute('aria-expanded'), 'true', 'A opens on click');
+  assert.ok(!panelA.hidden, 'A panel visible');
+
+  // A's panel must show A's node label + A's sub rows — NOT B's.
+  const headA = panelA.querySelector('.subs-step-head b');
+  assert.equal(headA && headA.textContent, 'Alpha', 'A panel header shows A\'s node label, not B\'s ("Beta")');
+  const rowNamesA = [...panelA.querySelectorAll('.subs-tree li .ag-name')].map((e) => e.textContent);
+  assert.deepEqual(rowNamesA, ['alpha-task'], 'A panel shows A\'s sub-agent rows, not B\'s');
+  assert.equal(panelA.querySelectorAll('.subs-step').length, 1, 'A panel shows A\'s single node group');
+
+  // ── Path 2: A's panel is OPEN; B repaints last; A repaints — the in-place
+  // re-render of A's open panel must still use A's grouping/labels, not B's.
+  window.__np.paintSubsBar(barB, groupsB, labelB);
+  window.__np.paintSubsBar(barA, groupsA, labelA);
+  const headA2 = panelA.querySelector('.subs-step-head b');
+  assert.equal(headA2 && headA2.textContent, 'Alpha', 'open A panel keeps A\'s label after B then A repaint');
+  const rowNamesA2 = [...panelA.querySelectorAll('.subs-tree li .ag-name')].map((e) => e.textContent);
+  assert.deepEqual(rowNamesA2, ['alpha-task'], 'open A panel keeps A\'s rows after B then A repaint');
+
+  // ── Path 3: open B as well — B shows B's data; A unchanged.
+  const btnB = barB.querySelector('.btn-subs');
+  const panelB = barB.querySelector('.subs-panel');
+  btnB.dispatchEvent(new window.Event('click', { bubbles: true }));
+  const headB = panelB.querySelector('.subs-step-head b');
+  assert.equal(headB && headB.textContent, 'Beta', 'B panel shows B\'s label');
+  const rowNamesB = [...panelB.querySelectorAll('.subs-tree li .ag-name')].map((e) => e.textContent);
+  assert.deepEqual(rowNamesB, ['beta-task', 'beta-task-2'], 'B panel shows B\'s rows');
+  // A still correct after B opened.
+  assert.equal(panelA.querySelector('.subs-step-head b').textContent, 'Alpha', 'A panel still A\'s label after B opened');
+});
