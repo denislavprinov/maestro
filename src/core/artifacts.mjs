@@ -1080,8 +1080,8 @@ function rowToState(row) {
  * Rebuild the pipeline.md-format audit document from the row + pipeline_events,
  * reproducing createPipeline's header (artifacts createPipeline) + appendAudit's
  * "- `ts` text" timeline lines (A7), so a History detail view renders identically
- * to today. The header's `## Prompt` body uses the DB prompt column (the same text
- * fenceIfNeeded rendered); the `project` line uses the store_meta path.
+ * to today. The header's `## Prompt` body uses the DB prompt column; the `project`
+ * line uses the store_meta path.
  * @param {object} row a pipelines row
  * @returns {string}
  */

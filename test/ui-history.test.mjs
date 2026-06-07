@@ -520,7 +520,7 @@ test('history detail omits clarify/reviews sections when both are empty', async 
   assert.equal(detail.querySelector('.hist-reviews'), null, 'no reviews section when empty');
 });
 
-test('history detail clarify/review section is rebuilt (not duplicated) on re-expand', async () => {
+test('history detail clarify/review section is not duplicated on a cached re-expand', async () => {
   const payload = {
     state: { phase: 'done', status: 'done', steps: [] }, auditMarkdown: '',
     clarify: { questions: [{ id: 'q1', question: 'Q?', options: ['', '', ''], allowFreeText: true }], answers: [] },

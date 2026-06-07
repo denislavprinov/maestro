@@ -980,8 +980,9 @@ class Orchestrator extends EventEmitter {
       this._publishNodeIo(node, result, ctx.outputs, bus); // deterministic, node order
       // M1: the reviews table is the AUTHORITATIVE per-cycle verdict store. Persist
       // synchronously (awaited) before the step returns so the History UI and any
-      // post-run reader see every cycle's verdict; a write failure must surface (no
-      // best-effort swallow) now that the DB is the record of truth. The live
+      // post-run reader see every cycle's verdict. writeReview keeps an inner catch, so
+      // it stays best-effort under WAL contention (a transient lock must not abort a long
+      // pipeline) — the await is for ordering/visibility, NOT error propagation. The live
       // refine/review->fix loop still gates on result.review in-memory (_loopFired),
       // which the runner parsed from the agent's scratch json — the FS json stays a
       // transient subprocess artifact swept with the run dir.
