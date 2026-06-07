@@ -231,6 +231,12 @@ function handleServerMessage(msg) {
 
   // Tagged per-run event. Ignore anything without a runId.
   if (!msg.runId) return;
+  // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
+  // A sub-agent with no parent run is meaningless, and auto-creating a card here is
+  // exactly what produced the phantom "(untitled)" pipeline. Other event types may
+  // legitimately create a card for a run this tab didn't start (CLI / another tab),
+  // and `state` snapshots reconcile r.subAgents anyway, so nothing is lost.
+  if (msg.type === 'subagent' && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
