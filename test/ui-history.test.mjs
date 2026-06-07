@@ -448,3 +448,99 @@ test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice ->
   assert.equal(node.querySelector('.dur').textContent, '3s');
   assert.equal(node.querySelector('.cost').textContent, '$0.03');
 });
+
+test('expanded history card renders clarify Q&A and per-cycle review issues', async () => {
+  const detailPayload = {
+    state: { phase: 'done', status: 'done', cycle: 2, steps: [] },
+    auditMarkdown: '',
+    clarify: {
+      questions: [{ id: 'q1', question: 'Postgres or SQLite?', options: ['pg', 'sqlite', ''], allowFreeText: true }],
+      answers: [{ id: 'q1', question: 'Postgres or SQLite?', choice: 'sqlite' }],
+    },
+    reviews: [
+      { kind: 'impl', cycle: 1, issues: [{ severity: 'major', title: 'Missing null-check', detail: 'guard input', location: 'src/x.mjs:10' }], summary: 'one issue' },
+      { kind: 'impl', cycle: 2, issues: [], summary: 'resolved' },
+    ],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) {
+        return runsListResponse([{ id: 'p-ex', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
+      }
+      if (url.includes('/api/runs/p-ex')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => detailPayload });
+      }
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
+
+  const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
+
+  // Clarify: question text + chosen answer both present (read-only, no inputs).
+  const clarify = detail.querySelector('.hist-clarify');
+  assert.ok(clarify, 'clarify section rendered');
+  assert.match(clarify.textContent, /Postgres or SQLite\?/);
+  assert.match(clarify.textContent, /sqlite/);
+  assert.equal(clarify.querySelectorAll('input,button').length, 0, 'clarify is read-only in History');
+
+  // Reviews: two cycle blocks; the major issue surfaces with severity + location.
+  const reviews = detail.querySelector('.hist-reviews');
+  assert.ok(reviews, 'reviews section rendered');
+  const cycleTags = [...reviews.querySelectorAll('.hist-cycle-tag')].map((e) => e.textContent);
+  assert.deepEqual(cycleTags, ['impl · cycle 1', 'impl · cycle 2']);
+  const issue = reviews.querySelector('.issue.sev-major');
+  assert.ok(issue, 'major issue rendered with severity class');
+  assert.match(issue.querySelector('.issue-title').textContent, /Missing null-check/);
+  assert.match(issue.querySelector('.issue-loc').textContent, /src\/x\.mjs:10/);
+});
+
+test('history detail omits clarify/reviews sections when both are empty', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) return runsListResponse([{ id: 'p-bare', title: 'Bare', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
+      if (url.includes('/api/runs/p-bare')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          state: { phase: 'done', status: 'done', steps: [] }, auditMarkdown: '',
+          clarify: { questions: [], answers: [] }, reviews: [],
+        }) });
+      }
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
+  assert.equal(detail.querySelector('.hist-clarify'), null, 'no clarify section when empty');
+  assert.equal(detail.querySelector('.hist-reviews'), null, 'no reviews section when empty');
+});
+
+test('history detail clarify/review section is rebuilt (not duplicated) on re-expand', async () => {
+  const payload = {
+    state: { phase: 'done', status: 'done', steps: [] }, auditMarkdown: '',
+    clarify: { questions: [{ id: 'q1', question: 'Q?', options: ['', '', ''], allowFreeText: true }], answers: [] },
+    reviews: [],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) return runsListResponse([{ id: 'p-rx', title: 'R', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
+      if (url.includes('/api/runs/p-rx')) return Promise.resolve({ ok: true, status: 200, json: async () => payload });
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const head = ctx.window.document.querySelector('#history .hist-head');
+  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // expand (fetch)
+  await new Promise((r) => setTimeout(r, 0));
+  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // collapse
+  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // re-expand (cached, no refetch)
+  await new Promise((r) => setTimeout(r, 0));
+  const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
+  assert.equal(detail.querySelectorAll('.hist-clarify').length, 1, 'exactly one clarify section after re-expand');
+});
