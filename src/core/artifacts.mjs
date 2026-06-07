@@ -4,8 +4,9 @@
 // All paths returned are absolute and rooted in the EXTERNAL store at
 // <maestroHome>/store/<projectKey>/ (see store.mjs) — NOT inside the project
 // working tree. This keeps history machine-wide and out of git. Pipelines are
-// self-describing: each gets a directory containing the prompt, any extra files,
-// a human-readable audit log (pipeline.md), and machine state (state.json).
+// self-describing: each run dir holds the prompt + any extra files; the audit
+// timeline and machine state live in the DB (pipeline_events + the pipelines row),
+// which is the authoritative store (no more pipeline.md / state.json on disk).
 
 import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
@@ -109,12 +110,11 @@ export async function listArtifacts(pipelineId) {
 }
 
 /**
- * Upsert the clarify row for a pipeline. Pass { questions } and/or { answers } (each
- * the normalized payload protocol.normalizeClarify / writeClarifyAnswers produce). A
+ * Upsert the clarify row for a pipeline. Pass { questions } and/or { answers }. A
  * partial call updates only the provided column, preserving the other. JSON-encoded
- * TEXT columns. The agent still writes clarify.json (the live planner loop parses it
- * via protocol.readClarify); this is the DURABLE mirror history reconstruction reads.
- * Best-effort: a logging failure never breaks a run. The pipelines row must exist (FK).
+ * TEXT columns. The agent writes clarify.json as transient run-dir scratch;
+ * runPlannerClarify ingests it here and reads it back, so this row is the
+ * AUTHORITATIVE clarify store (questions + answers). The pipelines row must exist (FK).
  * @param {string} pipelineId
  * @param {{questions?:object, answers?:object}} payload
  */
@@ -133,12 +133,13 @@ export async function writeClarify(pipelineId, { questions, answers } = {}) {
           .run(s(answers), pipelineId);
       }
     });
-  } catch { /* best-effort mirror; never break a run */ }
+  } catch { /* defensive: keep the row write resilient under WAL contention; authoritative callers await + read back (M1), so a swallowed write is caught by tests, not a crashed run. */ }
 }
 
 /**
  * Read the clarify row as { questions, answers } (each parsed JSON or null). When no
- * row exists both are null. The history-side reader (the live loop reads the file).
+ * row exists both are null. The authoritative clarify reader (questions ingested by
+ * runPlannerClarify; answers by the orchestrator).
  * @param {string} pipelineId
  * @returns {{questions:object|null, answers:object|null}}
  */
@@ -165,10 +166,11 @@ export function reviewKindOf(base) { return REVIEW_KIND[base] || base; }
 /**
  * Upsert a per-cycle review verdict. `kind` ∈ refine|impl|plan|ws|webui (free text,
  * A2); `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary }
- * object protocol.readReview returns. Replaces the per-cycle *-review-cycleN.json
- * verdict as the durable history record (the agent still writes that json file, which
- * protocol.readReview parses for the live review->fix loop). Re-running a cycle
- * REPLACES its verdict (ON CONFLICT). Best-effort; the pipelines row must exist (FK).
+ * object protocol.readReview returns. The AUTHORITATIVE per-cycle verdict store. The
+ * agent writes *-review-cycleN.json as transient scratch; the runner parses it once
+ * and returns the verdict, which the orchestrator persists here (awaited). The live
+ * loop gates on that returned verdict in-memory. Re-running a cycle REPLACES its
+ * verdict (ON CONFLICT). The pipelines row must exist (FK).
  * @param {string} pipelineId
  * @param {string} kind
  * @param {number} cycle
@@ -183,7 +185,7 @@ export async function writeReview(pipelineId, kind, cycle, verdict) {
         ON CONFLICT(pipeline_id, kind, cycle) DO UPDATE SET verdict = excluded.verdict
       `).run(pipelineId, kind, cycle, s(verdict));
     });
-  } catch { /* best-effort mirror; never break a run */ }
+  } catch { /* defensive: keep the row write resilient under WAL contention; authoritative callers await + read back (M1), so a swallowed write is caught by tests, not a crashed run. */ }
 }
 
 /**
