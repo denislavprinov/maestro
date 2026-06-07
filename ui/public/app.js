@@ -1572,6 +1572,8 @@ if (typeof window !== 'undefined') {
     histNodeCycle,
     renderHistClarifyReviews,
     subFanHtml,
+    subsPillText,
+    paintSubsBar,
   });
 }
 
@@ -4335,6 +4337,9 @@ async function loadHistDetail(projectDir, id, detail, record) {
     const host = detail.querySelector('.run-flow');
     if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
+    // Same Map->object projection as the live call-site (see paintRunCard).
+    const histSubsBar = detail.querySelector('.subs-bar');
+    if (histSubsBar) paintSubsBar(histSubsBar, Object.fromEntries([...subsByNode(data.state.subAgents)].map(([k, g]) => [k, g.subs])));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4641,6 +4646,61 @@ function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
   return 'pending';
 }
 
+// Pill text + colour from a {nodeId: Array<{status}>} grouping. "active" =
+// subs still running; a finished/historical run has none -> grey "N sub-agents".
+function subsPillText(byNode) {
+  const groups = byNode && typeof byNode === 'object' ? Object.values(byNode) : [];
+  let spawned = 0;
+  let active = 0;
+  for (const list of groups) {
+    if (!Array.isArray(list)) continue;
+    spawned += list.length;
+    for (const s of list) if (s && s.status === 'running') active += 1;
+  }
+  return active > 0
+    ? { text: `${spawned} spawned · ${active} active`, active: true }
+    : { text: `${spawned} sub-agents`, active: false };
+}
+
+// Paint the "Sub-agents" pill + (lazily) its tree panel from a by-node grouping.
+// Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
+// [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
+// handler is bound once (dataset guard), the count/text repaint every call.
+function paintSubsBar(barEl, byNode) {
+  if (!barEl) return;
+  const groups = byNode && typeof byNode === 'object' ? byNode : {};
+  const total = Object.values(groups).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
+  if (total === 0) { barEl.hidden = true; return; }
+  barEl.hidden = false;
+
+  const btn = barEl.querySelector('.btn-subs');
+  const panel = barEl.querySelector('.subs-panel');
+  const count = barEl.querySelector('.sb-count');
+  const { text, active } = subsPillText(groups);
+  if (count) {
+    count.textContent = text;
+    count.classList.toggle('grey', !active);
+  }
+
+  // Re-render the open panel in place so live spawns/finishes reflect immediately.
+  if (panel && btn && btn.getAttribute('aria-expanded') === 'true' && typeof renderSubsTree === 'function') {
+    renderSubsTree(panel, groups);
+  }
+
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (panel) {
+        panel.hidden = open;
+        if (!open && typeof renderSubsTree === 'function') renderSubsTree(panel, paintSubsBar._last || {});
+      }
+    });
+  }
+  paintSubsBar._last = groups; // last grouping, for the open-on-click render
+}
+
 function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
@@ -4712,6 +4772,13 @@ function paintRunCard(r) {
   }
 
   paintStepper(r);
+  // subsByNode returns Map<nodeId,{subs,spawned,active}>; paintSubsBar (and the
+  // pill/tree helpers) consume a plain {nodeId: Array<{status}>} grouping, so
+  // project the Map's .subs arrays into that shape. (Plan wrote subsByNode(...)
+  // directly, but that Map yields Object.values()===[] -> the bar would never
+  // show; see report.)
+  const subsBar = r.el.querySelector('.subs-bar');
+  if (subsBar) paintSubsBar(subsBar, Object.fromEntries([...subsByNode(r.subAgents)].map(([k, g]) => [k, g.subs])));
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
