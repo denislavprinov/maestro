@@ -1177,6 +1177,7 @@ class Orchestrator extends EventEmitter {
     return {
       projectDir: this.workDir,
       pipelineDir: this.pipeline.dir,
+      pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       agentPrompts: this.agentPrompts,
@@ -1237,6 +1238,7 @@ class Orchestrator extends EventEmitter {
     return {
       projectDir: this.workDir,
       pipelineDir: this.pipeline.dir,
+      pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       agentPrompts: this.agentPrompts,
