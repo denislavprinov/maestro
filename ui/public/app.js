@@ -4248,7 +4248,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     const host = detail.querySelector('.run-flow');
     if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
-    renderHistClarifyReviews(detail, data.clarify, data.reviews);
+    renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
       const totalEl = card && card.querySelector('.hist-total');
@@ -4274,29 +4274,21 @@ async function loadHistDetail(projectDir, id, detail, record) {
   }
 }
 
-// Render the saved clarify Q&A + per-cycle review verdicts into a history card's
-// .hist-detail (READ-ONLY — no option buttons, no free-text, no submit; History is
-// a record, not an interaction). Sections insert BEFORE .hist-actions so Delete
-// stays last. Idempotent: any prior sections are removed first (a cached re-expand
-// must never stack duplicates). Shapes come straight from readPipelineExtras:
-// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]};
-// reviews=[{kind,cycle,issues:[{severity,title,detail,location}],summary}].
-function renderHistClarifyReviews(detail, clarify, reviews) {
+// Render the saved clarify Q&A into a history card's .hist-detail (READ-ONLY — no
+// option buttons, no free-text, no submit; History is a record, not an interaction).
+// The section inserts BEFORE .hist-actions so Delete stays last. Idempotent: any prior
+// section is removed first (a cached re-expand must never stack duplicates). Shape comes
+// straight from readPipelineExtras:
+// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]}.
+function renderHistClarifyReviews(detail, clarify) {
   if (!detail) return;
-  detail.querySelectorAll('.hist-clarify, .hist-reviews').forEach((n) => n.remove());
-  const anchor = detail.querySelector('.hist-actions'); // insert sections before Delete
+  detail.querySelectorAll('.hist-clarify').forEach((n) => n.remove());
+  const anchor = detail.querySelector('.hist-actions'); // insert section before Delete
 
   const questions = Array.isArray(clarify && clarify.questions) ? clarify.questions : [];
   const answers = Array.isArray(clarify && clarify.answers) ? clarify.answers : [];
   if (questions.length || answers.length) {
     detail.insertBefore(buildHistClarify(questions, answers), anchor);
-  }
-
-  const list = Array.isArray(reviews) ? reviews.filter((r) => r && (
-    (Array.isArray(r.issues) && r.issues.length) || (r.summary && r.summary.trim())
-  )) : [];
-  if (list.length) {
-    detail.insertBefore(buildHistReviews(list), anchor);
   }
 }
 
@@ -4328,75 +4320,6 @@ function buildHistClarify(questions, answers) {
     const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
     aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
     block.appendChild(aLine);
-    sec.appendChild(block);
-  });
-  return sec;
-}
-
-// Build the read-only reviews section: one labeled block per (kind, cycle) verdict,
-// reusing the live-gate .issues / .issue markup so severity coloring matches.
-function buildHistReviews(reviews) {
-  const sec = document.createElement('section');
-  sec.className = 'hist-reviews hist-section';
-  const title = document.createElement('div');
-  title.className = 'hist-section-title';
-  title.textContent = 'Reviews';
-  sec.appendChild(title);
-
-  reviews.forEach((rev) => {
-    const block = document.createElement('div');
-    block.className = 'hist-review';
-    const tag = document.createElement('div');
-    tag.className = 'hist-cycle-tag';
-    tag.textContent = `${rev.kind} · cycle ${rev.cycle}`;
-    block.appendChild(tag);
-
-    if (rev.summary && rev.summary.trim()) {
-      const sum = document.createElement('div');
-      sum.className = 'hist-review-summary';
-      sum.textContent = rev.summary.trim();
-      block.appendChild(sum);
-    }
-
-    const issues = Array.isArray(rev.issues) ? rev.issues : [];
-    if (issues.length) {
-      const list = document.createElement('ul');
-      list.className = 'issues';
-      issues.forEach((iss) => {
-        const sev = String((iss && iss.severity) || 'suggestion').toLowerCase();
-        const li = document.createElement('li');
-        li.className = `issue sev-${sev}`;
-        const ihead = document.createElement('div');
-        ihead.className = 'issue-head';
-        const sevEl = document.createElement('span');
-        sevEl.className = 'issue-sev';
-        sevEl.textContent = sev;
-        const titleEl = document.createElement('span');
-        titleEl.className = 'issue-title';
-        titleEl.textContent = (iss && iss.title) || '(untitled issue)';
-        ihead.append(sevEl, titleEl);
-        li.appendChild(ihead);
-        if (iss && iss.detail) {
-          const det = document.createElement('div');
-          det.className = 'issue-detail';
-          det.textContent = iss.detail;
-          li.appendChild(det);
-        }
-        if (iss && iss.location) {
-          const loc = document.createElement('div');
-          loc.className = 'issue-loc';
-          loc.textContent = iss.location;
-          li.appendChild(loc);
-        }
-        list.appendChild(li);
-      });
-      block.appendChild(list);
-    } else {
-      const clean = document.createElement('div');
-      clean.className = 'gate-intro';
-      clean.textContent = 'No issues raised.';
-      block.appendChild(clean);
-    }
     sec.appendChild(block);
   });
   return sec;
