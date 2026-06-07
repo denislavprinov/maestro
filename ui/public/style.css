@@ -796,6 +796,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 @keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
 @keyframes nodeGlowAmber{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
 
+/* Sub-agent square strip on a run-graph node. The node wraps so the strip
+   drops to its own full-width row under the meta/cost block. PULSE LIVES HERE
+   AND NOWHERE ELSE: sqPulse attaches only to .run-flow .node .fan .sq.on, so
+   the tree/legend squares (.led/.sq) never animate and history (terminal
+   statuses -> no .on) never pulses. */
+.run-flow .node.run-node{flex-wrap:wrap;}
+.run-flow .node .fan{flex:0 0 100%;display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line);}
+.run-flow .node .fan .sq{width:7px;height:7px;border-radius:2px;background:var(--ink-3);opacity:.5;}
+.run-flow .node .fan .sq.on{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
+.run-flow .node .fan .fl{font-size:9.5px;font-weight:700;color:var(--ink-3);margin-left:5px;letter-spacing:.02em;}
+.run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
+@keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
+
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */
 .run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
 
@@ -808,4 +821,5 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent),var(--shadow-soft);}
   .run-flow .node.is-paused{box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent),var(--shadow-soft);}
   .run-flow .wires path.wire-live{animation:none;}
+  .run-flow .node .fan .sq.on{animation:none;}
 }

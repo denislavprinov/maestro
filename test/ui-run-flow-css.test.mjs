@@ -134,3 +134,35 @@ test('prefers-reduced-motion disables node glow + marching-ants', () => {
   assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node\.is-active/);
   assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.wires path\.wire-live[\s\S]*animation:\s*none/);
 });
+
+test('.fan square strip: wrap row, 7px squares, blue .on pulses via sqPulse', () => {
+  assert.match(css, /\.run-flow \.node\.run-node\{[^}]*flex-wrap:\s*wrap/,
+    'run-node wraps so the fan drops to its own row');
+  const fan = ruleBody('.run-flow .node .fan');
+  assert.ok(fan, '.fan rule missing');
+  assert.match(fan, /flex:\s*0 0 100%/, 'fan takes a full row');
+  assert.match(fan, /border-top:\s*1px solid var\(--line\)/);
+  const sq = ruleBody('.run-flow .node .fan .sq');
+  assert.ok(sq, '.fan .sq rule missing');
+  assert.match(sq, /width:\s*7px/);
+  assert.match(sq, /background:\s*var\(--ink-3\)/, 'idle square is grey');
+  const on = ruleBody('.run-flow .node .fan .sq.on');
+  assert.ok(on, '.fan .sq.on rule missing');
+  assert.match(on, /background:\s*var\(--blue\)/);
+  assert.match(on, /animation:\s*sqPulse/, 'only the graph .fan .sq.on pulses');
+  assert.match(css, /@keyframes sqPulse\b/, 'sqPulse keyframes defined');
+});
+
+test('sqPulse is scoped to the graph fan ONLY (never .subs-tree / .led / .subs-legend)', () => {
+  // Every selector that attaches animation:sqPulse must be the graph fan square.
+  const animRules = [...css.matchAll(/([^{}]+)\{[^}]*animation:\s*sqPulse[^}]*\}/g)].map((m) => m[1].trim());
+  assert.ok(animRules.length >= 1, 'at least one sqPulse user');
+  for (const sel of animRules) {
+    assert.equal(sel, '.run-flow .node .fan .sq.on',
+      `sqPulse may only attach to .run-flow .node .fan .sq.on, found: ${sel}`);
+  }
+});
+
+test('reduced-motion disables the fan square pulse', () => {
+  assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node \.fan \.sq\.on[\s\S]*animation:\s*none/);
+});
