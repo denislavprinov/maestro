@@ -246,7 +246,10 @@ test('getDb() calls maybeMigrateFromFs(db) once after migrate()', () => {
 test('getDb() first-launch is concurrency-safe across N processes (no lock/exists crash)', async () => {
   const dbUrl = new URL('../src/core/db.mjs', import.meta.url).href;
   const N = 12;
-  const startAt = Date.now() + 700;          // give every child time to spawn before release
+  // Wall-clock barrier: all children open the DB at ~startAt to maximize overlap. This
+  // can only WEAKEN the race (if a child spawns late it opens an already-migrated DB and
+  // passes trivially) — it can never cause a false FAILURE. 700ms is ample headroom.
+  const startAt = Date.now() + 700;
   const childScript = `
     const delay = Math.max(0, Number(process.env.__M2_START_AT__) - Date.now());
     import(${JSON.stringify(dbUrl)}).then(({ getDb }) => {

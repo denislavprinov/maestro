@@ -98,8 +98,14 @@ function _openConfiguredMigrated() {
   }
 }
 
-/** True when err is a transient SQLite lock/busy that retrying can clear. */
+/**
+ * True when err is a transient SQLite lock/busy that retrying can clear. Prefers the
+ * structured errcode (5 = SQLITE_BUSY, 6 = SQLITE_LOCKED) and falls back to the message
+ * so a lock is still caught on any node:sqlite build that doesn't populate errcode. A
+ * false positive only costs a bounded retry that still re-throws the original error.
+ */
 function _isBusyError(err) {
+  if (err && (err.errcode === 5 || err.errcode === 6)) return true;
   const msg = err && err.message ? err.message : String(err);
   return /locked|busy/i.test(msg);
 }
@@ -115,10 +121,12 @@ function _sleepMs(ms) {
  * and must be re-applied every open. Done via exec() in one batch.
  */
 function _configure(db) {
-  // busy_timeout MUST be set first so the busy-handler is armed BEFORE the first
-  // contended operation — notably the journal_mode=WAL header switch, which two
-  // first-launch processes may attempt at once. (Switching WAL before busy_timeout is
-  // armed gives the loser an immediate "database is locked" with no wait.)
+  // busy_timeout is set FIRST so the busy-handler is armed before the first contended
+  // operation. NOTE: this only REDUCES (does not eliminate) the journal_mode=WAL switch
+  // race — SQLite does not run the busy-handler for the WAL-mode switch, so a colliding
+  // first-launch process can still get "database is locked" here. The actual backstop is
+  // the open-retry loop in _openConfiguredMigrated(); do NOT remove it on the assumption
+  // that pragma ordering alone suffices.
   db.exec(`
     PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};
     PRAGMA journal_mode = WAL;
