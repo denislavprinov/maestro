@@ -150,3 +150,40 @@ test('a state frame with subAgents reconciles the live run model (end-to-end)', 
   assert.equal(r.subAgents.length, 1);
   assert.equal(r.subAgents[0].id, 'tool_1');
 });
+
+test('subAgentsOf returns only a given node\'s sub-agents', async () => {
+  const { window } = await boot();
+  const r = window.__np.makeRun({ runId: 'p1' });
+  r.subAgents = [
+    { id: 'a', nodeId: 's0_0', status: 'running' },
+    { id: 'b', nodeId: 's0_0', status: 'finished' },
+    { id: 'c', nodeId: 's1_0', status: 'running' },
+  ];
+  assert.deepEqual(window.__np.subAgentsOf(r, 's0_0').map((s) => s.id), ['a', 'b']);
+  assert.deepEqual(window.__np.subAgentsOf(r, 's1_0').map((s) => s.id), ['c']);
+  assert.deepEqual(window.__np.subAgentsOf(r, 'nope'), [], 'unknown node → empty');
+});
+
+test('subsByNode groups by nodeId with spawned + active counts', async () => {
+  const { window } = await boot();
+  const m = window.__np.subsByNode([
+    { id: 'a', nodeId: 's0_0', status: 'running' },
+    { id: 'b', nodeId: 's0_0', status: 'finished' },
+    { id: 'c', nodeId: 's0_0', status: 'running' },
+    { id: 'd', nodeId: 's1_0', status: 'finished' },
+  ]);
+  assert.ok(m instanceof Map);
+  assert.equal(m.get('s0_0').spawned, 3);
+  assert.equal(m.get('s0_0').active, 2, 'two running under s0_0');
+  assert.deepEqual(m.get('s0_0').subs.map((s) => s.id), ['a', 'b', 'c']);
+  assert.equal(m.get('s1_0').spawned, 1);
+  assert.equal(m.get('s1_0').active, 0);
+});
+
+test('subsByNode tolerates an empty/undefined list and skips records with no nodeId', async () => {
+  const { window } = await boot();
+  assert.equal(window.__np.subsByNode([]).size, 0);
+  assert.equal(window.__np.subsByNode(undefined).size, 0);
+  const m = window.__np.subsByNode([{ id: 'x', status: 'running' }]); // no nodeId
+  assert.equal(m.size, 0, 'a record with no nodeId is not grouped');
+});

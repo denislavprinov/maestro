@@ -785,6 +785,30 @@ function costByNode(steps) {
   return out;
 }
 
+// A single node's sub-agents (for its graph card), preserving insertion order.
+// Pure view-adapter consumed by the render layer; r.subAgents is maintained by
+// onSubagent (deltas) + onState (authoritative snapshot).
+function subAgentsOf(r, nodeId) {
+  const list = r && Array.isArray(r.subAgents) ? r.subAgents : [];
+  return list.filter((s) => s && s.nodeId === nodeId);
+}
+
+// Group sub-agents by nodeId for display (the DB keys by step_key, but the UI
+// groups by node — §7). Map<nodeId, {subs, spawned, active}>; active = running.
+// Records with no nodeId are skipped (cannot be placed on a card).
+function subsByNode(subAgents) {
+  const out = new Map();
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (!s || s.nodeId == null) continue;
+    let g = out.get(s.nodeId);
+    if (!g) { g = { subs: [], spawned: 0, active: 0 }; out.set(s.nodeId, g); }
+    g.subs.push(s);
+    g.spawned += 1;
+    if (s.status === 'running') g.active += 1;
+  }
+  return out;
+}
+
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
@@ -1514,6 +1538,8 @@ if (typeof window !== 'undefined') {
     getRun: (id) => runs.get(id),
     durByNode,
     costByNode,
+    subsByNode,
+    subAgentsOf,
     composerPaintWires,
     buildRunGraph,
     runNode,
