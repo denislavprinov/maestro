@@ -111,3 +111,21 @@ test('a finish for an already-terminal sub-agent does not flip it back or re-emi
   assert.equal(orch.state.subAgents.find((s) => s.id === 'toolu_A').status, 'finished', 'stays finished');
   assert.equal(evts.filter((m) => m.transition === 'finish').length, 1, 'finish emitted once');
 });
+
+test("both 'Task' and 'Agent' tool_use names are tracked (CLI v2.1.63 rename)", () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const ev = (id, name) => ({ type: 'assistant', raw: { type: 'assistant', message: { content: [
+    { type: 'tool_use', id, name, input: { description: `${name} job` } } ] } } });
+  orch._onAgentEvent('planner', ev('id_task', 'Task'),  { nodeId: 'n', stepIndex: 0, cycle: 1, stepKey: '0:n' });
+  orch._onAgentEvent('planner', ev('id_agent', 'Agent'), { nodeId: 'n', stepIndex: 0, cycle: 1, stepKey: '0:n' });
+  const ids = orch.state.subAgents.map((s) => s.id).sort();
+  assert.deepEqual(ids, ['id_agent', 'id_task'], 'both alias names spawn a record');
+});
+
+test('a non-sub-agent tool_use (Read) never becomes a sub-agent record', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  orch._onAgentEvent('planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/x' } } ] } } },
+    { nodeId: 'n', stepIndex: 0, cycle: 1, stepKey: '0:n' });
+  assert.equal(orch.state.subAgents.length, 0);
+});
