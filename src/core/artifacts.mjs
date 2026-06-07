@@ -1147,6 +1147,7 @@ function rowToState(row) {
              active_ms, running_since, cost_usd
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
+    subAgents: listSubAgents(row.id),
   };
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
