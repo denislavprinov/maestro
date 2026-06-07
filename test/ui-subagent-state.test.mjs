@@ -135,6 +135,14 @@ test('onState without a subAgents field leaves the delta-built array intact', as
   assert.equal(r.subAgents[0].id, 'tool_1');
 });
 
+test('onState with an empty subAgents array clears stale deltas (truthy [])', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  ctx.window.__np.onSubagent(r, { transition: 'spawn', id: 'stale', nodeId: 's0_0', status: 'running' });
+  ctx.window.__np.onState(r, { type: 'state', status: 'running', subAgents: [] });
+  assert.equal(r.subAgents.length, 0, 'empty snapshot is authoritative — stale delta cleared');
+});
+
 test('a state frame with subAgents reconciles the live run model (end-to-end)', async () => {
   const ctx = await boot();
   ctx.selectProject();
