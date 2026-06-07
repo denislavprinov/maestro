@@ -15,6 +15,7 @@
 
 import { runClaude } from './claude-runner.mjs';
 import { readClarify, readReview } from './protocol.mjs';
+import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderAttachmentsBlock } from './channels.mjs';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
@@ -367,7 +368,19 @@ export async function runPlannerClarify(ctx, opts = {}) {
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
 
+  // The agent wrote clarify.json into the run dir as transient scratch; parse it
+  // ONCE here, then make the DB the authoritative store. When ctx.pipelineId is
+  // present (every real dispatched run) we ingest the normalized questions into the
+  // clarify row and read them back from the row, so the planner loop consumes the DB
+  // — not the FS file. Absent a pipelineId (pure unit ctx) we return the FS-parsed
+  // value unchanged, so phases.mjs stays independently testable.
   const clarify = await readClarify(ctx.pipelineDir);
+  if (ctx.pipelineId) {
+    await writeClarify(ctx.pipelineId, { questions: { questions: clarify.questions } });
+    const row = readClarifyRow(ctx.pipelineId);
+    const questions = row.questions?.questions ?? clarify.questions;
+    return { questions };
+  }
   return { questions: clarify.questions };
 }
 

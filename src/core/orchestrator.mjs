@@ -828,9 +828,6 @@ class Orchestrator extends EventEmitter {
       return [];
     }
     this._artifact('clarify', join(this.pipeline.dir, 'clarify.json'));
-    // Phase 3.10: mirror the normalized questions into the durable clarify row (the
-    // agent still wrote clarify.json; this is the history record). Best-effort.
-    await writeClarify(this.pipeline.id, { questions: { questions } }).catch(() => {});
     const answer = await this._ask({ id: 'clarify-1', kind: 'clarify', questions });
     this._checkAbort();
     const answers = normalizeClarifyAnswer(answer, questions);

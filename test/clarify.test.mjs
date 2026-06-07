@@ -137,3 +137,26 @@ test('writeClarify upserts questions then answers into the clarify row', () => {
   assert.equal(row.questions.questions[0].question, 'Which DB?', 'questions preserved on the answers upsert');
   assert.equal(row.answers.answers[0].choice, 'a');
 });
+
+// ── M1.2 — runPlannerClarify ingests the agent's clarify into the DB row ─────────
+import { _resetForTests as _resetDb2 } from '../src/core/db.mjs';
+
+test('runPlannerClarify persists questions to the clarify row and returns them from the DB', async () => {
+  _resetDb2();
+  const dir = await makeTmpDir();
+  // A pipelines row must exist for the clarify FK (seedPipelineRow inserts it).
+  seedPipelineRow({ id: 'clrf0001', projectKey: 'proj-00000001', status: 'running' });
+  const ctx = { ...fakeCtx(dir), pipelineId: 'clrf0001' };
+  const r = await runPlannerClarify(ctx, { round: 1, priorAnswers: [] });
+  assert.ok(r.questions.length > 0, 'returns questions');
+  // Authoritative source: the DB row, written by the runner itself.
+  const row = readClarifyRow('clrf0001');
+  assert.ok(row.questions, 'clarify row populated by runPlannerClarify');
+  assert.equal(row.questions.questions[0].id, r.questions[0].id, 'returned questions match the DB row');
+});
+
+test('runPlannerClarify still works (FS fallback) when ctx has no pipelineId', async () => {
+  const ctx = fakeCtx(await makeTmpDir()); // no pipelineId
+  const r = await runPlannerClarify(ctx, { round: 1, priorAnswers: [] });
+  assert.ok(r.questions.length > 0, 'falls back to the FS-parsed clarify when no pipelineId');
+});
