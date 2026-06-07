@@ -4453,6 +4453,7 @@ function paintHistStepper(detail, st) {
     live: false,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
+    subsOf: (id) => subAgentsOf(st, id),
   });
 }
 
@@ -4672,6 +4673,7 @@ function paintStepper(r) {
     live: true,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
+    subsOf: (id) => subAgentsOf(r, id),
   });
 }
 
