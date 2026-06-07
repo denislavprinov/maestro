@@ -134,6 +134,7 @@ wss.on('connection', (ws, req) => {
   if (id && runs.has(id)) {
     const entry = runs.get(id);
     for (const ev of entry.events) send(ws, ev);
+    sendStateSnapshot(ws, entry);
   }
 
   ws.on('close', () => sockets.delete(ws));
@@ -151,6 +152,7 @@ wss.on('connection', (ws, req) => {
     if (subId && runs.has(subId)) {
       const entry = runs.get(subId);
       for (const ev of entry.events) send(ws, ev);
+      sendStateSnapshot(ws, entry);
     }
   });
 });
@@ -162,6 +164,22 @@ function send(ws, obj) {
     } catch {
       /* ignore individual socket failures */
     }
+  }
+}
+
+// After replaying an entry's buffered events, push a CURRENT state snapshot so a
+// late-joining socket always has the latest stepper + subAgents even if the run's
+// initial 'state' frame was evicted from the ring buffer (MAX_BUFFER = 5000). For a
+// RUN this re-seeds the stepper, and is idempotent with any replayed 'state' frame
+// (onState merges). SCAN entries DO expose getState() but have no `.state` property,
+// so the `orch.state &&` guard below skips them on purpose: a scan has no stepper to
+// seed, and its scanId/phase/... state is already delivered via scan-* events.
+// getState() returns a clone with an `id` key (not `runId`) and no `type` key, so the
+// explicit { runId, type } below are not clobbered by the spread.
+function sendStateSnapshot(ws, entry) {
+  const orch = entry && entry.orch;
+  if (orch && orch.state && typeof orch.getState === 'function') {
+    send(ws, { runId: entry.id, type: 'state', ...orch.getState() });
   }
 }
 
@@ -182,6 +200,7 @@ function broadcast(obj) {
 function summarizeRuns() {
   return [...runs.values()].map((r) => ({
     runId: r.id,
+    stepper: r.orch?.state?.stepper ?? null,
     pipelineId: r.pipelineId || null,
     projectDir: r.projectDir,
     title: r.title,
