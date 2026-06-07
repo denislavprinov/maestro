@@ -193,6 +193,11 @@ class Orchestrator extends EventEmitter {
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
       branch: null,     // { source, feature, worktreeDir, reusedExisting } after _setupWorktree
+      // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
+      // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
+      // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
+      // status ∈ 'running'|'finished'|'error'|'stopped'.
+      subAgents: [],
     };
   }
 
