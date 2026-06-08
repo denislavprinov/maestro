@@ -76,6 +76,7 @@ export const DEFAULT_WORKFLOW = Object.freeze({
   name: 'Default',
   version: 1,
   steps: [
+    [{ id: 's_clarify', key: 'clarify' }],
     [{ id: 's0_0', key: 'planner' }],
     [{ id: 's1_0', key: 'refiner' }],
     [{ id: 's2_0', key: 'implementer' }],
@@ -244,6 +245,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   // so the dispatcher can emit a real `'phase'` per node (every node gets its own
   // stepper cell via the snapshotted manifest; see buildStepperManifest).
   const UI_PHASE = {
+    clarify: 'clarify',
     planner: 'plan', refiner: 'refine', implementer: 'implement', reviewer: 'review',
     manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web', planReviewer: 'plan-review',
     workspaceReviewer: 'review', // shares the single-project review stepper bucket

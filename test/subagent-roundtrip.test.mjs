@@ -5,6 +5,11 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPipeline, readPipeline, upsertSubAgent } from '../src/core/artifacts.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+
+// Isolate the durable store: without this, createPipeline writes the pipelines row
+// + run dir to the REAL ~/.maestro and orphans it (CREATED "demo" history records).
+useTempHome(after, 'maestro-home-sub-persist-');
 
 const dirs = [];
 after(async () => { await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))); });

@@ -95,7 +95,7 @@ test('manifestFor falls back to the legacy default when state has no stepper', a
   assert.equal(m.steps[0].kind, 'preflight');
   assert.equal(m.steps.at(-1).kind, 'done');
   assert.deepEqual(m.steps.map((s) => s.nodes[0].label),
-    ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
+    ['Preflight', 'Clarify', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
 });
 
 test('Running card renders the run\'s graph (run-flow, not stages.compact) and tints by nodeId', async () => {

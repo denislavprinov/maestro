@@ -55,6 +55,11 @@ export function distinctAgents(steps) {
 // (glyphs copied from the standalone mockup's ICON map). The live registry from
 // GET /api/agents overrides this whenever present (see mergePalette).
 export const EMBEDDED_AGENTS = {
+  clarify: {
+    key: 'clarify', displayName: 'Clarify', description: 'surface open decisions before planning',
+    color: 'red', order: 0, connectsTo: ['planner'],
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6" stroke-linecap="round" fill="none"/><circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none"/>',
+  },
   planner: {
     key: 'planner', displayName: 'Plan', description: 'architecture & breakdown',
     color: 'violet', order: 1, connectsTo: ['refiner', 'implementer'],

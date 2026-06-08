@@ -31,7 +31,7 @@ test('ctx carries pipelineId to runners (clarify row written by the runner)', as
   assert.equal(res.status, 'done');
   const pipelineId = orch.getState().id;
   assert.ok(pipelineId, 'run produced a pipeline id');
-  // The clarify questions were ingested into the DB row by runPlannerClarify itself.
+  // The clarify questions were ingested into the DB row by runClarify itself.
   const row = readClarifyRow(pipelineId);
   assert.ok(row.questions, 'clarify row has questions (runner persisted them)');
   assert.ok(Array.isArray(row.questions.questions), 'questions payload shape');

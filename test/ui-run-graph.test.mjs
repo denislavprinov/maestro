@@ -146,7 +146,7 @@ test('buildRunGraph on the legacy default manifest renders the bookends + agents
   host.className = 'run-flow';
   window.__np.buildRunGraph(host, window.__np.manifestFor(undefined));
   const labels = [...host.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
-  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
+  assert.deepEqual(labels, ['Preflight', 'Clarify', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
 });
 
 test('paintRunGraph with no feedbacks does not throw and still tints', async () => {

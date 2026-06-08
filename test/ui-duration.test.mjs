@@ -93,9 +93,9 @@ test('expanding a card paints per-phase duration from saved steps (refine cycles
   assert.equal(byStep.preflight.querySelector('.dur').textContent, '1s', 'preflight has its own dur chip');
 });
 
-test('clarify active time folds into the Plan stage chip (parity with cost)', async () => {
-  // normalizePhase maps both clarify and plan -> 'plan' (app.js:251), so a
-  // clarify step's activeMs must show inside the Plan chip, not a separate one.
+test('clarify active time shows in its own Clarify stage chip (no longer folds into Plan)', async () => {
+  // normalizePhase now maps clarify -> 'clarify' (its own UI phase), so a clarify
+  // step's activeMs shows in a separate Clarify chip and no longer sums into Plan.
   const state = {
     phase: 'done', status: 'done', cycle: 0, totalActiveMs: 3000,
     steps: [
@@ -115,7 +115,9 @@ test('clarify active time folds into the Plan stage chip (parity with cost)', as
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="plan"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s in the Plan chip');
+  assert.equal(planStage.querySelector('.dur').textContent, '2s', 'plan(2000) -> 2s in the Plan chip (clarify no longer folded in)');
+  const clarifyStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="clarify"]');
+  assert.equal(clarifyStage.querySelector('.dur').textContent, '1s', 'clarify(1000) -> 1s in its own Clarify chip');
 });
 
 test('history ignores a dangling runningSince (saved data is treated as final)', async () => {

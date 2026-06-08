@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -367,6 +367,15 @@ CREATE INDEX idx_sub_agents_step     ON sub_agents (pipeline_id, step_key);
 `;
 
 /**
+ * Incremental v2 -> v3 migration. Adds sub_agents.ui_phase: the node's UI phase
+ * (plan|refine|implement|review), stamped at spawn. Lets the live/history views
+ * resolve a sub-agent to its graph node + dropdown label by uiPhase as a FALLBACK
+ * when the run's real (s0_0-keyed) stepper manifest has not arrived yet. Nullable;
+ * legacy rows derive their phase from node_id via the manifest at render time.
+ */
+const SCHEMA_V3 = `ALTER TABLE sub_agents ADD COLUMN ui_phase TEXT;`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -394,6 +403,7 @@ export function migrate(db) {
     if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); return; }
     if (current < 1) db.exec(SCHEMA_V1);
     if (current < 2) db.exec(SCHEMA_V2);
+    if (current < 3) db.exec(SCHEMA_V3);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

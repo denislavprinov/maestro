@@ -31,7 +31,7 @@ after(async () => {
 test('readWorkflow returns the built-in DEFAULT_WORKFLOW for "wf_default" (not a row)', async () => {
   const got = await readWorkflow('wf_default');
   assert.equal(got.id, 'wf_default');
-  assert.equal(got.steps.length, 4);
+  assert.equal(got.steps.length, 5);
   // It is NOT stored in the table.
   const row = getDb().prepare('SELECT 1 FROM workflows WHERE id = ?').get('wf_default');
   assert.equal(row, undefined, 'default workflow is never a DB row');

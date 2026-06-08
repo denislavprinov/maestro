@@ -94,6 +94,32 @@ test("wireRun: 'subagent' events are buffered/tagged and do NOT mutate status", 
   }
 });
 
+// ── regression: a payload carrying its OWN runId must NOT override the run UUID ──
+// orchestrator._subAgentTransition USED TO emit { runId: state.id, … } where state.id
+// is the pipeline SHORT id (e.g. 'ab12cd34'), not the run UUID. Before this fix the
+// server's `{ runId: id, ...event }` let the payload runId win, so the broadcast was
+// re-tagged with the short id and the client spawned a phantom "(untitled)" run keyed
+// by it. The server runId (the runs-Map key) must always win — matching wireScan. We
+// hand-build the payload (not via the orchestrator) so this guard survives Task 1.
+test("wireRun: a payload's own runId never overrides the authoritative run UUID", () => {
+  const entry = makeEntry({ id: 'uuid-REAL', status: 'running' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('subagent', {
+      runId: 'ab12cd34',          // pipeline short id (state.id) — the old bug source
+      transition: 'spawn', id: 'tool_1', label: 'research auth',
+      nodeId: 's0_0', status: 'running', ts: 123,
+    });
+    const buffered = entry.events.filter((e) => e.type === 'subagent');
+    assert.equal(buffered.length, 1, 'subagent event buffered');
+    assert.equal(buffered[0].runId, 'uuid-REAL',
+      'server runId (Map key) wins over the payload runId — no phantom run');
+  } finally {
+    runs.delete(entry.id);
+  }
+});
+
 // ── integration: /api/runs exposes id=pipelineId, runId=uuid so dedup works ──
 test('/api/runs: live entries expose the pipeline short id when known', async () => {
   const projectDir = await makeProjectDir();

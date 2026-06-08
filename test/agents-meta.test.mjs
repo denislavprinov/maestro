@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
-const RUNNER_TYPES = new Set(['producer', 'verifier']);
+const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
 
 async function listAgents() {
   const names = await readdir(AGENTS_DIR);
@@ -61,7 +61,7 @@ test('every meta has the required fields and a runnable runnerType', async () =>
     for (const field of ['key', 'displayName', 'description', 'color', 'icon', 'runnerType', 'order']) {
       assert.ok(meta[field] != null && meta[field] !== '', `${file}: missing "${field}"`);
     }
-    assert.ok(RUNNER_TYPES.has(meta.runnerType), `${file}: runnerType "${meta.runnerType}" must be producer|verifier`);
+    assert.ok(RUNNER_TYPES.has(meta.runnerType), `${file}: runnerType "${meta.runnerType}" must be producer|verifier|clarifier`);
     assert.equal(typeof meta.loopSource, 'boolean', `${file}: loopSource must be a boolean`);
     assert.equal(typeof meta.order, 'number', `${file}: order must be a number`);
   }

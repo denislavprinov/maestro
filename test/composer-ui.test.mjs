@@ -92,11 +92,11 @@ test('EMBEDDED_AGENTS covers the seven canonical keys with color + icon', () => 
 
 test('mergePalette() falls back to the embedded registry, ordered by .order', () => {
   const pal = mergePalette(null);
-  assert.equal(pal.length, 7);
+  assert.equal(pal.length, 8);
   assert.deepEqual(pal.map((a) => a.key), [
-    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
+    'clarify', 'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
-  assert.equal(pal[0].displayName, 'Plan');
+  assert.equal(pal[0].displayName, 'Clarify');
 });
 
 test('mergePalette() prefers the server agents array and sorts by order', () => {

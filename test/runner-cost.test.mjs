@@ -30,11 +30,11 @@ test('extractResultCost rejects a negative cost (treats it as no cost)', () => {
 
 test('mock runClaude emits a single zero-cost result event', async () => {
   const events = [];
-  // planner-clarify with no MOCK_OUT performs no file writes (mockPlannerClarify
+  // clarify with no MOCK_OUT performs no file writes (mockClarify
   // returns at the `if (!out)` guard before any writeFile / tool_use emit, and
   // emits no `type:'result'` event of its own), so this is a side-effect-free way
   // to exercise the single synthesized mock result emission.
-  await runClaude({ mock: true, prompt: 'MOCK_ROLE: planner-clarify', onEvent: (e) => events.push(e) });
+  await runClaude({ mock: true, prompt: 'MOCK_ROLE: clarify', onEvent: (e) => events.push(e) });
   const results = events.filter((e) => e.type === 'result');
   assert.equal(results.length, 1, 'exactly one result event in mock mode');
   assert.equal(results[0].costUsd, 0, 'mock cost is a truthful zero');

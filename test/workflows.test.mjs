@@ -45,16 +45,16 @@ test('DEFAULT_WORKFLOW is the Plan->Refine->Implement->Review topology', () => {
   assert.equal(DEFAULT_WORKFLOW.id, 'wf_default');
   assert.equal(DEFAULT_WORKFLOW.name, 'Default');
   assert.equal(DEFAULT_WORKFLOW.version, 1);
-  // 4 sequential steps, one node each.
-  assert.equal(DEFAULT_WORKFLOW.steps.length, 4);
-  assert.deepEqual(DEFAULT_WORKFLOW.steps.map((s) => s.length), [1, 1, 1, 1]);
+  // 5 sequential steps, one node each.
+  assert.equal(DEFAULT_WORKFLOW.steps.length, 5);
+  assert.deepEqual(DEFAULT_WORKFLOW.steps.map((s) => s.length), [1, 1, 1, 1, 1]);
   assert.deepEqual(
     DEFAULT_WORKFLOW.steps.map((s) => s[0].key),
-    ['planner', 'refiner', 'implementer', 'reviewer'],
+    ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'],
   );
   // Node ids are unique instance ids.
   const ids = DEFAULT_WORKFLOW.steps.flat().map((n) => n.id);
-  assert.deepEqual(ids, ['s0_0', 's1_0', 's2_0', 's3_0']);
+  assert.deepEqual(ids, ['s_clarify', 's0_0', 's1_0', 's2_0', 's3_0']);
 });
 
 test('DEFAULT_WORKFLOW feedbacks reproduce the refine self-loop and review->implement loop', () => {
@@ -124,7 +124,7 @@ test('readWorkflow returns DEFAULT_WORKFLOW for "wf_default"', async () => {
   await freshHome();
   const got = await readWorkflow('wf_default');
   assert.equal(got.id, 'wf_default');
-  assert.equal(got.steps.length, 4);
+  assert.equal(got.steps.length, 5);
 });
 
 test('readWorkflow returns null for a missing id; listWorkflows is [] on an empty store', async () => {
@@ -183,23 +183,24 @@ test('writeWorkflow still works and ids round-trip (guard does not break valid i
 // Inline fake registry mirroring Phase 1's AgentMeta shape. agentFile values are
 // the REAL agent prompt files on disk so prompt + tools load is exercised.
 const REGISTRY = {
+  clarify: { key: 'clarify', runnerType: 'clarifier', agentFile: 'maestro-clarify.md', loopSource: false },
   planner: { key: 'planner', runnerType: 'producer', agentFile: 'maestro-planner.md', loopSource: false },
   refiner: { key: 'refiner', runnerType: 'producer', agentFile: 'maestro-plan-refiner.md', loopSource: false },
   implementer: { key: 'implementer', runnerType: 'producer', agentFile: 'maestro-implementer.md', loopSource: false },
   reviewer: { key: 'reviewer', runnerType: 'verifier', agentFile: 'maestro-code-reviewer.md', loopSource: true },
 };
 
-test('resolveWorkflow(default) yields a 4-step ExecutablePlan with prompts and default cycles', async () => {
+test('resolveWorkflow(default) yields a 5-step ExecutablePlan with prompts and default cycles', async () => {
   await freshHome();
   const p = await freshProject();
   const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
   assert.equal(plan.id, 'wf_default');
-  assert.equal(plan.steps.length, 4);
+  assert.equal(plan.steps.length, 5);
   const flat = plan.steps.flat();
-  assert.deepEqual(flat.map((n) => n.key), ['planner', 'refiner', 'implementer', 'reviewer']);
+  assert.deepEqual(flat.map((n) => n.key), ['clarify', 'planner', 'refiner', 'implementer', 'reviewer']);
   // Each node carries the resolved runner + a non-empty agentPrompt from its file.
   for (const n of flat) {
-    assert.ok(['producer', 'verifier'].includes(n.runnerType), `runnerType for ${n.key}`);
+    assert.ok(['producer', 'verifier', 'clarifier'].includes(n.runnerType), `runnerType for ${n.key}`);
     assert.ok(typeof n.agentPrompt === 'string' && n.agentPrompt.length > 0, `prompt for ${n.key}`);
     assert.ok('model' in n && 'effort' in n, 'model/effort fields present');
     assert.ok(Array.isArray(n.tools), 'tools array present');
@@ -235,7 +236,7 @@ test('resolveWorkflow({isWorkspace:true}) substitutes the review node reviewer -
   const reg = loadAgentRegistry(); // real registry has both reviewer + workspaceReviewer
   const plan = await resolveWorkflow(p, 'wf_default', reg, undefined, { isWorkspace: true });
   const keys = plan.steps.flat().map((n) => n.key);
-  assert.deepEqual(keys, ['planner', 'refiner', 'implementer', 'workspaceReviewer'],
+  assert.deepEqual(keys, ['clarify', 'planner', 'refiner', 'implementer', 'workspaceReviewer'],
     'the review node key becomes workspaceReviewer on a workspace run');
   const wsR = plan.steps.flat().find((n) => n.key === 'workspaceReviewer');
   assert.equal(wsR.runnerType, 'verifier', 'resolved from the workspaceReviewer meta');
@@ -254,7 +255,7 @@ test('resolveWorkflow substitution is GATED: no opts === {isWorkspace:false}, si
   const falseWs = await resolveWorkflow(p, 'wf_default', reg, undefined, { isWorkspace: false });
   assert.deepEqual(noOpts, falseWs, 'no opts is byte-identical to {isWorkspace:false}');
   // Both keep the single-project reviewer; neither substitutes.
-  assert.deepEqual(noOpts.steps.flat().map((n) => n.key), ['planner', 'refiner', 'implementer', 'reviewer']);
+  assert.deepEqual(noOpts.steps.flat().map((n) => n.key), ['clarify', 'planner', 'refiner', 'implementer', 'reviewer']);
   assert.ok(!noOpts.steps.flat().some((n) => n.key === 'workspaceReviewer'), 'no workspaceReviewer when not a workspace run');
 });
 
@@ -448,7 +449,7 @@ test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', asy
   const planner = flat.find((n) => n.key === 'planner');
   const implementer = flat.find((n) => n.key === 'implementer');
   assert.deepEqual(planner.produces, ['plan']);
-  assert.deepEqual(planner.consumes, ['userPrompt', 'review']);
+  assert.deepEqual(planner.consumes, ['userPrompt', 'clarify', 'review']);
   assert.deepEqual(implementer.produces, ['code']);
   assert.deepEqual(implementer.optionalConsumes, ['review']);
 });

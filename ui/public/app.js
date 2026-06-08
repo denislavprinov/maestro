@@ -36,7 +36,7 @@ const state = {
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
 // server is authoritative — see loadConfig, which also receives data.steps.)
-const STEP_ROLES = ['planner', 'refiner', 'implementer', 'reviewer'];
+const STEP_ROLES = ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'];
 
 import {
   topology,
@@ -231,6 +231,12 @@ function handleServerMessage(msg) {
 
   // Tagged per-run event. Ignore anything without a runId.
   if (!msg.runId) return;
+  // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
+  // A sub-agent with no parent run is meaningless, and auto-creating a card here is
+  // exactly what produced the phantom "(untitled)" pipeline. Other event types may
+  // legitimately create a card for a run this tab didn't start (CLI / another tab),
+  // and `state` snapshots reconcile r.subAgents anyway, so nothing is lost.
+  if (msg.type === 'subagent' && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
@@ -280,7 +286,7 @@ function onHello(msg) {
   const list = Array.isArray(msg.runs) ? msg.runs : [];
   for (const r0 of list) {
     if (!r0 || !r0.runId) continue;
-    upsertRun({
+    const rr = upsertRun({
       runId: r0.runId,
       title: r0.title,
       projectDir: r0.projectDir,
@@ -288,6 +294,14 @@ function onHello(msg) {
       startedAt: r0.startedAt,
       pendingQuestion: r0.pendingQuestion || null,
     });
+    // Seed the run's stepper from the hello summary so the live card resolves
+    // sub-agents to their real (s0_0-keyed) nodes BEFORE any subagent delta paints
+    // — closing the window where r.stepper is null and the graph falls back to the
+    // legacy default (mismatched ids → no squares + a raw "s0_0" dropdown group).
+    if (r0.stepper && rr.stepper == null) {
+      rr.stepper = r0.stepper;
+      if (rr.el) rebuildStepperDom(rr);
+    }
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || (r0.pendingQuestion != null);
@@ -338,7 +352,8 @@ function normalizePhase(phase) {
   if (p.includes('review')) return 'review';
   if (p.includes('implement')) return 'implement';
   if (p.includes('done') || p.includes('complete') || p.includes('finish')) return 'done';
-  if (p.includes('clarify') || p.includes('plan')) return 'plan';
+  if (p.includes('clarify')) return 'clarify';
+  if (p.includes('plan')) return 'plan';
   return null;
 }
 
@@ -349,6 +364,7 @@ const CLIENT_DEFAULT_STEPPER = {
   version: 1,
   steps: [
     { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+    { kind: 'agents', nodes: [{ id: 'clarify',   uiPhase: 'clarify',   label: 'Clarify',   color: 'red',    cycles: false }] },
     { kind: 'agents', nodes: [{ id: 'plan',      uiPhase: 'plan',      label: 'Plan',      color: 'violet', cycles: false }] },
     { kind: 'agents', nodes: [{ id: 'refine',    uiPhase: 'refine',    label: 'Refine',    color: 'green',  cycles: true  }] },
     { kind: 'agents', nodes: [{ id: 'implement', uiPhase: 'implement', label: 'Implement', color: 'amber',  cycles: false }] },
@@ -816,6 +832,29 @@ function subAgentsOf(r, nodeId) {
   return list.filter((s) => s && s.nodeId === nodeId);
 }
 
+// Find the manifest node with this id across all cells (null if absent).
+function findManifestNode(stepper, nodeId) {
+  const m = manifestFor(stepper);
+  for (const cell of m.steps) for (const n of cell.nodes) if (n.id === nodeId) return n;
+  return null;
+}
+
+// Sub-agents to render on a graph node. Exact nodeId match first; if none, fall
+// back to the node's uiPhase — covers the window before the real s0_0-keyed stepper
+// arrives, when the graph is built from the legacy uiPhase-keyed default (its node
+// ids ARE uiPhases, and the sub-agents carry uiPhase). `src` = live run r or
+// history state st (both expose .subAgents + .stepper).
+function subAgentsForNode(src, nodeId) {
+  const exact = subAgentsOf(src, nodeId);
+  if (exact.length) return exact;
+  const node = findManifestNode(src && src.stepper, nodeId);
+  if (node && node.uiPhase) {
+    const list = src && Array.isArray(src.subAgents) ? src.subAgents : [];
+    return list.filter((s) => s && s.uiPhase === node.uiPhase);
+  }
+  return exact;
+}
+
 // Group sub-agents by nodeId for display (the DB keys by step_key, but the UI
 // groups by node — §7). Map<nodeId, {subs, spawned, active}>; active = running.
 // Records with no nodeId are skipped (cannot be placed on a card).
@@ -837,6 +876,67 @@ function subsByNode(subAgents) {
 // Map grouping to the D-layer object-of-arrays consumers.
 function subsByNodeArrays(subAgents) {
   return Object.fromEntries([...subsByNode(subAgents)].map(([k, g]) => [k, g.subs]));
+}
+
+// Group key separator for (nodeId, cycle) dropdown groups. | never occurs
+// in a nodeId (alphanumerics + underscore) or an integer, so split is unambiguous.
+const CYCLE_KEY_SEP = '|';
+
+// {`${nodeId}|${cycle}`: Array<sub>} — like subsByNodeArrays but split per
+// cycle so refine/review loops show one dropdown group per cycle (records carry
+// `cycle`). Insertion order = encounter order (already (started_at,id)-sorted from
+// the DB / push order live). Skips records with no nodeId.
+function subsByNodeCycleArrays(subAgents) {
+  const out = {};
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (!s || s.nodeId == null) continue;
+    const key = `${s.nodeId}${CYCLE_KEY_SEP}${s.cycle ?? 0}`;
+    (out[key] ||= []).push(s);
+  }
+  return out;
+}
+
+// Map<nodeId, Set<cycle>> — distinct cycles each node spawned sub-agents in.
+// Drives whether a group header gets a "· cycle N" suffix. Record-driven: the
+// suffix appears when a node actually has sub-agents across >1 cycle, independent
+// of any manifest `cycles` flag.
+function cyclesPerNode(subAgents) {
+  const m = new Map();
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (!s || s.nodeId == null) continue;
+    let set = m.get(s.nodeId);
+    if (!set) { set = new Set(); m.set(s.nodeId, set); }
+    set.add(s.cycle ?? 0);
+  }
+  return m;
+}
+
+// Composite-key (nodeId|cycle) -> display label. Resolves the node label by
+// nodeId, then by uiPhase (id-agnostic fallback when the real stepper is absent),
+// then the raw id. Appends "· cycle N" only when that node spans >1 cycle (so
+// single-cycle steps like Plan render exactly as before).
+function cycleAwareLabel(stepper, subAgents) {
+  const byId = nodeLabelLookup(stepper);              // nodeId -> label (raw id fallback)
+  const m = manifestFor(stepper);
+  const phaseToLabel = {};                            // uiPhase -> label
+  m.steps.forEach((cell) => cell.nodes.forEach((n) => { if (n.uiPhase) phaseToLabel[n.uiPhase] = n.label || n.uiPhase; }));
+  const idToPhase = {};                               // nodeId -> uiPhase (from records)
+  for (const s of Array.isArray(subAgents) ? subAgents : []) {
+    if (s && s.nodeId != null && s.uiPhase != null) idToPhase[s.nodeId] = s.uiPhase;
+  }
+  const multi = cyclesPerNode(subAgents);
+  return (key) => {
+    const i = String(key).indexOf(CYCLE_KEY_SEP);
+    const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
+    const cycle = i >= 0 ? (Number(String(key).slice(i + 1)) || 0) : 0;
+    let label = byId(nodeId);
+    if (label === nodeId && idToPhase[nodeId] && phaseToLabel[idToPhase[nodeId]]) {
+      label = phaseToLabel[idToPhase[nodeId]];
+    }
+    const set = multi.get(nodeId);
+    if (set && set.size > 1) label += ` · cycle ${cycle}`;
+    return label;
+  };
 }
 
 function onState(r, msg) {
@@ -879,7 +979,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
@@ -1194,6 +1294,10 @@ function composerAddFeedback(from, to) {
 // link button rejects from===to, so this is the only way to set a self-loop. It
 // re-runs the step on its own blocking issues (the default's fb_refine).
 function composerToggleSelf(id) {
+  const node = composer.steps.flat().find((n) => n.id === id);
+  const key = node?.key;
+  const verdict = canConnect(key, key, composer.agents);
+  if (!verdict.ok) { composerToast(`${(composer.agents[key]?.displayName) || key} can’t loop to itself`); return; }
   const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
   if (i >= 0) composer.feedbacks.splice(i, 1);
   else composer.feedbacks.push({ from: id, to: id });
@@ -1570,7 +1674,12 @@ if (typeof window !== 'undefined') {
     costByNode,
     subsByNode,
     subsByNodeArrays,
+    subsByNodeCycleArrays,
+    cyclesPerNode,
+    cycleAwareLabel,
     subAgentsOf,
+    findManifestNode,
+    subAgentsForNode,
     composerPaintWires,
     buildRunGraph,
     runNode,
@@ -4350,7 +4459,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeArrays(data.state.subAgents), nodeLabelLookup(data.state.stepper));
+    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -4469,7 +4578,7 @@ function paintHistStepper(detail, st) {
     live: false,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsOf(st, id),
+    subsOf: (id) => subAgentsForNode(st, id),
   });
 }
 
@@ -4584,7 +4693,7 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
-const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
+const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
 function statusPill(r) {
@@ -4827,7 +4936,7 @@ function paintStepper(r) {
     live: true,
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsOf(r, id),
+    subsOf: (id) => subAgentsForNode(r, id),
   });
 }
 
@@ -4872,7 +4981,7 @@ function paintRunCard(r) {
   // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
   // would never show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, subsByNodeArrays(r.subAgents), nodeLabelLookup(r.stepper));
+  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents));
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');

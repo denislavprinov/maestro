@@ -43,8 +43,8 @@ test('GET /api/workflows lists the built-in default first', async () => {
   assert.ok(Array.isArray(j.workflows));
   assert.equal(j.workflows[0].id, 'wf_default');
   assert.equal(j.workflows[0].name, 'Default');
-  // The default template carries a real 4-step topology.
-  assert.ok(Array.isArray(j.workflows[0].steps) && j.workflows[0].steps.length === 4);
+  // The default template carries a real 5-step topology.
+  assert.ok(Array.isArray(j.workflows[0].steps) && j.workflows[0].steps.length === 5);
 });
 
 test('GET /api/workflows/:id returns the default template', async () => {

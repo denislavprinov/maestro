@@ -117,3 +117,29 @@ test('HISTORY: saved finished sub-agents paint grey squares, none .on (no pulse)
   assert.equal(node.querySelectorAll('.fan .sq.on').length, 0, 'history has no .on -> never pulses');
   assert.equal(node.querySelector('.fan .fl').textContent, '×2');
 });
+
+test('LIVE: a sub-agent with uiPhase paints on the legacy node before the real stepper arrives', async () => {
+  const ctx = await boot();
+  ctx.selectProject();
+  ctx.window.location.hash = 'running';
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  // NO state frame → r.stepper stays null → graph built from CLIENT_DEFAULT_STEPPER
+  // (legacy uiPhase-keyed ids 'plan'/'refine'/...). The spawn carries nodeId 's0_0'
+  // (absent from the legacy manifest) + uiPhase 'plan' (which IS a legacy node id).
+  ctx.recv({ type: 'phase', runId: 'p1', phase: 'plan', cycle: 0 }); // mount the card
+  ctx.recv({ type: 'subagent', runId: 'p1', transition: 'spawn', id: 't1', nodeId: 's0_0', uiPhase: 'plan', cycle: 0, label: 'research', status: 'running' });
+  await new Promise((r) => setTimeout(r, 0));
+  const node = ctx.window.document.querySelector('[data-run-id="p1"] .run-node[data-id="plan"]');
+  assert.ok(node, 'legacy "plan" node exists');
+  assert.equal(node.querySelectorAll('.fan .sq.on').length, 1, 'uiPhase fallback paints the running square');
+  assert.equal(node.querySelector('.fan .fl').textContent, '×1');
+});
+
+test('subAgentsForNode: exact nodeId match wins; uiPhase is the fallback', async () => {
+  const ctx = await boot();
+  const r = ctx.window.__np.makeRun({ runId: 'p1' });
+  r.stepper = null; // legacy default manifest: node id 'plan' has uiPhase 'plan'
+  r.subAgents = [{ id: 'a', nodeId: 's0_0', uiPhase: 'plan', status: 'running' }];
+  assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 'plan').map((s) => s.id), ['a'], 'matched by uiPhase against legacy node');
+  assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 's0_0').map((s) => s.id), ['a'], 'exact nodeId still matches when present');
+});

@@ -38,7 +38,7 @@ import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphIns
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
-import { runPlannerClarify } from './phases.mjs';
+import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
@@ -55,6 +55,7 @@ import {
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
 const AGENT_FILES = {
+  clarify: 'maestro-clarify.md',
   planner: 'maestro-planner.md',
   refiner: 'maestro-plan-refiner.md',
   implementer: 'maestro-implementer.md',
@@ -141,7 +142,10 @@ class Orchestrator extends EventEmitter {
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
-    this._runners = this.opts.runners || defaultRunners;
+    // Clarify needs orchestrator state (this._ask / this._writeClarifyAnswers), so it is a
+    // bound runner rather than a pure runners.mjs entry. Put it first so opts.runners may
+    // still override it in tests.
+    this._runners = { clarifier: (ctx) => this._runClarifyNode(ctx), ...(this.opts.runners || defaultRunners) };
 
     // Worktree isolation: workDir is the per-pipeline checkout. Until
     // _setupWorktree() runs, it mirrors projectDir so the existing tests/paths
@@ -393,9 +397,7 @@ class Orchestrator extends EventEmitter {
       else await this._buildWorktreeGraph();
       this._checkAbort();
 
-      // 4) Planner clarify (single round).
-      const answers = await this._clarify(plannerNodeOf(plan));
-      this._checkAbort();
+      // 4) (Clarify now runs as the first graph node — see _runClarifyNode.)
 
       // 5) Dispatch the resolved workflow (already snapshotted into state.stepper
       //    at run start). Persist now that this.pipeline exists, and re-emit the
@@ -403,7 +405,7 @@ class Orchestrator extends EventEmitter {
       await this._persist();
       this._emit('state', this.getState());
       await appendAudit(this.pipeline.dir, `Workflow: **${plan.name}** (${plan.id}).`);
-      await this._dispatch(plan, { answers });
+      await this._dispatch(plan);
       this._checkAbort();
 
       // 9) Done.
@@ -808,41 +810,6 @@ class Orchestrator extends EventEmitter {
 
   // ── phase helpers ─────────────────────────────────────────────────────────────
 
-  /**
-   * Single clarify round: run the planner once (it asks up to four questions),
-   * record the answers, then return them for the plan phase. There is no
-   * re-ask loop — when the planner has no questions we skip straight to plan.
-   * Returns the answers array ([{ id, question, choice }]).
-   */
-  async _clarify(plannerNode = null) {
-    const plannerNodeId = plannerNode?.nodeId ?? null;
-    const fanOut = !!plannerNode?.fanOut;
-    // Tag the clarify round with the planner node id so its activeMs + costUsd
-    // bucket onto the Plan cell from the first tick. Pipeline totals are derived
-    // as Σ steps, so this only changes attribution — never the totals.
-    // plannerNodeId is null on a workflow with no plan-phase node; clarify then
-    // stays unattributed (legacy behavior).
-    this._phase('clarify', 1, 'start', plannerNodeId);
-    const { questions } = await runPlannerClarify(this._phaseCtx('planner', { fanOut }), {
-      round: 1,
-      priorAnswers: [], // single round: there is never a prior round to feed back
-    });
-    this._checkAbort();
-    if (!Array.isArray(questions) || questions.length === 0) {
-      this._phase('clarify', 1, 'done');
-      await appendAudit(this.pipeline.dir, `Clarify: no questions; proceeding to plan.`);
-      return [];
-    }
-    this._artifact('clarify', join(this.pipeline.dir, 'clarify.json'));
-    const answer = await this._ask({ id: 'clarify-1', kind: 'clarify', questions });
-    this._checkAbort();
-    const answers = normalizeClarifyAnswer(answer, questions);
-    const enriched = await this._writeClarifyAnswers(questions, answers);
-    await appendAudit(this.pipeline.dir, `Clarify: answered ${answers.length} question(s).`);
-    this._phase('clarify', 1, 'done');
-    return enriched;
-  }
-
   // ── data-driven dispatcher ─────────────────────────────────────────────────
 
   /**
@@ -898,7 +865,8 @@ class Orchestrator extends EventEmitter {
     // legacyFields arm reads them (the planner reads only .answers; the reviewer
     // diffs ctx.checkpointRef, not code.baseRef). Tolerate undefined gracefully.
     const bus = {
-      userPrompt: { kind: 'value', text: this.pipeline.promptText, answers: runArgs.answers || [] },
+      userPrompt: { kind: 'value', text: this.pipeline.promptText, answers: [] },
+      clarify: null,
       // planPath routes to the workspace store when workspaceKey is set (byte-
       // identical to today's path otherwise).
       plan: { kind: 'artifact', path: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix, this.workspaceKey || undefined) },
@@ -1024,6 +992,34 @@ class Orchestrator extends EventEmitter {
     }
     // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
     return { node, result, ctx };
+  }
+
+  /**
+   * Interactive clarify runner (runnerType 'clarifier'). Runs the clarify agent
+   * (writes clarify.json + the DB clarify questions row), then pauses for the user's
+   * answers via the same _ask the feedback-loop gate uses, persists them to the
+   * clarify row, and returns { questions, answers } so _publishNodeIo folds them onto
+   * the `clarify` channel (read by the planner as inputs.clarify.answers). With no
+   * questions it skips the gate and returns empty sets. `ctx` is the node ctx built by
+   * _runNode (carries node, cycle, agentPrompts.clarify, outputs.clarify, pipelineDir,
+   * pipelineId).
+   */
+  async _runClarifyNode(ctx) {
+    const cycle = ctx.cycle || 1;
+    const clarifyPath = ctx.outputs?.clarify?.path || join(this.pipeline.dir, 'clarify.json');
+    const { questions } = await runClarify(ctx, { round: cycle, priorAnswers: [] });
+    this._checkAbort();
+    if (!Array.isArray(questions) || questions.length === 0) {
+      await appendAudit(this.pipeline.dir, `Clarify: no questions; proceeding to plan.`);
+      return { questions: [], answers: [] };
+    }
+    this._artifact('clarify', clarifyPath);
+    const answer = await this._ask({ id: `clarify-${cycle}`, kind: 'clarify', questions });
+    this._checkAbort();
+    const answers = normalizeClarifyAnswer(answer, questions);
+    const enriched = await this._writeClarifyAnswers(questions, answers);
+    await appendAudit(this.pipeline.dir, `Clarify: answered ${answers.length} question(s).`);
+    return { questions, answers: enriched };
   }
 
   /** Bind a node's typed inputs from the (frozen) bus snapshot + allocate its
@@ -1260,7 +1256,7 @@ class Orchestrator extends EventEmitter {
       cycle,
       isEntry: stepIndex === 0,
       extras: this.extrasFiles || [],
-      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey }),
+      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey, uiPhase: node.uiPhase || node.key }),
       claudeOpts: {
         bin: this.claude.bin,
         permissionMode: this.claude.permissionMode,
@@ -1417,6 +1413,7 @@ class Orchestrator extends EventEmitter {
         id: c.id,
         label: label || null,
         nodeId: attr.nodeId ?? null,
+        uiPhase: attr.uiPhase ?? null,
         stepIndex: attr.stepIndex ?? null,
         cycle: attr.cycle ?? null,
         stepKey: attr.stepKey ?? null,
@@ -1464,11 +1461,11 @@ class Orchestrator extends EventEmitter {
    *  reconcile/late-join source of truth (it carries subAgents). */
   _subAgentTransition(transition, rec) {
     this._emit('subagent', {
-      runId: this.state.id,
       transition,
       id: rec.id,
       label: rec.label ?? null,
       nodeId: rec.nodeId ?? null,
+      uiPhase: rec.uiPhase ?? null,
       stepKey: rec.stepKey ?? null,
       stepIndex: rec.stepIndex ?? null,
       cycle: rec.cycle ?? null,
@@ -1870,37 +1867,6 @@ class Orchestrator extends EventEmitter {
 }
 
 // ── module-level pure helpers ──────────────────────────────────────────────────
-
-/**
- * The resolved plan-phase node (uiPhase 'plan', else the first 'planner' node), or
- * null for a workflow with no plan phase. Carries the node's resolved `fanOut`, so
- * the clarify pre-step can be granted the same fan-out the plan node gets.
- * Never hardcodes 's0_0'; works for any workflow whose first step is the planner.
- * plan.steps is the resolveWorkflow() shape: Array<Array<node>> (groups of nodes).
- * @param {{steps?:Array<Array<{nodeId:string,key:string,uiPhase?:string,fanOut?:boolean}>>}} plan
- * @returns {{nodeId:string,key:string,uiPhase?:string,fanOut?:boolean}|null}
- */
-export function plannerNodeOf(plan) {
-  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
-  for (const group of steps) {
-    for (const node of Array.isArray(group) ? group : []) {
-      if (node && (node.uiPhase === 'plan' || node.key === 'planner')) return node;
-    }
-  }
-  return null;
-}
-
-/**
- * The plan-phase node's id (or null when there is no plan phase). Thin wrapper over
- * {@link plannerNodeOf} kept for callers that only need the id (e.g. cost/timing
- * attribution); selection logic lives in plannerNodeOf.
- * @param {{steps?:Array<Array<{nodeId:string,key:string,uiPhase?:string}>>}} plan
- * @returns {string|null}
- */
-export function plannerNodeIdOf(plan) {
-  const node = plannerNodeOf(plan);
-  return node ? node.nodeId || null : null;
-}
 
 function numOr(v, d) {
   const n = Number(v);

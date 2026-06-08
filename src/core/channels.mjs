@@ -9,7 +9,7 @@ import { planPath, reviewPath } from './artifacts.mjs';
 /** The closed set of channel ids (single source; imported by registry + validator).
  *  `workspace` (M3) is a read-only metadata channel carrying the frozen workspace
  *  description + member set; it is seeded once and never re-published (CONV-6). */
-export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace'];
+export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify'];
 
 /**
  * Mint the concrete OUTPUT handle for a channel the node produces. This is the
@@ -67,6 +67,10 @@ export function allocate(channel, ctx) {
       // member set + description are seeded onto the bus directly by the orchestrator
       // (this just names the on-disk path of the frozen snapshot).
       return { kind: 'metadata', path: join(pipelineDir, 'workspace-description.md') };
+    case 'clarify':
+      // The clarify agent writes clarify.json into the pipeline dir as scratch; the
+      // DB clarify row is authoritative. Same path the legacy pre-step used.
+      return { kind: 'clarify', path: join(pipelineDir, 'clarify.json') };
     default:
       return null;
   }
@@ -115,6 +119,16 @@ export function publish(produces, result, outputs, bus) {
     } else if (c === 'workspace') {
       // Read-only metadata: seeded once by the orchestrator, NEVER re-published
       // (CONV-6: the frozen per-step snapshot must not change mid-run). No-op.
+    } else if (c === 'clarify') {
+      // The clarify node carries questions (from the agent) + answers (from the
+      // interactive gate) in its result; fold both onto the bus so the planner reads
+      // inputs.clarify.answers.
+      bus.clarify = {
+        kind: 'clarify',
+        path: outputs.clarify?.path,
+        questions: result.questions || [],
+        answers: result.answers || [],
+      };
     }
   }
 }
@@ -142,7 +156,7 @@ function legacyRoleFields(node, inputs, outputs, cycle, baseName) {
     case 'planner':
       // reviewPath is set only when a review is bound (a plan-review -> planner
       // rewind), which switches runPlannerPlan into its cold-replan branch.
-      return { planFilePath: outputs.plan?.path, baseName, answers: inputs.userPrompt?.answers || [], reviewPath: inputs.review?.mdPath };
+      return { planFilePath: outputs.plan?.path, baseName, answers: inputs.clarify?.answers || inputs.userPrompt?.answers || [], reviewPath: inputs.review?.mdPath };
     case 'refiner':
       return { inPlanPath: inputs.plan?.path, outPlanPath: outputs.plan?.path, reviewJsonPath: outputs.review?.jsonPath, cycle };
     case 'implementer':
