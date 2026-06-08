@@ -34,11 +34,11 @@ test('the implementer mock emits ≥2 sub-agent spawns each with a matching fini
   for (const id of spawns) assert.ok(finishes.includes(id), `spawn ${id} has a matching tool_result`);
 });
 
-test('a non-fan-out role (planner-clarify) emits no fake sub-agents', async () => {
+test('a non-fan-out role (clarify) emits no fake sub-agents', async () => {
   const dir = await tmp();
   const events = [];
   await runClaude({ cwd: dir, mock: true, onEvent: (e) => events.push(e),
-    prompt: `MOCK_ROLE: planner-clarify\nMOCK_OUT: ${join(dir, 'clarify.json')}` });
+    prompt: `MOCK_ROLE: clarify\nMOCK_OUT: ${join(dir, 'clarify.json')}` });
   const { spawns } = subBlocks(events);
   assert.equal(spawns.length, 0, 'clarify does not fan out in the mock');
 });

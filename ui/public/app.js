@@ -36,7 +36,7 @@ const state = {
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
 // server is authoritative — see loadConfig, which also receives data.steps.)
-const STEP_ROLES = ['planner', 'refiner', 'implementer', 'reviewer'];
+const STEP_ROLES = ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'];
 
 import {
   topology,
@@ -352,7 +352,8 @@ function normalizePhase(phase) {
   if (p.includes('review')) return 'review';
   if (p.includes('implement')) return 'implement';
   if (p.includes('done') || p.includes('complete') || p.includes('finish')) return 'done';
-  if (p.includes('clarify') || p.includes('plan')) return 'plan';
+  if (p.includes('clarify')) return 'clarify';
+  if (p.includes('plan')) return 'plan';
   return null;
 }
 
@@ -363,6 +364,7 @@ const CLIENT_DEFAULT_STEPPER = {
   version: 1,
   steps: [
     { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+    { kind: 'agents', nodes: [{ id: 'clarify',   uiPhase: 'clarify',   label: 'Clarify',   color: 'red',    cycles: false }] },
     { kind: 'agents', nodes: [{ id: 'plan',      uiPhase: 'plan',      label: 'Plan',      color: 'violet', cycles: false }] },
     { kind: 'agents', nodes: [{ id: 'refine',    uiPhase: 'refine',    label: 'Refine',    color: 'green',  cycles: true  }] },
     { kind: 'agents', nodes: [{ id: 'implement', uiPhase: 'implement', label: 'Implement', color: 'amber',  cycles: false }] },
@@ -1292,6 +1294,10 @@ function composerAddFeedback(from, to) {
 // link button rejects from===to, so this is the only way to set a self-loop. It
 // re-runs the step on its own blocking issues (the default's fb_refine).
 function composerToggleSelf(id) {
+  const node = composer.steps.flat().find((n) => n.id === id);
+  const key = node?.key;
+  const verdict = canConnect(key, key, composer.agents);
+  if (!verdict.ok) { composerToast(`${(composer.agents[key]?.displayName) || key} can’t loop to itself`); return; }
   const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
   if (i >= 0) composer.feedbacks.splice(i, 1);
   else composer.feedbacks.push({ from: id, to: id });
@@ -4687,7 +4693,7 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
-const PHASE_LABEL = { preflight: 'Preflight', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
+const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
 function statusPill(r) {

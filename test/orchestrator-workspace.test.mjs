@@ -320,13 +320,13 @@ test('fan-out forcing: a workspace run forces fanOut=true on eligible nodes only
   orch._dispatch = async (plan, runArgs) => { seenPlan = plan; return origDispatch(plan, runArgs); };
   await orch.run();
   assert.ok(seenPlan, 'dispatch ran');
-  const FANOUT_ELIGIBLE = new Set(['planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer']);
+  const FANOUT_ELIGIBLE = new Set(['clarify', 'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer']);
   for (const group of seenPlan.steps) {
     for (const node of group) {
       if (FANOUT_ELIGIBLE.has(node.key)) {
         assert.equal(node.fanOut, true, `eligible node ${node.key} is forced fanOut`);
       } else {
-        // Any non-eligible node (none in the default workspace plan) must NOT be forced.
+        // Any non-eligible node must NOT be forced (clarify IS eligible — a fan-out research node).
         assert.equal(node.fanOut, false, `ineligible node ${node.key} is NOT forced`);
       }
     }

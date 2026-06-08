@@ -13,6 +13,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const DEFAULT_WF = {
   id: 'wf_default', name: 'Default', version: 1,
   steps: [
+    [{ id: 's_clarify', key: 'clarify' }],
     [{ id: 's0_0', key: 'planner' }],
     [{ id: 's1_0', key: 'refiner' }],
     [{ id: 's2_0', key: 'implementer' }],
@@ -66,8 +67,8 @@ test('opening the composer builds the palette from the agents/embedded registry'
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 10));
   const pills = window.document.querySelectorAll('#composer-palette .agent-pill');
-  assert.equal(pills.length, 7, 'seven agent pills (embedded fallback)');
-  assert.match(pills[0].textContent, /Plan/);
+  assert.equal(pills.length, 8, 'eight agent pills (embedded fallback)');
+  assert.match(pills[0].textContent, /Clarify/);
 });
 
 test('Save serializes the canvas to contract topology and POSTs {name,steps,feedbacks}', async () => {
@@ -101,16 +102,18 @@ test('Save serializes the canvas to contract topology and POSTs {name,steps,feed
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 20)); // initComposer awaits Reset -> wf_default
 
-  // The default render must produce 4 columns (Plan/Refine/Implement/Review).
+  // The default render must produce 5 columns (Clarify/Plan/Refine/Implement/Review).
   const cols = window.document.querySelectorAll('#composer-flow > .col');
-  assert.equal(cols.length, 4, 'default = 4 steps');
+  assert.equal(cols.length, 5, 'default = 5 steps');
 
   window.document.getElementById('composer-save').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(posted.length, 1, 'one POST');
   assert.equal(posted[0].name, 'My Flow');
   assert.deepEqual(posted[0].steps.map((c) => c.map((x) => x.key)),
-    [['planner'], ['refiner'], ['implementer'], ['reviewer']]);
+    [['clarify'], ['planner'], ['refiner'], ['implementer'], ['reviewer']]);
+  // topology() reindexes node ids on Save, so step-0 member-0 is s0_0 (NOT the
+  // stored s_clarify id of the default template).
   assert.equal(posted[0].steps[0][0].id, 's0_0', 'contract instance ids');
   assert.equal(posted[0].feedbacks.length, 2, 'two default feedback loops');
 });

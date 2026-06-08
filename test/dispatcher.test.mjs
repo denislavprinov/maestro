@@ -231,10 +231,10 @@ test('DEFAULT_WORKFLOW dispatch reproduces the legacy phase order + loop gating 
   assert.deepEqual(idxs, [...idxs].sort((a, b) => a - b), 'UI phases first appear in plan->refine->implement->review order');
 });
 
-test('DEFAULT_WORKFLOW is the wf_default 4-step Plan->Refine->Implement->Review topology', () => {
+test('DEFAULT_WORKFLOW is the wf_default 5-step Plan->Refine->Implement->Review topology', () => {
   assert.equal(DEFAULT_WORKFLOW.id, 'wf_default');
   const keys = DEFAULT_WORKFLOW.steps.map((g) => g.map((n) => n.key));
-  assert.deepEqual(keys, [['planner'], ['refiner'], ['implementer'], ['reviewer']]);
+  assert.deepEqual(keys, [['clarify'], ['planner'], ['refiner'], ['implementer'], ['reviewer']]);
   // CONV-3/CONV-7: the two feedbacks are the refiner self-loop + the review->implement loop.
   assert.deepEqual(
     DEFAULT_WORKFLOW.feedbacks.map((f) => ({ id: f.id, from: f.from, to: f.to })),
@@ -304,7 +304,7 @@ test('run(): stamps state.stepper (preflight..done) and node phase events carry 
   assert.equal(st.stepper.version, 1);
   assert.equal(st.stepper.steps[0].kind, 'preflight');
   assert.equal(st.stepper.steps.at(-1).kind, 'done');
-  assert.equal(st.stepper.steps.length, 6, 'wf_default: preflight + 4 agent cells + done');
+  assert.equal(st.stepper.steps.length, 7, 'wf_default: preflight + 5 agent cells + done');
 
   // Agent-node phase events (from _nodeStep) carry a nodeId; bookend phases
   // (_phase: preflight/clarify/done) carry none.
@@ -372,18 +372,13 @@ test('custom workflow: a plan-review -> planner loop replans then converges end-
 
     // plan-review blocks at cycle 1 -> rewind to planner -> planner replans -> plan-review ok at cycle 2.
     //
-    // NOTE on the planner count (=3, not the snippet's 2): the `seenKeys`-by-`s.key`
-    // idiom counts every DISTINCT step key attributed to a node. The planner node
-    // contributes THREE keys here, all tagged nodeId=s0_0:
-    //   clarify#1 (the one-shot clarify phase) + 0:s0_0 (plan, cycle 1)
-    //   + 0:s0_0#2 (the cycle-2 REPLAN, which mints the -v2 plan asserted above).
-    // Clarify runs once (it is not re-entered on the bounce), so the replan shows up
-    // as exactly +1 over a non-replanning planner. The near-246 PARALLEL test's
-    // planner is 2 precisely because its loop rewinds to the implementer, not the
-    // planner — so its plan phase fires once (clarify + 1 plan). Asserting 2 here
-    // would FALSELY claim the planner never replanned, contradicting the -v2 plan
-    // (and the plan-review contract). The true replan count under this idiom is 3.
-    assert.equal(runsByNode.s0_0, 3, 'planner replanned on the plan-review bounce (clarify + plan-v1 + plan-v2)');
+    // NOTE on the planner count (=2): clarify is now its OWN graph node (s_clarify),
+    // so the one-shot clarify phase is no longer folded onto the planner node. The
+    // `seenKeys`-by-`s.key` idiom counts every DISTINCT step key attributed to s0_0,
+    // which here are exactly the planner's two passes:
+    //   0:s0_0 (plan, cycle 1) + 0:s0_0#2 (the cycle-2 REPLAN, which mints the -v2
+    //   plan asserted above). The +1 over a non-replanning planner is the replan.
+    assert.equal(runsByNode.s0_0, 2, 'planner replanned on the plan-review bounce (plan-v1 + plan-v2)');
     assert.equal(runsByNode.s1_0, 2, 'plan reviewer ran twice (blocked then ok)');
     assert.equal(runsByNode.s2_0, 1, 'implementer ran once (first pass, not flipped into fix mode by the plan-review)');
 

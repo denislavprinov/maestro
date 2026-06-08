@@ -164,13 +164,13 @@ export function workspaceFanOutDirective(strategy, ws) {
 
 // ── inline fallbacks (used only when agents/*.md is missing/empty) ──────────────
 const FALLBACK_PROMPTS = {
-  'planner-clarify':
-    'You are the Planner in clarify mode. Before planning a software task you MUST surface ' +
-    'conceptual questions instead of assuming anything. For each thing you would otherwise ' +
-    'assume, write a question offering exactly THREE options plus a free-text field. Output a ' +
+  clarify:
+    'You are the Clarify agent. Before a software task is planned you surface ONLY the few ' +
+    'highest-impact decisions that cannot be resolved from the task text or the codebase. For each, ' +
+    'write a conceptual question offering exactly THREE options plus a free-text field. Output a ' +
     'JSON file (path given in the task) shaped as ' +
     '{ "questions": [ { "id", "question", "options": [a,b,c], "allowFreeText": true } ] }. ' +
-    'If you genuinely have no open questions, write { "questions": [] }.',
+    'If you genuinely have no open questions, write { "questions": [] }. You never write a plan.',
   'planner-plan':
     'You are the Planner. Write a thorough implementation plan to the markdown path given in ' +
     'the task. The plan MUST include concrete code snippets for the features and MUST end with ' +
@@ -263,9 +263,10 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
 
 /** A compact task header reused across roles. Exported for testing. */
 export function taskHeader(ctx, title) {
-  // Who gets the raw request? The ENTRY node (step 0) always — it stands in for any
-  // missing upstream artifact and owns the user's attachments. Otherwise: userPrompt
-  // consumers, plus the refiner & reviewer by policy; the clarify pre-step (no inputs).
+  // Who gets the raw request + attachments? The ENTRY node (step 0) always, PLUS any
+  // userPrompt consumer (so the planner keeps the user's attachments even though Clarify
+  // is now the entry). Refiner/reviewer/planReviewer get the request text by policy but
+  // work off upstream artifacts, not attachments.
   const key = ctx.node?.key;
   const isEntry = !!ctx.isEntry;
   const consumesPrompt = !ctx.inputs || ('userPrompt' in ctx.inputs);
@@ -273,7 +274,7 @@ export function taskHeader(ctx, title) {
   const requestBlock = wantsPrompt
     ? `## Original request\n\n${(ctx.taskPrompt || '').trim() || '(no prompt text)'}\n`
     : `## Upstream input\n\nYour input is the output of the preceding step(s); the file paths to read are named below.\n`;
-  const attachBlock = isEntry ? renderAttachmentsBlock(ctx.extras) : '';
+  const attachBlock = (isEntry || consumesPrompt) ? renderAttachmentsBlock(ctx.extras) : '';
   return (
     `# Task: ${title}\n\n` +
     `Project directory (your cwd): ${ctx.projectDir}\n` +
@@ -321,7 +322,7 @@ export function buildClarifyPrompt(ctx, opts = {}) {
   const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
   const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
   const outPath = joinPipeline(ctx.pipelineDir, 'clarify.json');
-  const role = 'planner-clarify';
+  const role = 'clarify';
   const answered =
     priorAnswers.length > 0
       ? '## Already answered — DO NOT ask these again\n\n' +
@@ -353,17 +354,17 @@ export function buildClarifyPrompt(ctx, opts = {}) {
 }
 
 /**
- * Planner — clarify role. Writes clarify.json; returns { questions }.
+ * Clarify agent. Writes clarify.json; returns { questions }.
  * @param {import('./phases.mjs').PhaseContext} ctx
  * @param {{ round?: number, priorAnswers?: Array<{id,question,choice}> }} [opts]
  *   `priorAnswers` are the Q&A already resolved in earlier rounds; injecting them
  *   lets the planner ask only NEW questions, so the loop terminates naturally.
  */
-export async function runPlannerClarify(ctx, opts = {}) {
+export async function runClarify(ctx, opts = {}) {
   const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
   const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
-  const role = 'planner-clarify';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role, ctx.workspace);
+  const role = 'clarify';
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.clarify, role, ctx.workspace);
   const prompt = buildClarifyPrompt(ctx, { round, priorAnswers });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));

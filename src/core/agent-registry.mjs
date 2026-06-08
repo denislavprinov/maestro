@@ -16,7 +16,7 @@ import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single sourc
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
-const RUNNER_TYPES = new Set(['producer', 'verifier']);
+const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
 const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
 
 /**
@@ -25,7 +25,8 @@ const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
  * switch and every saved pipeline stays connectsTo-legal.
  */
 const DEFAULT_SPEC = {
-  planner:              { consumes: ['userPrompt', 'review'], optionalConsumes: ['review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer'] },
+  clarify:              { consumes: ['userPrompt'],                       produces: ['clarify'],         connectsTo: ['planner'] },
+  planner:              { consumes: ['userPrompt', 'clarify', 'review'],  optionalConsumes: ['clarify', 'review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer'] },
   refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner'] },
   implementer:          { consumes: ['plan', 'review'],    optionalConsumes: ['review'],  produces: ['code'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
   reviewer:             { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer', 'manualTestsChecklist'] },

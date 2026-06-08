@@ -7,17 +7,17 @@ import { join } from 'node:path';
 import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns all shipped agents (7 project + 2 workspace)', () => {
+test('loadAgentRegistry returns all shipped agents (8 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
+    ['clarify', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 9);
-  // The two workspace agents are scope:'workspace-only'; the original 7 are 'project'.
+  assert.equal(Object.keys(reg).length, 10);
+  // The two workspace agents are scope:'workspace-only'; the original 8 are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
-    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
+    ['clarify', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
 });
 
 test('each entry is a well-formed AgentMeta', () => {
@@ -29,7 +29,7 @@ test('each entry is a well-formed AgentMeta', () => {
     assert.ok(COLORS.has(m.color), `bad color for ${key}: ${m.color}`);
     assert.equal(typeof m.icon, 'string');
     assert.ok(m.icon.length > 0);
-    assert.ok(['producer', 'verifier'].includes(m.runnerType));
+    assert.ok(['producer', 'verifier', 'clarifier'].includes(m.runnerType));
     assert.equal(typeof m.loopSource, 'boolean');
     assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `connectsTo for ${key}: ${JSON.stringify(m.connectsTo)}`);
     assert.equal(typeof m.order, 'number');
@@ -53,10 +53,10 @@ test('registry insertion order follows .order ascending', () => {
   const reg = loadAgentRegistry();
   const orders = Object.values(reg).map((m) => m.order);
   assert.deepEqual(orders, [...orders].sort((a, b) => a - b));
-  // workspaceScanner (order 0.5) sorts first; workspaceReviewer (order 4.5) sorts
-  // between reviewer (4) and manualTestsChecklist (5).
+  // clarify (order 0) sorts first; workspaceScanner (order 0.5) sorts next;
+  // workspaceReviewer (order 4.5) sorts between reviewer (4) and manualTestsChecklist (5).
   assert.deepEqual(Object.keys(reg), [
-    'workspaceScanner', 'planner', 'refiner', 'implementer', 'reviewer', 'workspaceReviewer',
+    'clarify', 'workspaceScanner', 'planner', 'refiner', 'implementer', 'reviewer', 'workspaceReviewer',
     'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
 });
@@ -64,7 +64,8 @@ test('registry insertion order follows .order ascending', () => {
 test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => {
   const reg = loadAgentRegistry();
   const steps = registryToSteps(reg);
-  assert.deepEqual(steps.slice(0, 4), [
+  // clarify is now steps[0]; the original four occupy steps[1..4] unchanged.
+  assert.deepEqual(steps.slice(1, 5), [
     { key: 'planner', label: 'Plan', fanOut: true },
     { key: 'refiner', label: 'Refine', fanOut: false },
     { key: 'implementer', label: 'Implement', fanOut: false },
@@ -76,10 +77,11 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 7);
-  assert.deepEqual(steps[4], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
-  assert.deepEqual(steps[5], { key: 'manualWebUiTesting', label: 'Manual web UI testing', fanOut: false });
-  assert.deepEqual(steps[6], { key: 'planReviewer', label: 'Plan Review', fanOut: false });
+  assert.equal(steps.length, 8);
+  assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true });
+  assert.deepEqual(steps[5], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
+  assert.deepEqual(steps[6], { key: 'manualWebUiTesting', label: 'Manual web UI testing', fanOut: false });
+  assert.deepEqual(steps[7], { key: 'planReviewer', label: 'Plan Review', fanOut: false });
 });
 
 test('every agentFile points at an existing prompt under agents/', () => {
@@ -120,8 +122,8 @@ test('exactly the verifiers are loopSources; producers are not', () => {
 
 test('registry stamps default channel spec for the six built-ins', () => {
   const reg = loadAgentRegistry(); // real agents/ dir
-  assert.deepEqual(reg.planner.consumes, ['userPrompt', 'review']);
-  assert.deepEqual(reg.planner.optionalConsumes, ['review']);
+  assert.deepEqual(reg.planner.consumes, ['userPrompt', 'clarify', 'review']);
+  assert.deepEqual(reg.planner.optionalConsumes, ['clarify', 'review']);
   assert.deepEqual(reg.planner.produces, ['plan']);
   assert.deepEqual(reg.refiner.produces, ['plan', 'review']);
   assert.deepEqual(reg.implementer.consumes, ['plan', 'review']);

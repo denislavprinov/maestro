@@ -8,6 +8,7 @@ import { DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 // Inline fake registry (matches Phase 1's AgentMeta shape) so this phase tests
 // independently of agent-registry.mjs. Only `key` is consulted by the validator.
 const REGISTRY = {
+  clarify: { key: 'clarify', runnerType: 'clarifier', agentFile: 'maestro-clarifier.md', loopSource: false },
   planner: { key: 'planner', runnerType: 'producer', agentFile: 'maestro-planner.md', loopSource: false },
   refiner: { key: 'refiner', runnerType: 'producer', agentFile: 'maestro-plan-refiner.md', loopSource: false },
   implementer: { key: 'implementer', runnerType: 'producer', agentFile: 'maestro-implementer.md', loopSource: false },
@@ -34,7 +35,7 @@ test('a well-formed workflow passes', () => {
   assert.deepEqual(errors, []);
 });
 
-test('DEFAULT_WORKFLOW passes against a registry of its 4 keys', () => {
+test('DEFAULT_WORKFLOW passes against a registry of its 5 keys', () => {
   const { ok, errors } = validateWorkflow(DEFAULT_WORKFLOW, REGISTRY);
   assert.equal(ok, true, errors.join('; '));
 });

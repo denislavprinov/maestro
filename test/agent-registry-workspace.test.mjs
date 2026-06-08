@@ -2,7 +2,7 @@
 // M4: the two workspace agents in the registry — scope coercion, the
 // produces===['workspace'] canary (the §6.9 highest-risk hazard), the DEFAULT_SPEC
 // channel wiring, and the mandatory registryToSteps `scope:'workspace-only'`
-// exclusion that keeps AGENT_STEPS at EXACTLY 7 (single-project byte-identity).
+// exclusion that keeps AGENT_STEPS at EXACTLY 8 (single-project byte-identity).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -58,20 +58,20 @@ test('both workspace agents declare fanOut:true', () => {
   assert.equal(reg.workspaceReviewer.fanOut, true);
 });
 
-test('NON-NEGOTIABLE: registryToSteps still returns EXACTLY the 7 project steps', () => {
-  // The scope:'workspace-only' exclusion is mandatory — without it the registry's 9
-  // entries would push this to 9 and break the single-project UI stepper / config keys.
+test('NON-NEGOTIABLE: registryToSteps still returns EXACTLY the 8 project steps', () => {
+  // The scope:'workspace-only' exclusion is mandatory — without it the registry's 10
+  // entries would push this to 10 and break the single-project UI stepper / config keys.
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 7, 'workspace-only agents are excluded from the step list');
+  assert.equal(steps.length, 8, 'workspace-only agents are excluded from the step list');
   assert.deepEqual(steps.map((s) => s.key), [
-    'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
+    'clarify', 'planner', 'refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
   assert.ok(!steps.some((s) => s.key === 'workspaceScanner'), 'scanner excluded');
   assert.ok(!steps.some((s) => s.key === 'workspaceReviewer'), 'workspace reviewer excluded');
 });
 
-test('AGENT_STEPS (derived from the registry) is byte-identical to registryToSteps and has 7 entries', () => {
-  assert.equal(AGENT_STEPS.length, 7);
+test('AGENT_STEPS (derived from the registry) is byte-identical to registryToSteps and has 8 entries', () => {
+  assert.equal(AGENT_STEPS.length, 8);
   assert.deepEqual(AGENT_STEPS, registryToSteps(loadAgentRegistry()));
 });
 

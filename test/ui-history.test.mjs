@@ -317,7 +317,7 @@ test('History card renders the persisted manifest nodes on expand', async () => 
   assert.ok(detail.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
 });
 
-test('History card without a saved manifest still renders the legacy six', async () => {
+test('History card without a saved manifest still renders the legacy seven', async () => {
   const legacyState = { status: 'done', phase: 'done', steps: [] }; // no .stepper
   const { window, showHistory } = await boot({
     fetchHandler: (url) => {
@@ -333,7 +333,7 @@ test('History card without a saved manifest still renders the legacy six', async
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
   const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
-  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
+  assert.deepEqual(labels, ['Preflight', 'Clarify', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
   assert.ok([...detail.querySelectorAll('.run-node[data-id]')].every((n) => n.classList.contains('is-done')));
 });
 

@@ -9,8 +9,8 @@
   "loopSource": false,
   "fanOut": true,
   "produces": ["plan"],
-  "consumes": ["userPrompt", "review"],
-  "optionalConsumes": ["review"],
+  "consumes": ["userPrompt", "clarify", "review"],
+  "optionalConsumes": ["clarify", "review"],
   "connectsTo": ["refiner", "implementer", "planReviewer"],
   "order": 1
 }

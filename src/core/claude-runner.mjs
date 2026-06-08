@@ -9,10 +9,10 @@
 // `systemPrompt`). The phases layer is responsible for emitting these markers.
 //
 //   MOCK_ROLE: <role>      one of:
-//                            planner-clarify | planner-plan |
+//                            clarify | planner-plan |
 //                            refiner | implementer | reviewer
 //   MOCK_OUT: <path>       primary output artifact path (absolute)
-//                          - planner-clarify : clarify.json path
+//                          - clarify : clarify.json path
 //                          - planner-plan    : plan .md path
 //                          - refiner         : output -vN plan .md path
 //                          - reviewer        : review .md path
@@ -435,8 +435,8 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
 
   let text = `[mock] role ${role} complete`;
   switch (role) {
-    case 'planner-clarify':
-      text = await mockPlannerClarify(m, cycle, onEvent);
+    case 'clarify':
+      text = await mockClarify(m, cycle, onEvent);
       break;
     case 'planner-plan':
       text = await mockPlannerPlan(m, onEvent);
@@ -490,7 +490,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
 /** Best-effort role inference if MOCK_ROLE is absent. */
 function inferRole(prompt, systemPrompt) {
   const hay = `${prompt}\n${systemPrompt}`.toLowerCase();
-  if (hay.includes('clarif')) return 'planner-clarify';
+  if (hay.includes('clarif')) return 'clarify';
   if (hay.includes('refine')) return 'refiner';
   if (hay.includes('review')) return 'reviewer';
   if (hay.includes('implement')) return 'implementer';
@@ -498,7 +498,7 @@ function inferRole(prompt, systemPrompt) {
   return 'unknown';
 }
 
-async function mockPlannerClarify(m, cycle, onEvent) {
+async function mockClarify(m, cycle, onEvent) {
   const out = m.MOCK_OUT;
   // Ask one question while no answers have been fed back; once the user's prior
   // answers are present (MOCK_PRIOR > 0) report no further questions so the
@@ -528,7 +528,7 @@ async function mockPlannerClarify(m, cycle, onEvent) {
       ? '[mock] planner has no further questions'
       : '[mock] planner asking one clarifying question',
   );
-  if (!out) return '[mock] planner-clarify: no MOCK_OUT given';
+  if (!out) return '[mock] clarify: no MOCK_OUT given';
   await ensureDir(out);
   await writeFile(out, JSON.stringify(payload, null, 2) + '\n', 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
