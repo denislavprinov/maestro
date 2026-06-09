@@ -20,7 +20,7 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
-  enrichPipelinesPr, reconcileStaleRunning,
+  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
@@ -100,7 +100,7 @@ function liveRunIds() {
   const ids = [];
   for (const r of runs.values()) {
     const s = String(r.status || '').toLowerCase();
-    if (s === 'running' || s === 'starting' || s === 'created') {
+    if (s === 'running' || s === 'starting' || s === 'created' || s === 'pausing') {
       if (r.pipelineId) ids.push(r.pipelineId);
       if (r.id) ids.push(r.id);
     }
@@ -645,6 +645,113 @@ app.post('/api/stop', (req, res) => {
     entry.status = 'stopped';
     entry.pendingQuestion = null;
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pause { runId } — gracefully pause a LIVE run. The orchestrator kills
+// in-flight node children, persists a resume point, and lands on status 'paused'
+// (announced via the normal state/done events; wireRun mirrors entry.status).
+// ---------------------------------------------------------------------------
+app.post('/api/pause', (req, res) => {
+  const { runId } = req.body || {};
+  if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
+  const entry = runs.get(runId);
+  try {
+    const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
+    if (!ok) return badRequest(res, 'cannot pause in the current state');
+    entry.status = 'pausing';
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/resume { pipelineId } — rehydrate a paused pipeline from the DB (works
+// across server restarts) and continue it as a NEW live run entry with the SAME
+// pipeline id / history row.
+// ---------------------------------------------------------------------------
+app.post('/api/resume', async (req, res) => {
+  try {
+    const { pipelineId } = req.body || {};
+    if (!pipelineId || typeof pipelineId !== 'string') return badRequest(res, 'pipelineId is required');
+    const saved = readPipelineForResume(pipelineId);
+    if (!saved) return res.status(404).json({ error: 'pipeline not found' });
+    if (saved.row.status !== 'paused') return badRequest(res, `pipeline is "${saved.row.status}", not paused`);
+    if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
+
+    // Double-resume guard: any live entry already driving this pipeline id.
+    for (const e of runs.values()) {
+      if (e.pipelineId === pipelineId && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+        return badRequest(res, 'pipeline is already live');
+      }
+    }
+
+    // Worktree(s) must still exist (single-project; workspace members are checked
+    // inside orchestrator.resume(), which fails fast with the same message).
+    const branch = saved.row.branch ? JSON.parse(saved.row.branch) : null;
+    if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
+      return badRequest(res, `worktree missing: ${branch.worktreeDir}`);
+    }
+
+    // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
+    // runs map project_key back through the registry.
+    let projectDir = null;
+    let workspace;
+    if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+      const meta = JSON.parse(saved.row.workspace_meta);
+      const projects = (meta.projects || []).map((p) => ({ ...p }));
+      if (!projects.length) return badRequest(res, 'workspace metadata incomplete');
+      projectDir = projects[0].projectDir;
+      workspace = {
+        id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
+        description: meta.workspaceDescription || '', projects,
+      };
+    } else {
+      for (const p of await listProjects()) {
+        if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
+      }
+      if (!projectDir) return badRequest(res, 'project for this pipeline is not onboarded on this machine');
+    }
+
+    const mock = !!(req.body && req.body.mock) || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
+    const runId = randomUUID();
+    const orch = createOrchestrator({
+      projectDir,
+      ...(workspace ? { workspace } : {}),
+      agentsDir: AGENTS_DIR,
+      claude: { permissionMode: 'acceptEdits', mock },
+      resume: saved,
+    });
+    const entry = {
+      id: runId,
+      orch,
+      projectDir,
+      ...(workspace ? { workspaceId: workspace.id, kind: 'workspace-run' } : { kind: 'run' }),
+      title: saved.row.title,
+      status: 'starting',
+      startedAt: new Date().toISOString(),
+      events: [],
+      pendingQuestion: null,
+      pipelineId,
+    };
+    runs.set(runId, entry);
+    wireRun(entry);
+
+    // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
+    Promise.resolve()
+      .then(() => orch.resume())
+      .catch((err) => {
+        const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
+        entry.status = 'error';
+        entry.events.push(event);
+        broadcast(event);
+      });
+
+    res.json({ ok: true, runId, pipelineId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
