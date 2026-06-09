@@ -112,6 +112,7 @@ function mockEnabled(opts) {
  * @param {string} [o.effort]            optional reasoning effort
  * @param {(e:{type:string, raw?:any, text?:string})=>void} [o.onEvent]
  * @param {AbortSignal} [o.signal]
+ * @param {string} [o.resumeSessionId]   resume a previous claude session (--resume)
  * @param {string} [o.bin]               claude binary (default "claude")
  * @param {boolean} [o.mock]             force mock mode
  * @returns {Promise<{text:string, exitCode:number}>}
@@ -127,6 +128,7 @@ export async function runClaude(o = {}) {
     effort,
     onEvent = () => {},
     signal,
+    resumeSessionId,
     bin = DEFAULT_BIN,
   } = o;
 
@@ -137,7 +139,7 @@ export async function runClaude(o = {}) {
   }
 
   if (mockEnabled(o)) {
-    return runMock({ cwd, systemPrompt, prompt, onEvent, signal });
+    return runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId });
   }
 
   return runReal({
@@ -151,28 +153,38 @@ export async function runClaude(o = {}) {
     onEvent,
     signal,
     bin,
+    resumeSessionId,
   });
 }
 
 // ── Real execution ───────────────────────────────────────────────────────────
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin }) {
+/** Pure argv builder for the headless claude spawn (exported for tests).
+ *  resumeSessionId re-attaches a previous session: `--resume <sid>` makes -p send
+ *  the prompt as the next user message of THAT session instead of a fresh one. */
+export function buildClaudeArgs({ prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId }) {
+  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
+  if (resumeSessionId) args.push('--resume', resumeSessionId);
+  if (systemPrompt) {
+    args.push('--append-system-prompt', systemPrompt);
+  }
+  if (model) {
+    args.push('--model', model);
+  }
+  for (const a of buildEffortArgs(effort)) args.push(a);
+  // Gated, default-off per-sub-agent telemetry (MAESTRO_SUBAGENT_HOOKS). [] when
+  // off, so the baseline argv is unchanged; a CLI that rejects these flags would
+  // only ever fail when the operator opted in.
+  for (const a of buildHookArgs()) args.push(a);
+  if (Array.isArray(allowedTools) && allowedTools.length) {
+    args.push('--allowedTools', allowedTools.join(','));
+  }
+  return args;
+}
+
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId }) {
   return new Promise((resolveP, rejectP) => {
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
-    if (systemPrompt) {
-      args.push('--append-system-prompt', systemPrompt);
-    }
-    if (model) {
-      args.push('--model', model);
-    }
-    for (const a of buildEffortArgs(effort)) args.push(a);
-    // Gated, default-off per-sub-agent telemetry (MAESTRO_SUBAGENT_HOOKS). [] when
-    // off, so the baseline argv is unchanged; a CLI that rejects these flags would
-    // only ever fail when the operator opted in.
-    for (const a of buildHookArgs()) args.push(a);
-    if (Array.isArray(allowedTools) && allowedTools.length) {
-      args.push('--allowedTools', allowedTools.join(','));
-    }
+    const args = buildClaudeArgs({ prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId });
 
     let child;
     try {
@@ -232,6 +244,11 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         return;
       }
       const text = extractText(evt);
+      // Pause/Resume: surface the session id from the init event so the
+      // orchestrator can persist it per step (claude --resume needs it).
+      if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
+        safeEmit(onEvent, { type: 'session', sessionId: evt.session_id });
+      }
       if (evt?.type === 'assistant' && text) assistantText += text;
       if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
       // Remember the most specific error text we see, for the non-zero-exit path.
@@ -424,11 +441,17 @@ function abortIfNeeded(signal) {
 /**
  * Offline mock: emits a few log lines and performs role-appropriate writes.
  */
-async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
+async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId }) {
   abortIfNeeded(signal);
   const m = parseMarkers(prompt, systemPrompt);
   const role = m.MOCK_ROLE || inferRole(prompt, systemPrompt);
   const cycle = Number(m.MOCK_CYCLE || '1') || 1;
+
+  // Pause/Resume parity with the real runner: deterministic per-role session ids,
+  // and an assertable log line when a session is re-attached.
+  const sessionId = `mock-session-${role || 'unknown'}-c${cycle}`;
+  safeEmit(onEvent, { type: 'session', sessionId });
+  if (resumeSessionId) await emitLog(onEvent, `[mock] resumed session ${resumeSessionId}`);
 
   await emitLog(onEvent, `[mock] starting role=${role || 'unknown'} cycle=${cycle}`);
   abortIfNeeded(signal);
