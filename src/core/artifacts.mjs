@@ -332,6 +332,124 @@ export function listSubAgents(pipelineId) {
   }));
 }
 
+/**
+ * Persist a run's decomposition: its ordered phases + the self-contained task files.
+ * Idempotent UPSERT on the PKs (never the delete-all path), so a re-write or a later
+ * status update never duplicates rows. Best-effort under WAL contention (mirrors
+ * upsertSubAgent): the live decomposition is the runtime source of truth, so a
+ * swallowed write surfaces in tests, not as a crashed run. The pipelines row must
+ * already exist (FK). `phases` is [{ ordinal, tasks:[{ id, title, file, nodeId }] }].
+ * @param {string} pipelineId
+ * @param {Array<{ordinal:number, tasks:Array<{id:string,title?:string,file?:string,nodeId?:string}>}>} phases
+ */
+export function writeDecomposition(pipelineId, phases) {
+  if (!pipelineId || !Array.isArray(phases)) return;
+  try {
+    tx(() => {
+      const insPhase = getDb().prepare(`
+        INSERT INTO pipeline_phases (pipeline_id, ordinal, status)
+        VALUES (?, ?, 'pending')
+        ON CONFLICT(pipeline_id, ordinal) DO NOTHING
+      `);
+      const insTask = getDb().prepare(`
+        INSERT INTO pipeline_tasks (pipeline_id, id, phase_ordinal, task_index, title, file_rel_path, node_id, status)
+        VALUES (@pipeline_id,@id,@phase_ordinal,@task_index,@title,@file_rel_path,@node_id,'pending')
+        ON CONFLICT(pipeline_id, id) DO UPDATE SET
+          phase_ordinal = excluded.phase_ordinal,
+          task_index    = excluded.task_index,
+          title         = COALESCE(excluded.title, title),
+          file_rel_path = COALESCE(excluded.file_rel_path, file_rel_path),
+          node_id       = COALESCE(excluded.node_id, node_id)
+      `);
+      for (const ph of phases) {
+        if (!ph || !Number.isFinite(Number(ph.ordinal))) continue;
+        insPhase.run(pipelineId, Number(ph.ordinal));
+        const tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
+        tasks.forEach((t, i) => {
+          if (!t || !t.id) return;
+          insTask.run({
+            pipeline_id: pipelineId,
+            id: String(t.id),
+            phase_ordinal: Number(ph.ordinal),
+            task_index: i,
+            title: t.title ?? null,
+            file_rel_path: t.file ?? null,
+            node_id: t.nodeId ?? null,
+          });
+        });
+      }
+    });
+  } catch { /* best-effort: live decomposition is the reconcile source of truth */ }
+}
+
+/** List a pipeline's phases, ordered by ordinal. Always an array. */
+export function listPhases(pipelineId) {
+  if (!pipelineId) return [];
+  return getDb().prepare(
+    'SELECT ordinal, status, started_at, finished_at FROM pipeline_phases WHERE pipeline_id = ? ORDER BY ordinal'
+  ).all(pipelineId).map((r) => ({
+    ordinal: r.ordinal,
+    status: r.status,
+    startedAt: r.started_at ?? null,
+    finishedAt: r.finished_at ?? null,
+  }));
+}
+
+/** List a pipeline's tasks, ordered by (phase_ordinal, task_index). Always an array. */
+export function listTasks(pipelineId) {
+  if (!pipelineId) return [];
+  return getDb().prepare(`
+    SELECT id, phase_ordinal, task_index, title, file_rel_path, node_id, status, started_at, finished_at
+    FROM pipeline_tasks WHERE pipeline_id = ? ORDER BY phase_ordinal, task_index
+  `).all(pipelineId).map((r) => ({
+    id: r.id,
+    phaseOrdinal: r.phase_ordinal,
+    taskIndex: r.task_index,
+    title: r.title ?? null,
+    fileRelPath: r.file_rel_path ?? null,
+    nodeId: r.node_id ?? null,
+    status: r.status,
+    startedAt: r.started_at ?? null,
+    finishedAt: r.finished_at ?? null,
+  }));
+}
+
+/** Set a task's status + the matching timestamp (running -> started_at, terminal -> finished_at). Best-effort. */
+export function updateTaskStatus(pipelineId, taskId, status, ts) {
+  if (!pipelineId || !taskId || !status) return;
+  const startedCol = status === 'running' ? ts ?? null : null;
+  const finishedCol = (status === 'done' || status === 'error') ? ts ?? null : null;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        UPDATE pipeline_tasks SET
+          status = ?,
+          started_at = COALESCE(?, started_at),
+          finished_at = COALESCE(?, finished_at)
+        WHERE pipeline_id = ? AND id = ?
+      `).run(status, startedCol, finishedCol, pipelineId, taskId);
+    });
+  } catch { /* best-effort */ }
+}
+
+/** Set a phase's status + the matching timestamp. Best-effort. */
+export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
+  if (!pipelineId || !Number.isFinite(Number(ordinal)) || !status) return;
+  const startedCol = status === 'running' ? ts ?? null : null;
+  const finishedCol = (status === 'done' || status === 'error') ? ts ?? null : null;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        UPDATE pipeline_phases SET
+          status = ?,
+          started_at = COALESCE(?, started_at),
+          finished_at = COALESCE(?, finished_at)
+        WHERE pipeline_id = ? AND ordinal = ?
+      `).run(status, startedCol, finishedCol, pipelineId, Number(ordinal));
+    });
+  } catch { /* best-effort */ }
+}
+
 /** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
 const WORKSPACE_DESCRIPTION_CAP = 2000;
 
