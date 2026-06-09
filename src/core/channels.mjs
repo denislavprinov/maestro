@@ -9,7 +9,7 @@ import { planPath, reviewPath } from './artifacts.mjs';
 /** The closed set of channel ids (single source; imported by registry + validator).
  *  `workspace` (M3) is a read-only metadata channel carrying the frozen workspace
  *  description + member set; it is seeded once and never re-published (CONV-6). */
-export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify'];
+export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
 
 /**
  * Mint the concrete OUTPUT handle for a channel the node produces. This is the
@@ -67,6 +67,10 @@ export function allocate(channel, ctx) {
       // member set + description are seeded onto the bus directly by the orchestrator
       // (this just names the on-disk path of the frozen snapshot).
       return { kind: 'metadata', path: join(pipelineDir, 'workspace-description.md') };
+    case 'decomposition':
+      // The decomposer writes decomposition.json (phase->task index) into the run dir,
+      // alongside a tasks/ subdir of self-contained task markdown files.
+      return { kind: 'artifact', path: join(pipelineDir, 'decomposition.json') };
     case 'clarify':
       // The clarify agent writes clarify.json into the pipeline dir as scratch; the
       // DB clarify row is authoritative. Same path the legacy pre-step used.
@@ -129,6 +133,15 @@ export function publish(produces, result, outputs, bus) {
         questions: result.questions || [],
         answers: result.answers || [],
       };
+    } else if (c === 'decomposition') {
+      // Fold the decomposer's parsed phases onto the bus so _runStep's implement
+      // step can fan out one implementer per task.
+      const path = result.decompositionPath || outputs.decomposition?.path;
+      bus.decomposition = {
+        kind: 'artifact',
+        path: path || null,
+        phases: Array.isArray(result.decomposition?.phases) ? result.decomposition.phases : [],
+      };
     }
   }
 }
@@ -159,6 +172,8 @@ function legacyRoleFields(node, inputs, outputs, cycle, baseName) {
       return { planFilePath: outputs.plan?.path, baseName, answers: inputs.clarify?.answers || inputs.userPrompt?.answers || [], reviewPath: inputs.review?.mdPath };
     case 'refiner':
       return { inPlanPath: inputs.plan?.path, outPlanPath: outputs.plan?.path, reviewJsonPath: outputs.review?.jsonPath, cycle };
+    case 'decomposer':
+      return { planPath: inputs.plan?.path, decompositionPath: outputs.decomposition?.path };
     case 'implementer':
       // The implementer fixes CODE reviews (impl-review / webui-review). A plan-review
       // left on the shared `review` bus by a planReviewer -> planner loop is NOT for the
