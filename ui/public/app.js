@@ -1278,6 +1278,11 @@ function composerRefresh() {
     for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
     flow.appendChild(composerMakeStrip(composer.steps.length));
   }
+  const hint = document.getElementById('composer-decomposer-hint');
+  if (hint) {
+    const hasDecomposer = composer.steps.some((col) => col.some((n) => n.key === 'decomposer'));
+    hint.hidden = !hasDecomposer;
+  }
   requestAnimationFrame(composerDrawWires);
 }
 
@@ -1669,6 +1674,7 @@ function defaultEffortFor(modelId) {
 // reuse) without leaking them into the app's runtime contract.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
+    composer, composerRefresh,
     buildNodeConfigRows,
     buildFeedbackRows,
     defaultEffortFor,
