@@ -33,7 +33,6 @@ import {
   writeReview,
   reviewKindOf,
   writeDecomposition,
-  listTasks,
   updateTaskStatus,
   updatePhaseStatus,
 } from './artifacts.mjs';
@@ -42,7 +41,7 @@ import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphIns
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
-import { runClarify, runImplementer } from './phases.mjs';
+import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
