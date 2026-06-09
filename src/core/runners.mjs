@@ -82,6 +82,7 @@ async function producer(ctx) {
       const { summary } = await runImplementer(ctx, {
         planPath: ctx.planPath,
         reviewPath: ctx.reviewPath,
+        taskPath: ctx.node?.taskPath,
         mode: ctx.mode || 'implement',
       });
       return { status: 'ok', summary };
