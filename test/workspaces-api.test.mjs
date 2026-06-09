@@ -343,10 +343,13 @@ test('DELETE /api/workspaces/:id is 409 while a live run/scan for it exists', as
   const b = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Busy', projectPaths: [a, b] })).json();
 
-  // Simulate a live workspace run/scan for this id in the runs Map.
-  runs.set('live-ws-1', { id: 'live-ws-1', workspaceId: workspace.id, status: 'running' });
-  const r = await del(`/api/workspaces/${workspace.id}`);
-  assert.equal(r.status, 409, 'a live run/scan blocks deletion');
+  // Simulate a live workspace run/scan for this id in the runs Map. 'pausing'
+  // (mid-graceful-pause, orchestrator still persisting into the store) is live too.
+  for (const status of ['running', 'pausing']) {
+    runs.set('live-ws-1', { id: 'live-ws-1', workspaceId: workspace.id, status });
+    const r = await del(`/api/workspaces/${workspace.id}`);
+    assert.equal(r.status, 409, `status=${status} blocks deletion`);
+  }
   runs.delete('live-ws-1');
 
   // After the live entry clears, deletion proceeds.

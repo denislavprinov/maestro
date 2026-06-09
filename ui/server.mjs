@@ -1107,7 +1107,7 @@ app.delete('/api/workspaces/:id', async (req, res) => {
   // module-level deleteWorkspace has no runs map, so this guard lives here (§2.3).
   const live = [...runs.values()].some((r) =>
     r.workspaceId === id &&
-    ['running', 'starting', 'created', 'scanning'].includes(String(r.status || '').toLowerCase()));
+    ['running', 'starting', 'created', 'scanning', 'pausing'].includes(String(r.status || '').toLowerCase()));
   if (live) return res.status(409).json({ error: 'cannot delete a workspace with a live run or scan' });
   try {
     const report = await deleteWorkspace(id);
