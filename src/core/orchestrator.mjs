@@ -32,15 +32,19 @@ import {
   writeClarify,
   writeReview,
   reviewKindOf,
+  writeDecomposition,
+  listTasks,
+  updateTaskStatus,
+  updatePhaseStatus,
 } from './artifacts.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
-import { runClarify } from './phases.mjs';
+import { runClarify, runImplementer } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
-import { resolveWorkflow, buildStepperManifest } from './workflows.mjs';
+import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
@@ -867,6 +871,7 @@ class Orchestrator extends EventEmitter {
     const bus = {
       userPrompt: { kind: 'value', text: this.pipeline.promptText, answers: [] },
       clarify: null,
+      decomposition: null,
       // planPath routes to the workspace store when workspaceKey is set (byte-
       // identical to today's path otherwise).
       plan: { kind: 'artifact', path: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix, this.workspaceKey || undefined) },
@@ -963,6 +968,11 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline && ctx.outputs?.review?.reviewKind && result?.review) {
         await writeReview(this.pipeline.id, reviewKindOf(ctx.outputs.review.reviewKind), cycle, result.review);
       }
+      // Decomposer node: persist the phases + tasks (stamped with the deterministic
+      // implementer node ids) so the records exist even if the implement stage aborts.
+      if (this.pipeline && node.key === 'decomposer' && Array.isArray(result?.decomposition?.phases)) {
+        await this._persistDecomposition(result.decomposition.phases);
+      }
       if ((node.produces || []).includes('code')) stageNeeded = true;
     }
     // CONV-6: stage ONCE, AWAITED, after the step's producers — so a following
@@ -970,6 +980,20 @@ class Orchestrator extends EventEmitter {
     // after every implement pass).
     if (stageNeeded) await this._stageWorkingTree();
     return results;
+  }
+
+  /**
+   * Persist the decomposer's phases/tasks, stamping each task with the deterministic
+   * implementer node id `s_impl_p<ordinal>_t<index+1>` used by the manifest rewrite +
+   * runtime fan-out. Best-effort (writeDecomposition swallows WAL errors).
+   */
+  async _persistDecomposition(phases) {
+    for (const ph of phases) {
+      const tasks = Array.isArray(ph?.tasks) ? ph.tasks : [];
+      tasks.forEach((t, i) => { t.nodeId = `s_impl_p${ph.ordinal}_t${i + 1}`; });
+    }
+    writeDecomposition(this.pipeline.id, phases);
+    await appendAudit(this.pipeline.dir, `Decomposed plan into ${phases.length} phase(s).`);
   }
 
   /**
