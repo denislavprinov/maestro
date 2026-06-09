@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -619,6 +619,35 @@ function applySchemaV13(db) {
 }
 
 /**
+ * Incremental v13 -> v14 migration (Assets feature). pipeline_assets — one row per
+ * asset invocation (Skill / Agent sub-agent / graphify) detected on the MAIN claude
+ * stream from inside a phase. Mirrors sub_agents: FK to pipelines ONLY (ON DELETE
+ * CASCADE), written via idempotent UPSERTs keyed on the tool_use id, so rows survive
+ * the writeState pipeline_steps delete-all refresh. Dedup + counts are computed at
+ * read/render time, not stored. A brand-new base table, so it is the version ladder's
+ * job (schemaGaps/reconcileSchema only heal missing COLUMNS on existing tables, never
+ * absent base tables).
+ */
+const SCHEMA_V14 = `
+  CREATE TABLE pipeline_assets (
+    pipeline_id TEXT NOT NULL,
+    id          TEXT NOT NULL,            -- tool_use id; unique per invocation
+    kind        TEXT NOT NULL,            -- 'skill' | 'agent' | 'graphify'
+    name        TEXT NOT NULL,            -- dedup identity (skill / subagent_type / 'graphify')
+    detail      TEXT,
+    node_id     TEXT,
+    ui_phase    TEXT,
+    step_index  INTEGER,
+    cycle       INTEGER,
+    step_key    TEXT,
+    invoked_at  TEXT,
+    PRIMARY KEY (pipeline_id, id),
+    FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+  );
+  CREATE INDEX idx_pipeline_assets_pipeline ON pipeline_assets (pipeline_id);
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -663,6 +692,7 @@ export function migrate(db) {
     if (current < 11) db.exec(SCHEMA_V11);
     if (current < 12) applySchemaV12(db);
     if (current < 13) applySchemaV13(db);
+    if (current < 14) db.exec(SCHEMA_V14);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
