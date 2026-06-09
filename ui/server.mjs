@@ -18,7 +18,10 @@ import { randomUUID } from 'node:crypto';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { listPipelines, readPipeline, listAllPipelines, readPipelineByKey, enrichPipelinesPr } from '../src/core/artifacts.mjs';
+import {
+  listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
+  enrichPipelinesPr, reconcileStaleRunning,
+} from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import {
@@ -88,6 +91,22 @@ const HOST = process.env.MAESTRO_HOST || '127.0.0.1';
  * }>}
  */
 const runs = new Map();
+
+// Ids of runs genuinely live in THIS process (non-terminal entries in the runs Map).
+// Passed to reconcileStaleRunning so a same-process run is never relabeled. Both the
+// short pipelineId (matches pipelines.id) and the runs-Map UUID id are pushed; the UUID
+// simply never matches a pipelines.id, so including it is harmless.
+function liveRunIds() {
+  const ids = [];
+  for (const r of runs.values()) {
+    const s = String(r.status || '').toLowerCase();
+    if (s === 'running' || s === 'starting' || s === 'created') {
+      if (r.pipelineId) ids.push(r.pipelineId);
+      if (r.id) ids.push(r.id);
+    }
+  }
+  return ids;
+}
 
 const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
@@ -701,6 +720,10 @@ app.get('/api/runs/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/history', async (_req, res) => {
   try {
+    // Self-heal records left 'running' by a dead process before listing, so History
+    // never shows a phantom Running run and its Delete button appears (see
+    // pipeline-delete ACTIVE / app.js isDeletableEntry — both allow 'interrupted').
+    try { reconcileStaleRunning({ liveIds: liveRunIds() }); } catch { /* best-effort */ }
     // Phase 1: PR-light skeleton (no `gh pr list`). Live PR state is pushed
     // separately over the WS by POST /api/history/pr -> enrichPipelinesPr.
     res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh() });
@@ -1458,6 +1481,15 @@ app.use((req, res, next) => {
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // Reconcile runs left 'running' by a previous process that died before writing a
+  // terminal status (crash/kill/restart). At boot this process owns no live runs.
+  try {
+    const { reconciled } = reconcileStaleRunning({ liveIds: [] });
+    if (reconciled) console.log(`[maestro-ui] reconciled ${reconciled} stale running record(s) -> interrupted`);
+  } catch (err) {
+    console.error(`[maestro-ui] stale-run reconcile failed: ${err && err.message ? err.message : err}`);
+  }
+
   server.on('error', (err) => {
     console.error(`[maestro-ui] server error: ${err && err.message ? err.message : err}`);
   });

@@ -131,6 +131,20 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
   assert.equal(doc.querySelector('#nav-history-count').textContent, '2', 'nav count reflects rendered cards');
 });
 
+test('interrupted entry renders an INTERRUPTED red badge', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/api/history')
+      ? runsListResponse([{ id: 'pi', title: 'Stuck', status: 'interrupted', startedAt: '2026-06-02T00:00:00Z',
+                            projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj' }])
+      : null),
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const badge = ctx.window.document.querySelector('#history .badge');
+  assert.equal(badge.textContent, 'INTERRUPTED');
+  assert.ok(badge.classList.contains('red'), 'interrupted badge is red');
+});
+
 test('expanding a card toggles aria-expanded, unhides detail, tints stepper from fetched state', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {

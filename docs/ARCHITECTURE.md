@@ -644,7 +644,10 @@ pipeline_steps(
   PRIMARY KEY (pipeline_id, key)
 )
 ```
-- `status` ∈ `{ "running", "done", "stopped", "error" }` (on `pipelines.status`).
+- `status` ∈ `{ "running", "done", "stopped", "error", "interrupted" }` (on `pipelines.status`).
+  `interrupted` is set by the boot/history reconciler (`reconcileStaleRunning`, src/core/artifacts.mjs)
+  for runs whose owning process died before writing a terminal status; staleness window is
+  `MAESTRO_STALE_RUN_MS` (default 30 min).
 - `phase` ∈ `{ "preflight","plan","refine","plan-review","implement","review","done" }`
   (data-driven workflows may also emit `manual-checklist`/`manual-web`).
 - The old `state.json` scalar fields map 1:1 to `pipelines` columns; the old
