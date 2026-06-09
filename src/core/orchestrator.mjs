@@ -470,6 +470,9 @@ class Orchestrator extends EventEmitter {
       }
       if (isAbort(err) || this.state.status === 'stopped') {
         this._setStatus('stopped');
+        // Stopped runs are not resumable: never persist a resume point (e.g. one
+        // _dispatch assigned before stop won the race) alongside a torn-down worktree.
+        this.state.resumePoint = null;
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
@@ -1556,9 +1559,10 @@ class Orchestrator extends EventEmitter {
     // Backstop (§5.2): when a step reaches its terminal marker, force-close any
     // sub-agent still 'running' for THIS step so the UI never shows a stuck-active
     // square if a tool_result finish was missed. 'start' never closes anything;
-    // the close status is 'stopped' iff the whole run was stopped, else 'finished'.
-    if (status === 'done' || status === 'error' || status === 'stopped') {
-      const closeTo = this.state.status === 'stopped' ? 'stopped' : 'finished';
+    // the close status is 'stopped' when the run was stopped or is pausing (pause
+    // SIGTERMs in-flight children too), else 'finished'.
+    if (status === 'done' || status === 'error' || status === 'stopped' || status === 'paused') {
+      const closeTo = (this.state.status === 'stopped' || this.state.status === 'pausing') ? 'stopped' : 'finished';
       for (const rec of this.state.subAgents) {
         if (rec.stepKey !== key || rec.status !== 'running') continue;
         rec.status = closeTo;

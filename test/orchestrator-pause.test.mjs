@@ -22,6 +22,9 @@ function gitDir() {
 function pausingProducer(getOrch) {
   return async (ctx) => {
     ctx.onEvent({ type: 'session', sessionId: 'sess-hang' });
+    // Spawn a (synthetic) sub-agent so the pause path's force-close is exercised:
+    // pause SIGTERMs in-flight children, so the record must close as 'stopped'.
+    ctx.onEvent({ raw: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu_pause', name: 'Task', input: { description: 'hung child' } }] } } });
     queueMicrotask(() => getOrch().pause());
     return new Promise((_res, rej) => {
       const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
@@ -57,6 +60,13 @@ test('pause mid-node -> paused status, resume_point persisted, worktree kept', a
   // Worktree must SURVIVE a pause (uncommitted work lives there).
   const wt = JSON.parse(row.branch || '{}').worktreeDir;
   assert.ok(wt && existsSync(wt), 'worktree dir kept while paused');
+
+  // Pause kills in-flight children: the spawned sub-agent record must not stay
+  // 'running' for the whole paused period — the paused endMark force-closes it.
+  const sa = orch.state.subAgents.find((s) => s.id === 'tu_pause');
+  assert.equal(sa?.status, 'stopped', 'sub-agent record closed as stopped on pause');
+  const saRow = getDb().prepare('SELECT status FROM sub_agents WHERE pipeline_id = ? AND id = ?').get(orch.state.id, 'tu_pause');
+  assert.equal(saRow?.status, 'stopped', 'sub_agents row closed as stopped on pause');
 });
 
 test('pause is a no-op unless running; double pause safe', () => {
@@ -85,4 +95,39 @@ test('stop still wins: stopped run is not paused', async () => {
   });
   const res = await orch.run();
   assert.equal(res.status, 'stopped');
+});
+
+test('stop while pausing: stop wins and no resume_point is persisted', async () => {
+  const dir = gitDir();
+  let orch;
+  let pausedFirst = false;
+  orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: {
+      producer: async (ctx) => {
+        // Deterministic interleave: pause() flips status to 'pausing' synchronously,
+        // then stop() lands on the pausing run — within the same microtask.
+        queueMicrotask(() => {
+          pausedFirst = orch.pause() === true && orch.state.status === 'pausing';
+          orch.stop();
+        });
+        return new Promise((_res, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort();
+          else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+      verifier: okVerifier,
+    },
+  });
+  const res = await orch.run();
+  assert.equal(pausedFirst, true, 'pause flipped status to pausing before stop landed');
+  assert.equal(res.status, 'stopped');
+  assert.equal(orch.state.status, 'stopped');
+
+  // Stopped runs are not resumable: the worktree is torn down, so a leftover
+  // resume_point (assigned by _dispatch before stop won) must never be persisted.
+  const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.state.id);
+  assert.equal(row.status, 'stopped');
+  assert.equal(row.resume_point, null, 'stopped row carries no resume point');
 });
