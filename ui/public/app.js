@@ -304,7 +304,7 @@ function onHello(msg) {
     }
 
     const nonTerminal =
-      r0.status === 'starting' || r0.status === 'running' || (r0.pendingQuestion != null);
+      r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' || (r0.pendingQuestion != null);
     // Backfill that run's buffered events exactly once per socket. (Runs started
     // by THIS tab already stream live via broadcast and were not in any prior
     // hello, so they get subscribed here only if a reconnect re-lists them.)
@@ -1712,6 +1712,11 @@ if (typeof window !== 'undefined') {
     subGroupStatus,
     renderSubsTree,
     nodeLabelLookup,
+    historyBadge,
+    statusPill,
+    buildHistCard,
+    pauseRun,
+    setupResumeButton,
   });
 }
 
@@ -3794,7 +3799,32 @@ async function stopRun(runId, btn) {
   }
 }
 
-// Delegated controls on the dynamic run-card list: per-card Stop + per-card
+// Per-card Pause. POST /api/pause; on success the server flips the run to
+// 'pausing' (state event keeps the card visible via liveRuns) and the eventual
+// done(paused) routes through finishRun — the record resurfaces in History
+// with a Resume button. On failure re-enable the button and log to that card.
+async function pauseRun(runId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId }),
+    });
+    if (!res.ok) {
+      const err = await safeJson(res);
+      if (btn) btn.disabled = false;
+      const r = runs.get(runId);
+      if (r) onLog(r, { source: 'ui', level: 'error', text: `pause failed: ${err.error || res.status}`, ts: Date.now() });
+    }
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    const r = runs.get(runId);
+    if (r) onLog(r, { source: 'ui', level: 'error', text: `pause error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Delegated controls on the dynamic run-card list: per-card Stop/Pause + per-card
 // auto-scroll switch. Scoped to each card via closest('.run-card').
 const runListEl = $('#run-list');
 if (runListEl) {
@@ -3804,6 +3834,13 @@ if (runListEl) {
       const card = stopBtn.closest('.run-card');
       const runId = card && card.dataset.runId;
       if (runId) stopRun(runId, stopBtn);
+      return;
+    }
+    const pauseBtn = e.target.closest && e.target.closest('.btn-pause');
+    if (pauseBtn) {
+      const card = pauseBtn.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      if (runId) pauseRun(runId, pauseBtn);
       return;
     }
     const sw = e.target.closest && e.target.closest('.switch.autoscroll');
@@ -4214,6 +4251,8 @@ function historyBadge(p) {
   if (s === 'stopped' || s === 'aborted') return { cls: 'badge red', text: 'STOPPED' };
   if (s === 'error' || s === 'failed') return { cls: 'badge red', text: 'ERROR' };
   if (s === 'interrupted') return { cls: 'badge red', text: 'INTERRUPTED' };
+  if (s === 'paused') return { cls: 'badge paused', text: 'PAUSED' };
+  if (s === 'pausing') return { cls: 'badge running', text: 'PAUSING…' };
   if (p.live || s === 'running' || s === 'starting') return { cls: 'badge running', text: 'RUNNING' };
   return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
 }
@@ -4306,11 +4345,12 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
   });
 }
 
-// A history entry is deletable only when finished (never while live/running/created).
+// A history entry is deletable only when finished (never while live/running/
+// created/pausing — the server 409s a pausing delete; this hides the button).
 function isDeletableEntry(p) {
   if (!p || p.live) return false;
   const s = String(p.status || '').toLowerCase();
-  return !['running', 'starting', 'created'].includes(s);
+  return !['running', 'starting', 'created', 'pausing'].includes(s);
 }
 
 // Wire the Delete button in the expanded card. Shown only for finished entries.
@@ -4353,6 +4393,46 @@ function setupDeleteButton(node, projectDir, p) {
       btn.disabled = false;
       btn.textContent = prev;
       btn.title = `Could not delete: ${err.message}`;
+    }
+  });
+}
+
+// Resume a paused pipeline from its history card. POST /api/resume returns the
+// new live runId; the run announces itself over the WS — mirror beginRun's
+// post-launch block so the user lands on the live card immediately.
+function setupResumeButton(node, projectDir, p) {
+  const btn = node.querySelector('.hist-resume');
+  if (!btn) return;
+  if (String(p.status || '').toLowerCase() !== 'paused') { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation(); // never toggle the card when clicking the button
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Resuming…';
+    try {
+      const res = await fetch('/api/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pipelineId: p.id }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+      upsertRun({
+        runId: data.runId,
+        title: p.title || p.id,
+        projectDir: p.projectDir || projectDir || '',
+        status: 'starting',
+        local: true,
+      });
+      hideViewer();
+      updateNavCounts();
+      showView('running');
+      renderRunningView();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = label;
+      btn.title = `Could not resume: ${err.message}`;
     }
   });
 }
@@ -4408,6 +4488,7 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   renderHistDiff(node.querySelector('.hist-diff'), p);
   setupPrButton(node, projectDir, p, ghAvailable);
   setupDeleteButton(node, projectDir, p);
+  setupResumeButton(node, projectDir, p);
 
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');
@@ -4679,9 +4760,12 @@ function fmtDate(v) {
 // Multi-run rendering: one card per live run in the Running view.
 // ---------------------------------------------------------------------------
 
-// A run is "live" while it is starting/running OR has a pending question
-// (paused). Terminal statuses (done|error|stopped) are never live; on finish we
-// also clear pendingQuestion, so a lingering question can't keep it live.
+// A run is "live" while it is starting/running/pausing OR has a pending
+// question. 'pausing' keeps the card visible through the graceful shutdown;
+// 'paused' is NOT live — the done(paused) event routes through finishRun and
+// the run's home becomes History. Terminal statuses (done|error|stopped) are
+// never live; on finish we also clear pendingQuestion, so a lingering question
+// can't keep it live.
 // The `!r._finished` guard ensures a run that has been through finishRun can
 // never re-enter the live list — even if an out-of-order event or a future
 // hello upserts it with a live `status` again. The terminal exclusion routes
@@ -4692,7 +4776,7 @@ function liveRuns() {
     (r) =>
       !r._finished &&
       !isTerminalStatus(r.status) &&
-      (r.status === 'starting' || r.status === 'running' || r.pendingQuestion != null)
+      (r.status === 'starting' || r.status === 'running' || r.status === 'pausing' || r.pendingQuestion != null)
   );
 }
 
@@ -4715,7 +4799,11 @@ function startedLabel(startedAt) {
 const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
+// pausing/paused are checked BEFORE the pendingQuestion state so an in-flight
+// pause is never mislabeled "awaiting answers".
 function statusPill(r) {
+  if (r.status === 'pausing') return { family: 'amber', text: 'Pausing…' };
+  if (r.status === 'paused') return { family: 'amber', text: 'Paused' };
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
