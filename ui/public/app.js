@@ -279,11 +279,11 @@ function handleServerMessage(msg) {
   // exactly what produced the phantom "(untitled)" pipeline. Other event types may
   // legitimately create a card for a run this tab didn't start (CLI / another tab),
   // and `state` snapshots reconcile r.subAgents anyway, so nothing is lost.
-  // Neither a sub-agent delta, a skills update, nor a question resolution may
-  // MATERIALIZE a run: each only attaches to one this tab already knows. (A
-  // resolution for an unknown run is meaningless, and auto-creating a card would
-  // resurrect the phantom.)
-  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
+  // Neither a sub-agent delta, a skills/graphify/asset update, nor a question
+  // resolution may MATERIALIZE a run: each only attaches to one this tab already
+  // knows. (A resolution for an unknown run is meaningless, and auto-creating a
+  // card would resurrect the phantom.)
+  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'asset' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
@@ -313,6 +313,9 @@ function handleServerMessage(msg) {
       break;
     case 'stepgraphify':
       onStepGraphify(r, msg);
+      break;
+    case 'asset':
+      onAsset(r, msg);
       break;
     case 'done':
       onDone(r, msg);
@@ -754,6 +757,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
+    assets: [],        // Array<record> — asset invocations (Skill/Agent/graphify); see onAsset/onState
     el: null,
     _finished: false,
   };
@@ -979,6 +983,60 @@ function subsByNodeArrays(subAgents) {
   return Object.fromEntries([...subsByNode(subAgents)].map(([k, g]) => [k, g.subs]));
 }
 
+// ── "Assets used" panel helpers (Skills / Agents / graphify) ────────────────
+// Dedup asset invocations by (kind, name) into ordered groups with a count and
+// the underlying items (for drill-down). graphify-via-Skill and graphify-via-Bash
+// both normalise to (graphify, graphify) and collapse into one group.
+function assetRollup(assets) {
+  const order = [], by = new Map();
+  for (const a of (assets || [])) {
+    const k = a.kind + ' ' + a.name;
+    if (!by.has(k)) { by.set(k, { kind: a.kind, name: a.name, count: 0, items: [] }); order.push(k); }
+    const g = by.get(k); g.count++; g.items.push(a);
+  }
+  return order.map((k) => by.get(k));
+}
+// Collapsed-pill summary: total invocations + distinct (kind,name) assets.
+function assetsPillText(assets) {
+  const total = (assets || []).length;
+  if (!total) return { text: 'No assets used', empty: true };
+  const distinct = new Set((assets || []).map((a) => a.kind + ' ' + a.name)).size;
+  return { text: `${total} invocation${total === 1 ? '' : 's'} · ${distinct} asset${distinct === 1 ? '' : 's'}`, empty: false };
+}
+const ASSET_KIND_LABEL = { skill: 'Skill', agent: 'Agent', graphify: 'graphify' };
+
+// Paint the "Assets used" disclosure (button pill + drill-down panel). Mirrors
+// paintSubsBar: idempotent click binding, always visible once a run exists,
+// reuses escapeHtml. Empty -> greyed pill + empty-state line.
+function paintAssetsPanel(barEl, assets) {
+  if (!barEl) return;
+  const rollup = assetRollup(assets);
+  barEl.hidden = false;                                  // always present once a run exists
+  const btn = barEl.querySelector('.btn-assets');
+  const count = barEl.querySelector('.ab-count');
+  const panel = barEl.querySelector('.assets-panel');
+  const pill = assetsPillText(assets);
+  count.textContent = pill.text;
+  count.classList.toggle('grey', pill.empty);
+  if (!btn.dataset.bound) {                              // bind once
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  }
+  panel.innerHTML = rollup.map((g) => `
+    <div class="assets-row" data-kind="${g.kind}">
+      <span class="a-dot ${g.kind}"></span>
+      <span class="a-kind">${escapeHtml(ASSET_KIND_LABEL[g.kind] || g.kind)}</span>
+      <b class="a-name">${escapeHtml(g.name)}</b>
+      <span class="a-count">×${g.count}</span>
+      <ul class="a-items">${g.items.map((it) =>
+        `<li>${escapeHtml(it.detail || '')}${it.uiPhase ? ` <em>(${escapeHtml(it.uiPhase)})</em>` : ''}</li>`).join('')}</ul>
+    </div>`).join('') || '<div class="assets-empty">No Skills, Agents or graphify were invoked.</div>';
+}
+
 // Group key separator for (nodeId, cycle) dropdown groups. | never occurs
 // in a nodeId (alphanumerics + underscore) or an integer, so split is unambiguous.
 const CYCLE_KEY_SEP = '|';
@@ -1165,6 +1223,7 @@ function onState(r, msg) {
   // any missed `subagent` delta). Replace wholesale when present; a snapshot that
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
+  r.assets = msg.assets || r.assets;
   if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
   paintRunCard(r);
@@ -1212,6 +1271,19 @@ function onStepGraphify(r, msg) {
   if (!msg || msg.nodeId == null) return;
   if (!r.stepGraphify) r.stepGraphify = {};
   r.stepGraphify[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Number(msg.graphifyCount) || 0;
+  paintRunCard(r);
+}
+
+// Upsert one asset-invocation delta by tool_use id (mirrors onSubagent; the full
+// `state` snapshot remains the reconcile source of truth via onState).
+function onAsset(r, msg) {
+  if (!msg || !msg.id) return;
+  if (!Array.isArray(r.assets)) r.assets = [];
+  const i = r.assets.findIndex((a) => a.id === msg.id);
+  const rec = { id: msg.id, kind: msg.kind, name: msg.name, detail: msg.detail,
+                nodeId: msg.nodeId, uiPhase: msg.uiPhase, stepIndex: msg.stepIndex,
+                cycle: msg.cycle, stepKey: msg.stepKey, invokedAt: msg.invokedAt };
+  if (i === -1) r.assets.push(rec); else r.assets[i] = { ...r.assets[i], ...rec };
   paintRunCard(r);
 }
 
@@ -1953,6 +2025,9 @@ if (typeof window !== 'undefined') {
     subFanHtml,
     subsPillText,
     paintSubsBar,
+    assetRollup,
+    assetsPillText,
+    paintAssetsPanel,
     subGroupStatus,
     renderSubsTree,
     skillPillsHtml,
@@ -5416,6 +5491,9 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
     paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
+    // Assets-used dropdown — under Live logs.
+    const histAssetsBar = detail.querySelector('.assets-bar');
+    if (histAssetsBar) paintAssetsPanel(histAssetsBar, data.state.assets);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
       const totalEl = card && card.querySelector('.hist-total');
@@ -6065,6 +6143,8 @@ function paintRunCard(r) {
       stepStatusByKey(r.steps, r.stepper),
     );
   }
+  const assetsBar = r.el.querySelector('.assets-bar');
+  if (assetsBar) paintAssetsPanel(assetsBar, r.assets);
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
