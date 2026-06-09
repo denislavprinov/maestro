@@ -122,6 +122,66 @@ test('index.html exposes the workflow select + dynamic node/feedback containers'
   }
 });
 
+test('index.html includes a Clarify default-stage card as the first stage with full-parity controls', () => {
+  // Clarify must exist as a default-stage row with the same model + effort + fan-out controls.
+  assert.ok(indexHtml.includes('data-role="clarify"'), 'missing Clarify default stage row');
+  assert.ok(indexHtml.includes('<b>Clarify</b>'), 'missing Clarify title');
+  assert.ok(indexHtml.includes('<div class="acc red"></div>'), 'missing Clarify accent bar');
+  assert.ok(
+    indexHtml.includes('class="step-model select" data-role="clarify"'),
+    'Clarify card missing model select',
+  );
+  assert.ok(
+    indexHtml.includes('class="step-effort select" data-role="clarify"'),
+    'Clarify card missing effort select',
+  );
+  assert.ok(
+    indexHtml.includes('class="step-fanout" data-role="clarify"'),
+    'Clarify card missing fan-out checkbox',
+  );
+  assert.ok(
+    indexHtml.includes('class="step-current" data-role="clarify"'),
+    'Clarify card missing summary line',
+  );
+  // Clarify is the FIRST stage: it must appear before the Plan (planner) card.
+  assert.ok(
+    indexHtml.indexOf('data-role="clarify"') < indexHtml.indexOf('data-role="planner"'),
+    'Clarify card must come before the Plan card',
+  );
+});
+
+test('the Clarify default-stage card defaults Fan-out ON and is populated from /api/config steps', async () => {
+  // Top-level `steps` array carries each step's default fan-out (from the agent meta sidecars),
+  // exactly like the existing default-row fan-out test. clarify.meta.json has fanOut:true.
+  const steps = [
+    { key: 'clarify', label: 'Clarify', fanOut: true },
+    { key: 'planner', label: 'Plan', fanOut: true },
+    { key: 'refiner', label: 'Refine', fanOut: false },
+    { key: 'implementer', label: 'Implement', fanOut: false },
+    { key: 'reviewer', label: 'Review', fanOut: false },
+  ];
+  const MODEL = { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'xhigh', 'max'] };
+  const { window } = await boot({ fetchHandler: (url) => {
+    if (url.includes('/api/config')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        config: { steps: {}, customModels: [] },
+        models: [MODEL],
+        efforts: ['medium', 'high', 'xhigh', 'max'],
+        steps, // top-level — app.js reads data.steps for per-step fan-out defaults
+      }) });
+    }
+    return null; // fall through to boot()'s /api/projects + /api/workflows defaults
+  } });
+  const doc = window.document;
+  // Load-bearing assertion: Clarify fan-out defaults ON from clarify.meta.json (fanOut:true).
+  const fan = doc.querySelector('.step-fanout[data-role="clarify"]');
+  assert.ok(fan, 'missing Clarify fan-out checkbox');
+  assert.equal(fan.checked, true, 'Clarify fan-out must default ON (clarify.meta.json fanOut:true)');
+  // Parity: the Clarify model dropdown is populated just like the other cards.
+  const model = doc.querySelector('.step-model[data-role="clarify"]');
+  assert.ok(model && model.options.length >= 1, 'Clarify model select not populated');
+});
+
 test('renderModelEffortPair fills a model dropdown (default + models + add) and filters efforts by model', async () => {
   const { window } = await boot();
   const doc = window.document;
