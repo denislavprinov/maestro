@@ -72,7 +72,7 @@ test('opening a user_version=2 DB forward-migrates to v3 (adds sub_agents.ui_pha
   seed.close();
 
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8, 'forward-migrated to v8');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9, 'forward-migrated to v9');
   const cols = db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name);
   assert.ok(cols.includes('ui_phase'), 'ui_phase column added by v2->v3 migration');
   assert.equal(
