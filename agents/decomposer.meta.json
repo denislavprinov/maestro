@@ -1,0 +1,17 @@
+{
+  "key": "decomposer",
+  "displayName": "Decompose",
+  "description": "break plan into vertical-slice tasks",
+  "color": "blue",
+  "scope": "project",
+  "icon": "<path d=\"M12 3v6M12 9l-5 5M12 9l5 5M5 14h2M17 14h2M6 18h2M16 18h2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "maestro-decomposer.md",
+  "runnerType": "producer",
+  "loopSource": false,
+  "fanOut": false,
+  "produces": ["decomposition"],
+  "consumes": ["plan"],
+  "optionalConsumes": [],
+  "connectsTo": ["implementer"],
+  "order": 2.5
+}

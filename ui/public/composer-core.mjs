@@ -62,13 +62,17 @@ export const EMBEDDED_AGENTS = {
   },
   planner: {
     key: 'planner', displayName: 'Plan', description: 'architecture & breakdown',
-    color: 'violet', order: 1, connectsTo: ['refiner', 'implementer'],
+    color: 'violet', order: 1, connectsTo: ['refiner', 'implementer', 'decomposer'],
     icon: '<path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/>',
   },
   refiner: {
     key: 'refiner', displayName: 'Refine Plan', description: 'tighten the plan',
-    color: 'green', order: 2, connectsTo: ['implementer', 'refiner'],
+    color: 'green', order: 2, connectsTo: ['implementer', 'refiner', 'decomposer'],
     icon: '<path d="M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1" stroke-linecap="round"/><path d="M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z" stroke-linejoin="round"/>',
+  },
+  decomposer: {
+    key: 'decomposer', displayName: 'Decompose', description: 'break plan into vertical-slice tasks',
+    color: 'blue', order: 2.5, connectsTo: ['implementer'],
   },
   implementer: {
     key: 'implementer', displayName: 'Implementation', description: 'write the code',
@@ -92,7 +96,7 @@ export const EMBEDDED_AGENTS = {
   },
   planReviewer: {
     key: 'planReviewer', displayName: 'Plan Review', description: 'review the plan, bounce to planner',
-    color: 'amber', order: 7, connectsTo: ['planner', 'implementer'],
+    color: 'amber', order: 7, connectsTo: ['planner', 'implementer', 'decomposer'],
     icon: '<path d="M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z"/><path d="M15.5 15.5L21 21" stroke-linecap="round"/><path d="M7.6 10.3l2 2 3.3-3.6" stroke-linecap="round" stroke-linejoin="round"/>',
   },
 };

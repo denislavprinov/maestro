@@ -9,6 +9,6 @@
   "loopSource": false,
   "produces": ["plan","review"],
   "consumes": ["plan"],
-  "connectsTo": ["implementer","refiner"],
+  "connectsTo": ["implementer","refiner","decomposer"],
   "order": 2
 }
