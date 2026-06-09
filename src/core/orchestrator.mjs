@@ -1462,6 +1462,17 @@ class Orchestrator extends EventEmitter {
       this._recordSubAgentTelemetry(e.raw);
       return;
     }
+    // Pause/Resume: stamp the claude session id on the step that spawned it, and
+    // persist eagerly — a later pause (or even a crash) must find it in the DB.
+    if (e.type === 'session' && typeof e.sessionId === 'string') {
+      const key = attr?.stepKey;
+      const step = key ? this.state.steps.find((s) => s.key === key) : null;
+      if (step && step.sessionId !== e.sessionId) {
+        step.sessionId = e.sessionId;
+        this._persist().catch(() => {});
+      }
+      return;
+    }
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string

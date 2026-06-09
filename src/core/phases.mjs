@@ -236,13 +236,21 @@ function mockMarkers(fields) {
   return lines.join('\n');
 }
 
+/** Prepended to the task prompt when a node re-attaches to an interrupted session. */
+export const RESUME_HEADER =
+  '## Resumed session\n\n' +
+  'You were interrupted mid-task and this session has been resumed. First verify the\n' +
+  'state of your previous work (files/artifacts you already wrote), then continue the\n' +
+  'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
+
 /** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
 function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   return {
     cwd: ctx.projectDir,
     systemPrompt,
-    prompt,
+    prompt: ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt,
+    resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its
     // frontmatter (e.g. the Playwright MCP browser_* tools). ctx.node is present
     // for every dispatched node (orchestrator._nodeCtx); the clarify pre-step has
