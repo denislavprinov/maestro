@@ -459,6 +459,56 @@ export async function runRefiner(ctx, opts) {
 }
 
 /**
+ * Decomposer — breaks the plan into vertical-slice task files + a decomposition.json
+ * manifest. Reads planPath; writes tasks/ + decompositionPath. Returns
+ * { decompositionPath, decomposition } where decomposition is the parsed manifest.
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ planPath: string, decompositionPath: string }} opts
+ */
+export async function runDecomposer(ctx, opts) {
+  const { join, dirname } = await import('node:path');
+  const { planPath, decompositionPath } = opts || {};
+  const role = 'decomposer';
+  const tasksDir = join(dirname(decompositionPath), 'tasks');
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.decomposer, role, ctx.workspace);
+  const prompt =
+    taskHeader(ctx, 'Decompose the plan into vertical-slice tasks') +
+    '\n## What to do\n\n' +
+    'Read the approved plan and break it into tracer-bullet vertical slices grouped into ' +
+    'ordered phases. Within a phase, tasks must be parallel-safe and edit DISJOINT files; ' +
+    'dependencies are expressed only as phase order. Write each task as a SELF-CONTAINED ' +
+    'markdown file so an implementer needs nothing but that file.\n\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
+    `Plan to decompose: ${planPath}\n` +
+    `Write each task file under: ${tasksDir}/ (name them p<phase>-t<n>-<kebab-title>.md)\n` +
+    `Write the manifest JSON to: ${decompositionPath}\n\n` +
+    'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
+    'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.\n\n' +
+    mockMarkers({
+      MOCK_ROLE: role,
+      MOCK_OUT: decompositionPath,
+      MOCK_TASKS_DIR: tasksDir,
+      MOCK_IN: planPath,
+    });
+
+  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+
+  const decomposition = await readDecomposition(decompositionPath);
+  return { decompositionPath, decomposition };
+}
+
+/** Parse a decomposition.json manifest; tolerant ({phases:[]} on any error). */
+async function readDecomposition(path) {
+  const { readFile } = await import('node:fs/promises');
+  try {
+    const raw = JSON.parse(await readFile(path, 'utf8'));
+    return { phases: Array.isArray(raw?.phases) ? raw.phases : [] };
+  } catch {
+    return { phases: [] };
+  }
+}
+
+/**
  * Implementer — implement or fix. Returns { summary }.
  * @param {import('./phases.mjs').PhaseContext} ctx
  * @param {{ planPath: string, reviewPath?: string, mode: "implement"|"fix" }} opts
