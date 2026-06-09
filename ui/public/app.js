@@ -566,7 +566,7 @@ function buildRunGraph(host, manifest) {
     col.dataset.cellIdx = String(i);
     const tag = document.createElement('div');
     tag.className = 'col-tag';
-    tag.innerHTML = `Step ${i + 1}` + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
+    tag.innerHTML = (cell.label ? escapeHtml(cell.label) : `Step ${i + 1}`) + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
     col.appendChild(tag);
     for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
     host.appendChild(col);
