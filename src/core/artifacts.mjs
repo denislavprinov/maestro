@@ -952,8 +952,10 @@ export async function writeState(pipelineDir, stateObj) {
  */
 export const INTERRUPTED_STATUS = 'interrupted';
 
-// The non-terminal statuses a run can be frozen at by a crash.
-const RECONCILE_NON_TERMINAL = ['created', 'starting', 'running'];
+// The non-terminal statuses a run can be frozen at by a crash. 'pausing' is the
+// graceful-shutdown window — a crash there is an interruption. 'paused' is NOT
+// here: it is intentional and indefinite, never swept.
+const RECONCILE_NON_TERMINAL = ['created', 'starting', 'running', 'pausing'];
 
 /**
  * Staleness window (ms). A non-terminal row older than this AND not live is dead.
@@ -971,7 +973,7 @@ function staleRunMs() {
 }
 
 /**
- * Flip stale non-terminal pipeline rows (created/starting/running) to INTERRUPTED.
+ * Flip stale non-terminal pipeline rows (created/starting/running/pausing) to INTERRUPTED.
  * A row is stale when ALL hold:
  *   - status is non-terminal,
  *   - COALESCE(updated_at, started_at) is older than `staleMs` (a NULL coalesce is

@@ -68,6 +68,16 @@ test('is idempotent: a second pass does not re-report an already-interrupted id'
   assert.equal(statusOf('aaaa0005'), INTERRUPTED_STATUS);
 });
 
+test('sweeps stale pausing to interrupted, but never touches paused', () => {
+  seedPipelineRow({ id: 'aaaapaus', status: 'paused', startedAt: OLD, updatedAt: OLD });
+  seedPipelineRow({ id: 'aaaapsng', status: 'pausing', startedAt: OLD, updatedAt: OLD });
+  const r = reconcileStaleRunning({ now: NOW });
+  assert.ok(r.ids.includes('aaaapsng'), 'stale pausing swept to interrupted');
+  assert.ok(!r.ids.includes('aaaapaus'), 'paused untouched');
+  assert.equal(statusOf('aaaapsng'), INTERRUPTED_STATUS);
+  assert.equal(statusOf('aaaapaus'), 'paused');
+});
+
 test('return shape is { reconciled, ids } with reconciled === ids.length', () => {
   seedPipelineRow({ id: 'aaaa0008', status: 'running', startedAt: OLD, updatedAt: OLD });
   const r = reconcileStaleRunning({ now: NOW });
