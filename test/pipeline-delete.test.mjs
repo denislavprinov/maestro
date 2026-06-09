@@ -152,15 +152,17 @@ test('deletePipeline needs no title/slug heuristic: indexed files are removed ev
   }
 });
 
-test('deletePipeline refuses a running pipeline (status from the DB row)', async () => {
+test('deletePipeline refuses an active pipeline (running/pausing; status from the DB row)', async () => {
   const repo = await freshRepo();
   const prev = process.env.MAESTRO_HOME;
-  await freshStore(repo, {
-    id: 'run1', base: 'add-login-screen', datePrefix: '04-06-26', status: 'running', branch: null,
-  });
   try {
-    await assert.rejects(() => deletePipeline({ key: 'proj-00000001', id: 'run1' }),
-      (e) => e && e.code === 'RUNNING');
+    for (const status of ['running', 'pausing']) {
+      await freshStore(repo, {
+        id: 'run1', base: 'add-login-screen', datePrefix: '04-06-26', status, branch: null,
+      });
+      await assert.rejects(() => deletePipeline({ key: 'proj-00000001', id: 'run1' }),
+        (e) => e && e.code === 'RUNNING', `status=${status} must refuse deletion`);
+    }
   } finally {
     if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
   }

@@ -17,7 +17,7 @@ import { removeWorktree } from './worktree.mjs';
 import { branchExists } from './git-info.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
-const ACTIVE = new Set(['running', 'starting', 'created']);
+const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
 function err(message, code) { return Object.assign(new Error(message), { code }); }
 
 /**

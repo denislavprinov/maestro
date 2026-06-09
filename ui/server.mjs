@@ -899,7 +899,7 @@ app.delete('/api/runs/:id', async (req, res) => {
   // Never tear down a pipeline that is still live in this server process.
   const liveActive = [...runs.values()].some((r) =>
     (r.pipelineId === id || r.id === id) &&
-    ['running', 'starting', 'created'].includes(String(r.status || '').toLowerCase()));
+    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
   if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
 
   try {
