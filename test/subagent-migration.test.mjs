@@ -1,8 +1,9 @@
 // test/subagent-migration.test.mjs
 // Layer A (DB) — forward incremental migration v1 -> v2 adds the sub_agents table.
-// Seeds a REAL on-disk DB stamped user_version=1 (only the v1 pipelines table — the
-// v2 FK target), then opens it through the production getDb() and asserts the v2
-// ladder step ran: sub_agents + its two indexes exist and user_version is now 2.
+// Seeds a REAL on-disk DB stamped user_version=1 (the v1 pipelines table — the
+// v2 FK target — plus pipeline_steps, which the v5 step ALTERs), then opens it
+// through the production getDb() and asserts the v2 ladder step ran: sub_agents
+// + its two indexes exist and user_version is now 2.
 // This is the first incremental (v1->vN) migration in the codebase.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,8 +32,10 @@ after(async () => {
   await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-// The exact v1 pipelines DDL (the only table sub_agents FKs to). Seeding just this
-// table + user_version=1 reproduces a real pre-v2 install for the upgrade path.
+// The exact v1 pipelines DDL (the only table sub_agents FKs to) + the v1
+// pipeline_steps DDL (the v5 ladder step ALTERs it, so a faithful pre-v2 seed
+// must carry it). Seeding these + user_version=1 reproduces a real pre-v2
+// install for the upgrade path.
 const V1_PIPELINES = `
   CREATE TABLE pipelines (
     id TEXT PRIMARY KEY, project_key TEXT NOT NULL, workspace_key TEXT,
@@ -42,6 +45,14 @@ const V1_PIPELINES = `
     started_at TEXT, updated_at TEXT, total_cost_usd REAL NOT NULL DEFAULT 0,
     total_active_ms INTEGER NOT NULL DEFAULT 0, prompt TEXT, branch TEXT,
     workspace_meta TEXT, stepper TEXT, tools TEXT
+  );
+  CREATE TABLE pipeline_steps (
+    pipeline_id TEXT NOT NULL, key TEXT NOT NULL, node_id TEXT, phase TEXT,
+    step_index INTEGER, cycle INTEGER, status TEXT, started_at TEXT,
+    updated_at TEXT, active_ms INTEGER NOT NULL DEFAULT 0, running_since TEXT,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (pipeline_id, key),
+    FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
   );
 `;
 
@@ -59,7 +70,7 @@ test('opening a user_version=1 DB forward-migrates to v2 (adds sub_agents + inde
 
   // 2) Open through production getDb() — migrate() must run the v2 ladder step.
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4, 'forward-migrated to v4 (the v2 step added sub_agents)');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5, 'forward-migrated to v5 (the v2 step added sub_agents)');
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='sub_agents'").get().n,
     1, 'sub_agents table created by the v1->v2 migration');

@@ -909,16 +909,17 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare(`
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
-        total_active_ms, prompt, branch, workspace_meta, stepper, tools)
+        total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
-        @prompt,@branch,@workspace_meta,@stepper,@tools)
+        @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
         total_active_ms=excluded.total_active_ms, branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
+        resume_point=excluded.resume_point,
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
@@ -926,8 +927,8 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       ins.run(
@@ -937,6 +938,7 @@ export async function writeState(pipelineDir, stateObj) {
         Number.isFinite(st.activeMs) ? st.activeMs : 0,
         st.runningSince == null ? null : String(st.runningSince),
         Number.isFinite(st.costUsd) ? st.costUsd : 0,
+        st.sessionId ?? null,
       );
     }
   });
@@ -1063,6 +1065,7 @@ function toPipelineRow(o) {
     workspace_meta: workspaceMeta,
     stepper: s(o.stepper),
     tools: s(o.tools),
+    resume_point: o.resumePoint == null ? null : s(o.resumePoint),
   };
 }
 
