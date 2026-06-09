@@ -56,6 +56,10 @@ test('pause mid-node -> paused status, resume_point persisted, worktree kept', a
   assert.ok(Array.isArray(rp.plan?.steps) && rp.plan.steps.length > 0, 'frozen plan stored');
   assert.ok(rp.bus && typeof rp.bus === 'object', 'bus snapshot stored');
   assert.ok(rp.nodes.some((n) => n.sessionId === 'sess-hang'), 'interrupted node session recorded');
+  // The EFFECTIVE tool instruction (post graph-build, possibly '' when the build was
+  // skipped/failed) must ride the resume point — resume() must not fall back to the
+  // detect-time tools.instruction and tell agents a graph exists that was never built.
+  assert.equal(typeof rp.toolInstruction, 'string', 'effective toolInstruction persisted on the resume point');
 
   // Worktree must SURVIVE a pause (uncommitted work lives there).
   const wt = JSON.parse(row.branch || '{}').worktreeDir;

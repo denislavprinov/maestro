@@ -460,7 +460,8 @@ class Orchestrator extends EventEmitter {
             this.state.resumePoint = {
               version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
               bus: null, stepModels: this.stepModels, workflowId: this.workflowId, plan: null,
-              nodes: [], gate: null, pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
+              nodes: [], gate: null, toolInstruction: this.toolInstruction ?? '',
+              pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
             };
           }
           return await this._completePaused();
@@ -536,7 +537,12 @@ class Orchestrator extends EventEmitter {
       this.state.pipelineDir = rp.pipelineDir;
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
-      this.toolInstruction = this.state.tools?.instruction || '';
+      // Restore the EFFECTIVE instruction from the resume point — by dispatch time
+      // run() has replaced the detect-time tools.instruction with the in-worktree
+      // graph-build outcome (worktreeGraphInstruction() or ''). Falling back to
+      // tools.instruction would tell resumed agents a graph exists that the original
+      // run suppressed. (Fallback keeps old-shape resume points working.)
+      this.toolInstruction = typeof rp.toolInstruction === 'string' ? rp.toolInstruction : (this.state.tools?.instruction || '');
 
       // ── worktree re-attach (single-project; workspace below) ──
       const wt = this.state.branch?.worktreeDir;
@@ -562,6 +568,17 @@ class Orchestrator extends EventEmitter {
             if (!existsSync(p.worktreeDir)) throw new Error(`worktree missing: ${p.worktreeDir} — cannot resume`);
             this.workDirs.set(p.projectKey, p.worktreeDir);
             this.toolInstructions.set(p.projectKey, p.graphInstruction || '');
+            // Re-arm teardown: _teardownWorktreeAll returns immediately on an empty
+            // branchInfos map, so without this a resumed workspace run reaching
+            // done/stopped/error would leak every member worktree and never run
+            // _commitWork (resumed work silently absent from the feature branches).
+            // Shape mirrors createWorktree()'s result as registered by _setupWorktreeAll.
+            this.branchInfos.set(p.projectKey, {
+              worktreeDir: p.worktreeDir,
+              branch: meta.branches?.[p.projectKey]?.feature,
+              sourceBranch: meta.branches?.[p.projectKey]?.source,
+              reusedExisting: true,
+            });
           }
         }
         Object.assign(this.state, {
@@ -602,7 +619,10 @@ class Orchestrator extends EventEmitter {
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
       if ((isPause(err) || this.state.status === 'pausing') && this.state.status !== 'stopped') {
-        if (this.pipeline) return await this._completePaused();
+        if (this.pipeline) {
+          if (!this.state.resumePoint) this.state.resumePoint = rp; // re-arm the consumed point: a paused row must stay resumable
+          return await this._completePaused();
+        }
       }
       if (isAbort(err) || this.state.status === 'stopped') {
         this._setStatus('stopped');
@@ -1200,6 +1220,9 @@ class Orchestrator extends EventEmitter {
         nodeId: s.nodeId, key: s.phase, sessionId: s.sessionId || null, completed: s.status === 'done',
       })),
       gate: this._pauseGate ? { ...this._pauseGate } : null,
+      // The EFFECTIVE instruction at dispatch time (post in-worktree graph build),
+      // not the detect-time tools.instruction — resume() restores it verbatim.
+      toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
     };

@@ -49,3 +49,13 @@ test('no implementer cell -> manifest returned unchanged', () => {
   const m = rewriteStepperForDecomposition(noImpl, phases);
   assert.deepEqual(m, noImpl);
 });
+
+test('idempotent: re-applying to an already-rewritten manifest is a no-op (resume path)', () => {
+  // A pause during decomposed implement persists the REWRITTEN manifest; resume
+  // re-enters _runDecomposedImplement and applies the rewrite again. The second
+  // application must not duplicate the phase/task cells.
+  const once = rewriteStepperForDecomposition(baseManifest, phases);
+  const twice = rewriteStepperForDecomposition(once, phases);
+  assert.deepEqual(twice, once);
+  assert.equal(twice.steps.length, 5); // preflight, phase1, phase2, reviewer, done — no duplicates
+});
