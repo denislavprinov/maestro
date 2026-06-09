@@ -40,6 +40,11 @@
             <span>Workspaces</span>
             <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
           </a>
+          <a href="#projects" data-nav="projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            <span>Projects</span>
+            <span class="nav-count n-grey" id="nav-projects-count">0</span>
+          </a>
           <a href="#composer" data-nav="composer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Pipeline Composer</span>
@@ -66,6 +71,7 @@
           <a href="#running" data-nav="running">Running</a>
           <a href="#history" data-nav="history">History</a>
           <a href="#workspaces" data-nav="workspaces">Workspaces</a>
+          <a href="#projects" data-nav="projects">Projects</a>
           <a href="#composer" data-nav="composer">Composer</a>
           <a href="#settings" data-nav="settings">Settings</a>
         </nav>
@@ -104,7 +110,6 @@
                         <option value="__add__">+ Add project&hellip;</option>
                       </select>
                     </div>
-                    <button type="button" id="project-delete" class="icon-btn" title="Remove the selected project from the list" disabled>&#10005;</button>
                   </div>
                   <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
 
@@ -437,6 +442,60 @@
           </template>
         </section>
         <!-- /view workspaces -->
+
+        <!-- ===== VIEW: PROJECTS ===== -->
+        <section class="view hidden" data-view="projects">
+          <div class="topbar">
+            <div>
+              <h1>Projects</h1>
+              <div class="sub">Saved projects the orchestrator can run inside · the path is fixed once added</div>
+            </div>
+            <button type="button" id="proj-add-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Add project
+            </button>
+          </div>
+
+          <p id="projects-msg" class="form-msg" aria-live="polite"></p>
+
+          <!-- inline add form (hidden until "Add project" is clicked) -->
+          <div id="proj-add" class="add-project hidden">
+            <input id="projAddName" type="text" placeholder="Project name" spellcheck="false" />
+            <input id="projAddPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+            <div class="add-project-actions">
+              <button type="button" id="projAddCancel" class="btn btn-ghost btn-mini">Cancel</button>
+              <button type="button" id="projAddSave" class="btn btn-primary btn-mini">Save</button>
+            </div>
+          </div>
+
+          <div class="run-list" id="projects-list"></div>
+
+          <!-- clone target for one project card -->
+          <template id="project-card-tpl">
+            <section class="card ws-card proj-card">
+              <div class="ws-head">
+                <div class="ws-h-meta">
+                  <b class="proj-name"></b>
+                  <span class="proj-missing badge red" hidden>missing</span>
+                  <small class="proj-path"></small>
+                </div>
+                <div class="ws-actions">
+                  <button type="button" class="proj-rename btn-ghost" title="Rename this project">Rename</button>
+                  <button type="button" class="proj-remove btn-danger" title="Remove from the project list">Remove</button>
+                </div>
+              </div>
+              <!-- inline rename editor -->
+              <div class="proj-rename-edit" hidden>
+                <input class="proj-name-input input" type="text" spellcheck="false" />
+                <div class="actions" style="justify-content:flex-end;margin-top:10px">
+                  <button type="button" class="proj-rename-cancel btn btn-ghost btn-mini">Cancel</button>
+                  <button type="button" class="proj-rename-save btn btn-primary btn-mini">Save</button>
+                </div>
+              </div>
+            </section>
+          </template>
+        </section>
+        <!-- /view projects -->
 
         <!-- ===== VIEW: WORKSPACE CREATE (wizard) ===== -->
         <section class="view hidden" data-view="workspace-create">

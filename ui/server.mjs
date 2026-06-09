@@ -22,7 +22,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning,
 } from '../src/core/artifacts.mjs';
-import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
+import { listProjects, addProject, removeProject, updateProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -924,6 +924,19 @@ app.delete('/api/projects', async (req, res) => {
     res.json({ projects: await removeProject(name) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/projects', async (req, res) => {
+  const body = req.body || {};
+  try {
+    // Path identifies the (immutable-key) row; `name` is the editable field today.
+    // More editable fields slot into this patch object later. Validation lives in
+    // updateProject, so a thrown error here is a client error -> 400.
+    const projects = await updateProject(body.path, { name: body.name });
+    res.json({ projects });
+  } catch (err) {
+    return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 

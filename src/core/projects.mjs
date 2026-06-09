@@ -131,3 +131,45 @@ export async function removeProject(name) {
   }
   return listProjects();
 }
+
+/**
+ * Update an existing project's editable fields, identified by its immutable path.
+ * The path is the basis of the primary key (projectKey), so it is NOT editable;
+ * `patch` carries the fields that may change. Today only `name` is editable; the
+ * patch-object shape leaves room to add more editable fields later without changing
+ * callers. The row is located by its STORED path column (1:1 with the primary key),
+ * not by recomputing projectKey() — so a project whose folder has since been deleted
+ * can still be renamed. Returns the updated annotated list. Name uniqueness stays
+ * case-insensitive (checked here AND backed by the NOCASE unique index), excluding
+ * the row itself.
+ *
+ * @param {string} pathInput  the project's current path (immutable; identifies the row)
+ * @param {{name?:string}} patch  fields to change
+ * @throws {Error} on empty path, unknown project, empty patched name, or a duplicate name
+ * @returns {Promise<Array<{name:string, path:string, exists:boolean}>>}
+ */
+export async function updateProject(pathInput, patch) {
+  const path = normalizeProjectPath(pathInput);
+  if (!path) throw new Error('project path is required');
+  const fields = patch && typeof patch === 'object' ? patch : {};
+
+  // Currently the only editable field is `name`. Future fields slot in here.
+  const hasName = Object.prototype.hasOwnProperty.call(fields, 'name');
+  const name = hasName ? (typeof fields.name === 'string' ? fields.name : '').trim() : '';
+  if (hasName && !name) throw new Error('project name is required');
+
+  tx(() => {
+    // Identify the row by its immutable stored path (1:1 with the primary key).
+    const row = prepare('SELECT key FROM projects WHERE path = ?').get(path);
+    if (!row) throw new Error('project not found');
+    if (hasName) {
+      // Case-insensitive duplicate guard, excluding the row being renamed.
+      const clash = prepare(
+        'SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE AND key != ?'
+      ).get(name, row.key);
+      if (clash) throw new Error(`a project named "${name}" already exists`);
+      prepare('UPDATE projects SET name = ? WHERE key = ?').run(name, row.key);
+    }
+  });
+  return listProjects();
+}

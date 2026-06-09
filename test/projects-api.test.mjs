@@ -60,6 +60,42 @@ test('projects API: list empty, add, reject duplicate, delete', async () => {
   assert.deepEqual((await r.json()).projects, []);
 });
 
+test('projects API: PATCH renames a project; rejects duplicate & unknown', async () => {
+  // seed two projects
+  await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'one', path: homeDir }),
+  });
+  const other = await mkdtemp(join(tmpdir(), 'maestro-apihome-other-'));
+  await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'two', path: other }),
+  });
+
+  // happy path: rename "one" -> "renamed"
+  let r = await fetch(`${base}/api/projects`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: homeDir, name: 'renamed' }),
+  });
+  assert.equal(r.status, 200);
+  let j = await r.json();
+  assert.ok(j.projects.some((p) => p.name === 'renamed' && p.path === homeDir));
+
+  // duplicate name -> 400
+  r = await fetch(`${base}/api/projects`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: other, name: 'renamed' }),
+  });
+  assert.equal(r.status, 400);
+
+  // unknown path -> 400 (project not found)
+  r = await fetch(`${base}/api/projects`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: join(homeDir, 'ghost'), name: 'x' }),
+  });
+  assert.equal(r.status, 400);
+});
+
 test('POST /api/projects with no name is a 400', async () => {
   const r = await fetch(`${base}/api/projects`, {
     method: 'POST',

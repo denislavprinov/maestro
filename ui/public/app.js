@@ -58,7 +58,6 @@ const el = {
 
   form: $('#run-form'),
   projectSelect: $('#projectSelect'),
-  projectDelete: $('#project-delete'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
   newProjectName: $('#newProjectName'),
@@ -66,6 +65,15 @@ const el = {
   addProjectSave: $('#addProjectSave'),
   addProjectCancel: $('#addProjectCancel'),
   addProjectMsg: $('#addProjectMsg'),
+  projectsList: $('#projects-list'),
+  projectsMsg: $('#projects-msg'),
+  projAdd: $('#proj-add'),
+  projAddName: $('#projAddName'),
+  projAddPath: $('#projAddPath'),
+  projAddSave: $('#projAddSave'),
+  projAddCancel: $('#projAddCancel'),
+  projAddBtn: $('#proj-add-btn'),
+  navProjectsCount: $('#nav-projects-count'),
   title: $('#title'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
@@ -2793,7 +2801,6 @@ function renderProjectOptions(selectName) {
 
 function onProjectChanged() {
   const path = selectedProjectPath();
-  el.projectDelete.disabled = !path;
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
@@ -2908,31 +2915,6 @@ el.addProjectSave.addEventListener('click', async () => {
     setAddMsg(e.message, 'err');
   } finally {
     el.addProjectSave.disabled = false;
-  }
-});
-
-el.projectDelete.addEventListener('click', async () => {
-  const name = selectedProjectName();
-  if (!name) return;
-  if (!confirm(`Remove "${name}" from the project list? Files on disk are not touched.`)) return;
-  el.projectDelete.disabled = true;
-  try {
-    const res = await fetch(`/api/projects?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      setFormMsg(`Delete failed: ${data.error || res.status}`, 'err');
-      el.projectDelete.disabled = false;
-      return;
-    }
-    state.projects = Array.isArray(data.projects) ? data.projects : [];
-    if (localStorage.getItem(LAST_PROJECT_KEY) === name) localStorage.removeItem(LAST_PROJECT_KEY);
-    state.projectDir = '';
-    el.history.innerHTML = '';
-    el.history.appendChild(histEmpty('Select a project to load history.'));
-    renderProjectOptions('');
-  } catch (e) {
-    setFormMsg(`Delete error: ${e.message}`, 'err');
-    el.projectDelete.disabled = false;
   }
 });
 
@@ -3130,6 +3112,166 @@ async function loadWorkspaces() {
 function updateWorkspacesCount() {
   if (el.navWorkspacesCount) el.navWorkspacesCount.textContent = String(state.workspaces.length);
 }
+
+// ---- Projects management view ----------------------------------------------
+
+function setProjectsMsg(text, kind) {
+  if (!el.projectsMsg) return;
+  el.projectsMsg.textContent = text || '';
+  el.projectsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function updateProjectsCount() {
+  if (el.navProjectsCount) el.navProjectsCount.textContent = String(state.projects.length);
+}
+
+async function loadProjectsView() {
+  await loadProjects();        // refreshes state.projects + the New-Pipeline <select>
+  renderProjectsList();
+  updateProjectsCount();
+}
+
+function renderProjectsList() {
+  const host = el.projectsList;
+  if (!host) return;
+  host.innerHTML = '';
+  if (!state.projects.length) {
+    host.appendChild(histEmpty('No projects yet — add one to run a pipeline against it.'));
+    return;
+  }
+  for (const p of state.projects) host.appendChild(buildProjectCard(p));
+}
+
+// One card per project. All dynamic text via .textContent (XSS-safe, matches ws-card).
+function buildProjectCard(p) {
+  const tpl = $('#project-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  node.dataset.path = p.path || '';
+  node.dataset.name = p.name || '';
+
+  const nameEl = node.querySelector('.proj-name');
+  if (nameEl) nameEl.textContent = p.name || '(unnamed)';
+  const pathEl = node.querySelector('.proj-path');
+  if (pathEl) pathEl.textContent = p.path || '';
+  const missing = node.querySelector('.proj-missing');
+  if (missing) missing.hidden = p.exists !== false;
+  return node;
+}
+
+// Delegated actions on the projects list (mirrors the workspaces handler).
+if (el.projectsList) {
+  el.projectsList.addEventListener('click', (e) => {
+    const card = e.target.closest && e.target.closest('.proj-card');
+    if (!card) return;
+    if (e.target.closest('.proj-rename')) { openProjRename(card); return; }
+    if (e.target.closest('.proj-rename-cancel')) { closeProjRename(card); return; }
+    if (e.target.closest('.proj-rename-save')) { saveProjRename(card); return; }
+    if (e.target.closest('.proj-remove')) { removeProjectCard(card); return; }
+  });
+}
+
+function openProjRename(card) {
+  const pane = card.querySelector('.proj-rename-edit');
+  const input = card.querySelector('.proj-name-input');
+  if (input) input.value = card.dataset.name || '';
+  if (pane) pane.hidden = false;
+  if (input) input.focus();
+}
+
+function closeProjRename(card) {
+  const pane = card.querySelector('.proj-rename-edit');
+  if (pane) pane.hidden = true;
+}
+
+// Rename: PATCH /api/projects { path, name }. Path identifies the immutable row.
+async function saveProjRename(card) {
+  const path = card.dataset.path;
+  const input = card.querySelector('.proj-name-input');
+  const name = input ? input.value.trim() : '';
+  if (!name) return setProjectsMsg('Name is required.', 'err');
+  const saveBtn = card.querySelector('.proj-rename-save');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, name }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    // Keep lastProject pointer aligned if the renamed one was selected.
+    if (localStorage.getItem(LAST_PROJECT_KEY) === card.dataset.name) {
+      localStorage.setItem(LAST_PROJECT_KEY, name);
+    }
+    state.projects = Array.isArray(data.projects) ? data.projects : state.projects;
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // sync New-Pipeline select
+    renderProjectsList();
+    updateProjectsCount();
+    setProjectsMsg('Project renamed.', 'ok');
+  } catch (err) {
+    setProjectsMsg(err.message, 'err');
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+// Remove: DELETE /api/projects?name= (DB row only; on-disk history/artifacts kept).
+async function removeProjectCard(card) {
+  const name = card.dataset.name;
+  if (!name) return;
+  if (!confirm(`Remove "${name}" from the project list? Files on disk are not touched.`)) return;
+  try {
+    const res = await fetch(`/api/projects?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (localStorage.getItem(LAST_PROJECT_KEY) === name) localStorage.removeItem(LAST_PROJECT_KEY);
+    state.projects = Array.isArray(data.projects) ? data.projects : [];
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // sync New-Pipeline select
+    renderProjectsList();
+    updateProjectsCount();
+    setProjectsMsg('Project removed.', 'ok');
+  } catch (err) {
+    setProjectsMsg(err.message, 'err');
+  }
+}
+
+// Add (Projects page affordance) — reuses POST /api/projects.
+function openProjAdd() {
+  if (!el.projAdd) return;
+  el.projAdd.classList.remove('hidden');
+  el.projAddName.value = '';
+  el.projAddPath.value = '';
+  setProjectsMsg('');
+  el.projAddName.focus();
+}
+if (el.projAddBtn) el.projAddBtn.addEventListener('click', openProjAdd);
+if (el.projAddCancel) el.projAddCancel.addEventListener('click', () => el.projAdd.classList.add('hidden'));
+if (el.projAddSave) el.projAddSave.addEventListener('click', async () => {
+  const name = el.projAddName.value.trim();
+  const projPath = el.projAddPath.value.trim();
+  if (!name) return setProjectsMsg('Name is required.', 'err');
+  if (!projPath) return setProjectsMsg('Path is required.', 'err');
+  el.projAddSave.disabled = true;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path: projPath }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    state.projects = Array.isArray(data.projects) ? data.projects : state.projects;
+    el.projAdd.classList.add('hidden');
+    renderProjectOptions(name);   // sync New-Pipeline select + auto-select
+    renderProjectsList();
+    updateProjectsCount();
+    setProjectsMsg('Project added.', 'ok');
+  } catch (err) {
+    setProjectsMsg(err.message, 'err');
+  } finally {
+    el.projAddSave.disabled = false;
+  }
+});
 
 // ---- Workspaces management view --------------------------------------------
 
@@ -5078,7 +5220,7 @@ const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'projects', 'composer', 'workspaces', 'workspace-create', 'settings'];
 
 function showView(name) {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -5096,6 +5238,7 @@ function showView(name) {
   document.body.classList.toggle('view-history', name === 'history');
   if (name === 'running') renderRunningView();
   if (name === 'history') loadHistoryView();
+  if (name === 'projects') loadProjectsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'composer') initComposer();

@@ -9,7 +9,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { addProject, removeProject, listProjects } from '../src/core/projects.mjs';
+import { addProject, removeProject, listProjects, updateProject } from '../src/core/projects.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 
 const homes = [];
@@ -91,6 +91,59 @@ test('removeProject deletes case-insensitively; an absent name is a no-op', asyn
   assert.deepEqual(list, []);
   list = await removeProject('nope'); // no-op
   assert.deepEqual(list, []);
+});
+
+test('updateProject renames by path, keeps key/path, returns annotated list', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'old', path: home });
+  const before = getDb().prepare('SELECT key FROM projects').get().key;
+
+  const list = await updateProject(home, { name: 'new' });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'new');
+  assert.equal(list[0].path, home);            // path unchanged
+
+  const after = getDb().prepare('SELECT key, name FROM projects').get();
+  assert.equal(after.key, before, 'primary key is preserved on rename');
+  assert.equal(after.name, 'new');
+});
+
+test('updateProject rejects a duplicate name (case-insensitive), excluding self', async () => {
+  const home = homes[homes.length - 1];
+  const other = await mkdtemp(join(tmpdir(), 'maestro-projdb-other-'));
+  homes.push(other);
+  await addProject({ name: 'alpha', path: home });
+  await addProject({ name: 'beta', path: other });
+  await assert.rejects(() => updateProject(other, { name: 'ALPHA' }), /already exists/);
+});
+
+test('updateProject renaming a project to its own name (different case) is allowed', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'Repo', path: home });
+  const list = await updateProject(home, { name: 'REPO' });   // self-clash must be excluded
+  assert.equal(list[0].name, 'REPO');
+});
+
+test('updateProject throws for an unknown path', async () => {
+  const home = homes[homes.length - 1];
+  await assert.rejects(() => updateProject(join(home, 'nope-not-registered'), { name: 'x' }), /not found/);
+});
+
+test('updateProject requires a non-empty name when name is patched', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'keep', path: home });
+  await assert.rejects(() => updateProject(home, { name: '   ' }), /name is required/);
+});
+
+// Lock the promised missing-folder rename. Row is found by the stored path
+// column, so a deleted working tree does not break the rename.
+test('updateProject renames a project whose folder no longer exists', async () => {
+  const gone = await mkdtemp(join(tmpdir(), 'maestro-projdb-gone-'));
+  homes.push(gone);
+  await addProject({ name: 'ghosty', path: gone });
+  await rm(gone, { recursive: true, force: true });
+  const list = await updateProject(gone, { name: 'ghosty2' });
+  assert.ok(list.some((p) => p.name === 'ghosty2'), 'rename succeeds even though the folder is gone');
 });
 
 test('two projects with the SAME path collapse to one key (PK), latest name wins on re-add', async () => {
