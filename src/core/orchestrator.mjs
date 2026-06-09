@@ -161,6 +161,10 @@ class Orchestrator extends EventEmitter {
     this.branchInfo = null;
 
     this.abort = new AbortController();
+    this.pauseRequested = false;
+    this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
+    this._pauseGate = null;                  // gate context snapshot when paused at a gate
+    this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this.agentPrompts = null;
     this.toolInstruction = '';
@@ -249,6 +253,33 @@ class Orchestrator extends EventEmitter {
       err.name = 'AbortError';
       pq.reject(err);
     }
+  }
+
+  /**
+   * Gracefully pause the run: kill in-flight node children (SIGTERM via the
+   * pause-only signal), unwind _dispatch, persist a resume point. The worktree is
+   * kept. Returns false unless the run is currently 'running'.
+   */
+  pause() {
+    if (this.state.status !== 'running') return false;
+    this.pauseRequested = true;
+    this._setStatus('pausing');
+    try {
+      this.pauseAbort.abort();
+    } catch {
+      /* ignore */
+    }
+    // Unblock any awaiting clarify/gate question with the pause sentinel.
+    if (this.pendingQuestion) {
+      const pq = this.pendingQuestion;
+      this.pendingQuestion = null;
+      pq.reject(pauseErr());
+    }
+    return true;
+  }
+
+  _checkPause() {
+    if (this.pauseRequested) throw pauseErr();
   }
 
   // ── main run ─────────────────────────────────────────────────────────────────
@@ -408,8 +439,9 @@ class Orchestrator extends EventEmitter {
       await this._persist();
       this._emit('state', this.getState());
       await appendAudit(this.pipeline.dir, `Workflow: **${plan.name}** (${plan.id}).`);
-      await this._dispatch(plan);
+      const dispatched = await this._dispatch(plan);
       this._checkAbort();
+      if (dispatched === 'paused') return await this._completePaused();
 
       // 9) Done.
       this._setStatus('done');
@@ -419,6 +451,23 @@ class Orchestrator extends EventEmitter {
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
+      if ((isPause(err) || this.state.status === 'pausing') && this.state.status !== 'stopped') {
+        if (this.pipeline) {
+          if (!this.state.resumePoint) {
+            // Paused outside _dispatch (preflight/worktree): boundary point at step 0.
+            this.state.resumePoint = {
+              version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+              bus: null, stepModels: this.stepModels, workflowId: this.workflowId, plan: null,
+              nodes: [], gate: null, pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
+            };
+          }
+          return await this._completePaused();
+        }
+        // No pipeline yet: nothing to resume; treat as stopped.
+        this._setStatus('stopped');
+        this._emit('done', { status: 'stopped', pipelineDir: null });
+        return { status: 'stopped', pipelineDir: null };
+      }
       if (isAbort(err) || this.state.status === 'stopped') {
         this._setStatus('stopped');
         if (this.pipeline) {
@@ -444,11 +493,14 @@ class Orchestrator extends EventEmitter {
       });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
-      // C1: always tear the worktree(s) down. By now this.state.status is the
-      // terminal value (done/stopped/error); the branch is always kept (every
-      // member's, on a workspace run), only the disposable checkout is removed.
-      if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
-      else await this._teardownWorktree().catch(() => {});
+      // C1: tear the worktree(s) down on done/stopped/error — the branch is always
+      // kept (every member's, on a workspace run), only the disposable checkout is
+      // removed. But NEVER on a pause: the checkout (with any uncommitted agent
+      // work) is the thing we resume into.
+      if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
+        if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
+        else await this._teardownWorktree().catch(() => {});
+      }
     }
   }
 
@@ -901,44 +953,86 @@ class Orchestrator extends EventEmitter {
     }
 
     let i = 0;
-    while (i < steps.length) {
-      this._checkAbort();
-      const cycle = stepCycle[i];
-      const results = await this._runStep(steps[i], i, cycle, bus);
-
-      // Did any feedback originating in THIS step fire?
-      const loops = fbByFrom.get(i) || [];
-      let rewound = false;
-      for (const fb of loops) {
-        const fired = this._loopFired(fb, results); // CONV-3: gate off the loop's `from` node
-        if (!fired) continue;
-        const st = (loopState[fb.id] ||= { cycle: 1 });
-        if (st.cycle < fb.maxCycles) {
-          st.cycle += 1;
-          for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle; // re-runs bump cycle
-          await appendAudit(
-            this.pipeline.dir,
-            `Loop ${fb.id}: blocking issues at step ${i}; rewind to step ${fb.toIdx} (cycle ${st.cycle}).`,
-          );
-          i = fb.toIdx;
-          rewound = true;
-          break;
-        }
-        // Cycles exhausted -> gate the user exactly like the old review loop.
-        const decision = await this._gate(fb.id, st.cycle, blockingIssues(this._reviewOf(results, fb.from)));
+    try {
+      while (i < steps.length) {
         this._checkAbort();
-        if (decision === 'another') {
-          st.cycle += 1;
-          for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
-          await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle - 1}: user approved another cycle.`);
-          i = fb.toIdx;
-          rewound = true;
-          break;
+        this._checkPause();
+        const cycle = stepCycle[i];
+        const results = await this._runStep(steps[i], i, cycle, bus);
+
+        // Did any feedback originating in THIS step fire?
+        const loops = fbByFrom.get(i) || [];
+        let rewound = false;
+        for (const fb of loops) {
+          const fired = this._loopFired(fb, results); // CONV-3: gate off the loop's `from` node
+          if (!fired) continue;
+          const st = (loopState[fb.id] ||= { cycle: 1 });
+          if (st.cycle < fb.maxCycles) {
+            st.cycle += 1;
+            for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle; // re-runs bump cycle
+            await appendAudit(
+              this.pipeline.dir,
+              `Loop ${fb.id}: blocking issues at step ${i}; rewind to step ${fb.toIdx} (cycle ${st.cycle}).`,
+            );
+            i = fb.toIdx;
+            rewound = true;
+            break;
+          }
+          // Cycles exhausted -> gate the user exactly like the old review loop.
+          // Snapshot the gate context so a pause that lands while _gate awaits the
+          // user can serialize kind:'gate'.
+          const gateIssues = blockingIssues(this._reviewOf(results, fb.from));
+          this._pauseGate = { fbId: fb.id, toIdx: fb.toIdx, cycle: st.cycle, issues: gateIssues };
+          const decision = await this._gate(fb.id, st.cycle, gateIssues);
+          this._pauseGate = null;
+          this._checkAbort();
+          if (decision === 'another') {
+            st.cycle += 1;
+            for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
+            await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle - 1}: user approved another cycle.`);
+            i = fb.toIdx;
+            rewound = true;
+            break;
+          }
+          await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
         }
-        await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
+        if (!rewound) i += 1;
       }
-      if (!rewound) i += 1;
+    } catch (err) {
+      if (isPause(err)) {
+        this.state.resumePoint = this._buildResumePoint({ plan, stepIndex: i, stepCycle, loopState, bus });
+        return 'paused';
+      }
+      throw err;
     }
+    return 'done';
+  }
+
+  /** Serialize the dispatch position into a JSON-safe resume point. */
+  _buildResumePoint({ plan, stepIndex, stepCycle, loopState, bus }) {
+    const cyc = Array.isArray(stepCycle) ? [...stepCycle] : [];
+    const curCycle = cyc[stepIndex] || 1;
+    const cur = (this.state.steps || []).filter(
+      (s) => s.stepIndex === stepIndex && (s.cycle || 1) === curCycle && s.nodeId,
+    );
+    const kind = this._pauseGate ? 'gate' : (cur.some((s) => s.status === 'paused') ? 'node' : 'boundary');
+    return {
+      version: 1,
+      kind,
+      stepIndex,
+      stepCycle: cyc,
+      loopState: JSON.parse(JSON.stringify(loopState || {})),
+      bus: jsonClone(bus),
+      stepModels: this.stepModels,
+      workflowId: this.workflowId,
+      plan: jsonClone({ id: plan.id, name: plan.name, steps: plan.steps, feedbacks: plan.feedbacks }),
+      nodes: cur.map((s) => ({
+        nodeId: s.nodeId, key: s.phase, sessionId: s.sessionId || null, completed: s.status === 'done',
+      })),
+      gate: this._pauseGate ? { ...this._pauseGate } : null,
+      pipelineDir: this.pipeline.dir,
+      pausedAt: new Date().toISOString(),
+    };
   }
 
   /**
@@ -1047,6 +1141,10 @@ class Orchestrator extends EventEmitter {
         return this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
       }));
 
+      // Pause lands between decomposed phases (coarse but safe): aborted tasks of
+      // this phase re-run on resume as part of the whole decomposed step.
+      if (this.pauseRequested) throw pauseErr();
+
       // Abort-immediately on the FIRST genuine (non-abort) failure.
       let firstError = null;
       settled.forEach((r, k) => {
@@ -1090,7 +1188,7 @@ class Orchestrator extends EventEmitter {
     updateTaskStatus(this.pipeline.id, task.id, 'running', new Date().toISOString());
     const ctx = this._nodeCtx(taskNode, { stepIndex, cycle });
     Object.assign(ctx, this._bindNodeIo(taskNode, cycle, snapshot));
-    ctx.signal = AbortSignal.any([this.abort.signal, phaseAbort.signal]); // sibling-failure cancel
+    ctx.signal = AbortSignal.any([this.abort.signal, this.pauseAbort.signal, phaseAbort.signal]); // sibling-failure/pause cancel
     let status = 'done';
     try {
       const runner = this._runners[taskNode.runnerType];
@@ -1114,13 +1212,36 @@ class Orchestrator extends EventEmitter {
     // Per-cycle artifact paths so loop re-runs never clobber prior outputs.
     const ctx = this._nodeCtx(node, { stepIndex, cycle });
     Object.assign(ctx, this._bindNodeIo(node, cycle, snapshot));
+    if (this._resumeNodeSessions?.has(node.nodeId)) {
+      ctx.resumeSessionId = this._resumeNodeSessions.get(node.nodeId);
+    }
     let result;
+    let endMark = 'done';
     try {
       const runner = this._runners[node.runnerType];
       if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
-      result = await runner(ctx);
+      try {
+        result = await runner(ctx);
+      } catch (err) {
+        // Session-resume fallback (spec §7): a vanished session must not fail the
+        // run — re-run the node fresh, once, and audit the fallback.
+        if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+          this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
+          await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
+          ctx.resumeSessionId = undefined;
+          result = await runner(ctx);
+        } else {
+          throw err;
+        }
+      }
+    } catch (err) {
+      if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+        endMark = 'paused';
+        throw pauseErr();
+      }
+      throw err;
     } finally {
-      this._nodeStep(node, stepIndex, cycle, 'done');
+      this._nodeStep(node, stepIndex, cycle, endMark);
     }
     // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
     return { node, result, ctx };
@@ -1282,7 +1403,7 @@ class Orchestrator extends EventEmitter {
       // so on a stop-while-blocked we must NOT resume (the terminal _setStatus
       // already folded every clock). Gates fire after a phase's 'done', so
       // frozenKey is null there and nothing resumes anyway.
-      if (frozenKey && this.state.status !== 'stopped' && this.state.status !== 'error') {
+      if (frozenKey && !['stopped', 'error', 'pausing', 'paused'].includes(this.state.status)) {
         this._clockResume(frozenKey);
         this._emit('state', this.getState());
         this._persist().catch(() => {});
@@ -1320,7 +1441,7 @@ class Orchestrator extends EventEmitter {
       // so buildSystemPrompt/taskHeader emit the byte-identical single-project text).
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
       onEvent: (e) => this._onAgentEvent(role, e),
-      signal: this.abort.signal,
+      signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       claudeOpts: {
         bin: this.claude.bin,
         permissionMode: this.claude.permissionMode,
@@ -1381,7 +1502,7 @@ class Orchestrator extends EventEmitter {
       // on a single-project run, preserving byte-identical prompts. _bindNodeIo's
       // legacyFields would surface the same handle if the node consumed the channel.
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
-      signal: this.abort.signal,
+      signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       node,
       nodeId: node.nodeId,
       stepIndex,
@@ -1950,7 +2071,7 @@ class Orchestrator extends EventEmitter {
 
   _setStatus(status) {
     this.state.status = status;
-    if (status === 'done' || status === 'stopped' || status === 'error') {
+    if (status === 'done' || status === 'stopped' || status === 'error' || status === 'paused') {
       this._clockPauseAll();
       this.state.totalActiveMs = sumStepActive(this.state.steps);
     }
@@ -2007,6 +2128,15 @@ class Orchestrator extends EventEmitter {
       /* persistence is best-effort */
     }
   }
+
+  /** Terminal bookkeeping for a pause: persist the resume point + paused status. */
+  async _completePaused() {
+    this._setStatus('paused');
+    await this._persist();
+    await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
+    this._emit('done', { status: 'paused', pipelineDir: this.pipeline.dir });
+    return { status: 'paused', pipelineDir: this.pipeline.dir };
+  }
 }
 
 // ── module-level pure helpers ──────────────────────────────────────────────────
@@ -2054,6 +2184,22 @@ function sumStepActive(steps) {
 
 function isAbort(err) {
   return err && (err.name === 'AbortError' || /aborted|stopped/i.test(err.message || ''));
+}
+
+/** Pause sentinel: thrown to unwind _dispatch when pause() was requested. */
+function pauseErr() {
+  const e = new Error('paused');
+  e.name = 'PauseError';
+  return e;
+}
+function isPause(err) {
+  return !!err && err.name === 'PauseError';
+}
+
+/** JSON round-trip clone; drops functions/undefined. Bus channels and resolved
+ *  plan nodes are plain data, so this is lossless for them. */
+function jsonClone(v) {
+  return v == null ? null : JSON.parse(JSON.stringify(v));
 }
 
 function firstLine(text) {
