@@ -7,17 +7,17 @@ import { join } from 'node:path';
 import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns all shipped agents (8 project + 2 workspace)', () => {
+test('loadAgentRegistry returns all shipped agents (9 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['clarify', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
+    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 10);
-  // The two workspace agents are scope:'workspace-only'; the original 8 are 'project'.
+  assert.equal(Object.keys(reg).length, 11);
+  // The two workspace agents are scope:'workspace-only'; the original 9 are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
-    ['clarify', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
+    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
 });
 
 test('each entry is a well-formed AgentMeta', () => {
@@ -56,7 +56,7 @@ test('registry insertion order follows .order ascending', () => {
   // clarify (order 0) sorts first; workspaceScanner (order 0.5) sorts next;
   // workspaceReviewer (order 4.5) sorts between reviewer (4) and manualTestsChecklist (5).
   assert.deepEqual(Object.keys(reg), [
-    'clarify', 'workspaceScanner', 'planner', 'refiner', 'implementer', 'reviewer', 'workspaceReviewer',
+    'clarify', 'workspaceScanner', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'workspaceReviewer',
     'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
   ]);
 });
@@ -64,10 +64,12 @@ test('registry insertion order follows .order ascending', () => {
 test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => {
   const reg = loadAgentRegistry();
   const steps = registryToSteps(reg);
-  // clarify is now steps[0]; the original four occupy steps[1..4] unchanged.
-  assert.deepEqual(steps.slice(1, 5), [
+  // clarify is now steps[0]; the original four keep their labels/fanOut, but the
+  // decomposer (order 2.5) now sits at steps[3] between refiner and implementer.
+  assert.deepEqual(steps.slice(1, 6), [
     { key: 'planner', label: 'Plan', fanOut: true },
     { key: 'refiner', label: 'Refine', fanOut: false },
+    { key: 'decomposer', label: 'Decompose', fanOut: false },
     { key: 'implementer', label: 'Implement', fanOut: false },
     { key: 'reviewer', label: 'Review', fanOut: false },
   ]);
@@ -77,11 +79,12 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 8);
+  assert.equal(steps.length, 9);
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true });
-  assert.deepEqual(steps[5], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
-  assert.deepEqual(steps[6], { key: 'manualWebUiTesting', label: 'Manual web UI testing', fanOut: false });
-  assert.deepEqual(steps[7], { key: 'planReviewer', label: 'Plan Review', fanOut: false });
+  assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: false });
+  assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
+  assert.deepEqual(steps[7], { key: 'manualWebUiTesting', label: 'Manual web UI testing', fanOut: false });
+  assert.deepEqual(steps[8], { key: 'planReviewer', label: 'Plan Review', fanOut: false });
 });
 
 test('every agentFile points at an existing prompt under agents/', () => {

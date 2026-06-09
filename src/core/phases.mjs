@@ -459,24 +459,101 @@ export async function runRefiner(ctx, opts) {
 }
 
 /**
+ * Decomposer — breaks the plan into vertical-slice task files + a decomposition.json
+ * manifest. Reads planPath; writes tasks/ + decompositionPath. Returns
+ * { decompositionPath, decomposition } where decomposition is the parsed manifest.
+ * @param {import('./phases.mjs').PhaseContext} ctx
+ * @param {{ planPath: string, decompositionPath: string }} opts
+ */
+export async function runDecomposer(ctx, opts) {
+  const { join, dirname } = await import('node:path');
+  const { planPath, decompositionPath } = opts || {};
+  const role = 'decomposer';
+  const tasksDir = join(dirname(decompositionPath), 'tasks');
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.decomposer, role, ctx.workspace);
+  const prompt =
+    taskHeader(ctx, 'Decompose the plan into vertical-slice tasks') +
+    '\n## What to do\n\n' +
+    'Read the approved plan and break it into tracer-bullet vertical slices grouped into ' +
+    'ordered phases. Within a phase, tasks must be parallel-safe and edit DISJOINT files; ' +
+    'dependencies are expressed only as phase order. Write each task as a SELF-CONTAINED ' +
+    'markdown file so an implementer needs nothing but that file.\n\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
+    `Plan to decompose: ${planPath}\n` +
+    `Write each task file under: ${tasksDir}/ (name them p<phase>-t<n>-<kebab-title>.md)\n` +
+    `Write the manifest JSON to: ${decompositionPath}\n\n` +
+    'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
+    'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.\n\n' +
+    mockMarkers({
+      MOCK_ROLE: role,
+      MOCK_OUT: decompositionPath,
+      MOCK_TASKS_DIR: tasksDir,
+      MOCK_IN: planPath,
+    });
+
+  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+
+  const decomposition = await readDecomposition(decompositionPath);
+  return { decompositionPath, decomposition };
+}
+
+/** Parse a decomposition.json manifest; tolerant ({phases:[]} on any error). */
+async function readDecomposition(path) {
+  const { readFile } = await import('node:fs/promises');
+  try {
+    const raw = JSON.parse(await readFile(path, 'utf8'));
+    return { phases: Array.isArray(raw?.phases) ? raw.phases : [] };
+  } catch {
+    return { phases: [] };
+  }
+}
+
+/**
+ * Build the implementer task body. Pure (exported for tests). When `taskPath` is
+ * present (a decomposed run), the self-contained task file is authoritative and the
+ * plan is reference/context only — the implementer no longer reads the whole plan.
+ * Absent a taskPath, behavior is byte-identical to today (plan is authoritative).
+ * @param {{ mode:'implement'|'fix', planPath:string, reviewPath?:string, taskPath?:string }} o
+ */
+export function implementerBody({ mode = 'implement', planPath, reviewPath, taskPath } = {}) {
+  if (mode === 'fix') {
+    // VERBATIM from the original phases.mjs fix-mode body.
+    return (
+      `Address EVERY critical and major issue in the review below, then re-run the tests. ` +
+      `Follow the plan; deviate only if something does not work at all.\n\n` +
+      `Plan: ${planPath}\n` +
+      `Review to fix: ${reviewPath}\n`
+    );
+  }
+  if (taskPath) {
+    return (
+      `Implement the task below using TDD (red-green-refactor). The TASK file is a ` +
+      `self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and ` +
+      `nothing outside its scope. The plan is reference/context only; you do NOT need to ` +
+      `read the whole plan.\n\n` +
+      `TASK (authoritative, self-contained): ${taskPath}\n` +
+      `Plan (reference only): ${planPath}\n`
+    );
+  }
+  // VERBATIM from the original phases.mjs implement-mode body.
+  return (
+    `Implement the plan using TDD (red-green-refactor). Follow it with NO deviation; ` +
+    `deviate slightly only if a step does not work at all.\n\n` +
+    `Plan: ${planPath}\n`
+  );
+}
+
+/**
  * Implementer — implement or fix. Returns { summary }.
  * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, reviewPath?: string, mode: "implement"|"fix" }} opts
+ * @param {{ planPath: string, reviewPath?: string, taskPath?: string, mode: "implement"|"fix" }} opts
  */
 export async function runImplementer(ctx, opts) {
-  const { planPath, reviewPath, mode = 'implement' } = opts || {};
+  const { planPath, reviewPath, taskPath, mode = 'implement' } = opts || {};
   const role = 'implementer';
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.implementer, role, ctx.workspace);
 
-  const body =
-    mode === 'fix'
-      ? `Address EVERY critical and major issue in the review below, then re-run the tests. ` +
-        `Follow the plan; deviate only if something does not work at all.\n\n` +
-        `Plan: ${planPath}\n` +
-        `Review to fix: ${reviewPath}\n`
-      : `Implement the plan using TDD (red-green-refactor). Follow it with NO deviation; ` +
-        `deviate slightly only if a step does not work at all.\n\n` +
-        `Plan: ${planPath}\n`;
+  const body = implementerBody({ mode, planPath, reviewPath, taskPath });
 
   const prompt =
     taskHeader(ctx, mode === 'fix' ? 'Fix the implementation' : 'Implement the plan') +
@@ -485,7 +562,7 @@ export async function runImplementer(ctx, opts) {
     '\n' +
     workspaceFanOutDirective('task', ctx.workspace) +
     'Work inside the project directory (your cwd). Commit nothing; just edit files and tests.\n\n' +
-    mockMarkers({ MOCK_ROLE: role, MOCK_IN: planPath, MOCK_OUT: reviewPath });
+    mockMarkers({ MOCK_ROLE: role, MOCK_IN: taskPath || planPath, MOCK_OUT: reviewPath });
 
   const { text } = await runClaude(
     runOpts(ctx, { role, prompt, systemPrompt, allowedTools: IMPLEMENTER_TOOLS }),

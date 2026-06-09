@@ -22,6 +22,7 @@
 import {
   runPlannerPlan,
   runRefiner,
+  runDecomposer,
   runImplementer,
   runReviewer,
   runPlanReviewer,
@@ -70,10 +71,18 @@ async function producer(ctx) {
       // A producer never blocks; expose the review (+ issues) for loop wiring.
       return { status: 'ok', outPlanPath, review, issues: blockingIssues(review), summary: review?.summary || '' };
     }
+    case 'decomposer': {
+      const { decompositionPath, decomposition } = await runDecomposer(ctx, {
+        planPath: ctx.planPath,
+        decompositionPath: ctx.decompositionPath,
+      });
+      return { status: 'ok', decompositionPath, decomposition, summary: 'Plan decomposed.' };
+    }
     case 'implementer': {
       const { summary } = await runImplementer(ctx, {
         planPath: ctx.planPath,
         reviewPath: ctx.reviewPath,
+        taskPath: ctx.node?.taskPath,
         mode: ctx.mode || 'implement',
       });
       return { status: 'ok', summary };

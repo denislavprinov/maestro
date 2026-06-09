@@ -343,7 +343,7 @@ function parseMarkers(prompt, systemPrompt) {
   const scan = (txt) => {
     if (!txt) return;
     for (const line of String(txt).split(/\r?\n/)) {
-      const m = line.match(/^\s*(MOCK_[A-Z]+)\s*:\s*(.*)$/);
+      const m = line.match(/^\s*(MOCK_[A-Z_]+)\s*:\s*(.*)$/);
       if (m) {
         const key = m[1];
         if (markers[key] === undefined) markers[key] = m[2].trim();
@@ -443,6 +443,9 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal }) {
       break;
     case 'refiner':
       text = await mockRefiner(m, cycle, onEvent);
+      break;
+    case 'decomposer':
+      text = await mockDecomposer(m, onEvent);
       break;
     case 'implementer':
       text = await mockImplementer(m, cwd, onEvent);
@@ -640,6 +643,31 @@ async function mockRefiner(m, cycle, onEvent) {
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${jsonPath}`, raw: { mock: true, file: jsonPath } });
   }
   return JSON.stringify(review);
+}
+
+async function mockDecomposer(m, onEvent) {
+  const out = m.MOCK_OUT;
+  const tasksDir = m.MOCK_TASKS_DIR;
+  if (!out || !tasksDir) return '[mock] decomposer: no MOCK_OUT / MOCK_TASKS_DIR given';
+  await mkdir(tasksDir, { recursive: true });
+  const phases = [
+    { ordinal: 1, tasks: [
+      { id: 'p1t1', title: 'Slice one', file: 'tasks/p1-t1-slice-one.md' },
+      { id: 'p1t2', title: 'Slice two', file: 'tasks/p1-t2-slice-two.md' },
+    ] },
+    { ordinal: 2, tasks: [
+      { id: 'p2t1', title: 'Slice three', file: 'tasks/p2-t1-slice-three.md' },
+    ] },
+  ];
+  for (const ph of phases) {
+    for (const t of ph.tasks) {
+      await writeFile(join(tasksDir, t.file.replace(/^tasks\//, '')),
+        `# ${t.title}\n\nSelf-contained mock task for phase ${ph.ordinal}.\n`, 'utf8');
+    }
+  }
+  await writeFile(out, JSON.stringify({ phases }, null, 2) + '\n', 'utf8');
+  await emitLog(onEvent, `[mock] decomposer wrote ${phases.length} phases`);
+  return '[mock] decomposer complete';
 }
 
 async function mockImplementer(m, cwd, onEvent) {

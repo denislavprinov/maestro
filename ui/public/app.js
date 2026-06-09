@@ -381,6 +381,16 @@ function manifestFor(stepper) {
   return CLIENT_DEFAULT_STEPPER;
 }
 
+// Stable node-id signature of a manifest. Used to detect a manifest REPLACEMENT
+// (e.g. a decomposed run rewrites the implementer node into per-phase/per-task
+// nodes) so the live view can re-swap + rebuild mid-run.
+function manifestSig(stepper) {
+  const m = manifestFor(stepper);
+  return (Array.isArray(m.steps) ? m.steps : [])
+    .map((cell) => (Array.isArray(cell.nodes) ? cell.nodes.map((n) => n.id).join(',') : ''))
+    .join('|');
+}
+
 // Resolve an incoming phase/state event to a cell index + node id within a run's
 // manifest. nodeId (node phase events) pins the exact node; bookend/legacy events
 // match by phase: preflight/done by kind, everything else by uiPhase.
@@ -556,7 +566,7 @@ function buildRunGraph(host, manifest) {
     col.dataset.cellIdx = String(i);
     const tag = document.createElement('div');
     tag.className = 'col-tag';
-    tag.innerHTML = `Step ${i + 1}` + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
+    tag.innerHTML = (cell.label ? escapeHtml(cell.label) : `Step ${i + 1}`) + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
     col.appendChild(tag);
     for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
     host.appendChild(col);
@@ -945,10 +955,11 @@ function onState(r, msg) {
   if (msg && msg.branch && msg.branch.feature) {
     r.branchFeature = msg.branch.feature;
   }
-  if (msg.stepper && r.stepper == null) {
+  // Swap the manifest when it FIRST arrives OR when its node-id signature changes
+  // (a decomposed run rewrites the implementer node into per-phase/per-task nodes
+  // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
+  if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper))) {
     r.stepper = msg.stepper;
-    // The manifest arrived after the card was built (or replaced the default):
-    // rebuild the stepper DOM so subsequent paints address the right nodes.
     if (r.el) rebuildStepperDom(r);
   }
   if (Array.isArray(msg.steps)) {
@@ -1266,6 +1277,11 @@ function composerRefresh() {
   } else {
     for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
     flow.appendChild(composerMakeStrip(composer.steps.length));
+  }
+  const hint = document.getElementById('composer-decomposer-hint');
+  if (hint) {
+    const hasDecomposer = composer.steps.some((col) => col.some((n) => n.key === 'decomposer'));
+    hint.hidden = !hasDecomposer;
   }
   requestAnimationFrame(composerDrawWires);
 }
@@ -1658,6 +1674,7 @@ function defaultEffortFor(modelId) {
 // reuse) without leaking them into the app's runtime contract.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
+    composer, composerRefresh,
     buildNodeConfigRows,
     buildFeedbackRows,
     defaultEffortFor,
@@ -1666,6 +1683,7 @@ if (typeof window !== 'undefined') {
     renderWorkflowConfig,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
+    manifestSig,
     makeRun,
     onSubagent,
     onState,

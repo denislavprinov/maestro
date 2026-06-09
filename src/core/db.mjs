@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -376,6 +376,42 @@ CREATE INDEX idx_sub_agents_step     ON sub_agents (pipeline_id, step_key);
 const SCHEMA_V3 = `ALTER TABLE sub_agents ADD COLUMN ui_phase TEXT;`;
 
 /**
+ * Incremental v3 -> v4 migration (Decomposer feature). Adds two tables recording a
+ * run's decomposition: pipeline_phases (ordered phases) and pipeline_tasks (the
+ * self-contained task files, each linked to its dynamically-created implementer
+ * node via node_id). Both FK to pipelines ONLY (ON DELETE CASCADE) and are written
+ * via idempotent UPSERTs — NEVER the writeState delete-all path — so task/phase
+ * status survives the pipeline_steps refresh, exactly like sub_agents.
+ */
+const SCHEMA_V4 = `
+CREATE TABLE pipeline_phases (
+  pipeline_id TEXT NOT NULL,
+  ordinal     INTEGER NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',  -- pending|running|done|error
+  started_at  TEXT,
+  finished_at TEXT,
+  PRIMARY KEY (pipeline_id, ordinal),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+
+CREATE TABLE pipeline_tasks (
+  pipeline_id   TEXT NOT NULL,
+  id            TEXT NOT NULL,
+  phase_ordinal INTEGER NOT NULL,
+  task_index    INTEGER NOT NULL,
+  title         TEXT,
+  file_rel_path TEXT,
+  node_id       TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending',  -- pending|running|done|error
+  started_at    TEXT,
+  finished_at   TEXT,
+  PRIMARY KEY (pipeline_id, id),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX idx_pipeline_tasks_pipeline ON pipeline_tasks (pipeline_id);
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -404,6 +440,7 @@ export function migrate(db) {
     if (current < 1) db.exec(SCHEMA_V1);
     if (current < 2) db.exec(SCHEMA_V2);
     if (current < 3) db.exec(SCHEMA_V3);
+    if (current < 4) db.exec(SCHEMA_V4);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

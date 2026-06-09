@@ -87,6 +87,8 @@ const EXPECTED_TABLES = [
   'store_meta',
   'artifacts',
   'sub_agents',
+  'pipeline_phases',
+  'pipeline_tasks',
 ];
 
 // Every index the spec mandates (pipelines fan-out indexes, append-only event
@@ -114,13 +116,13 @@ function indexNames(db) {
     .map((r) => r.name);
 }
 
-test('migrate creates all 15 spec tables', () => {
+test('migrate creates all 17 spec tables', () => {
   const db = getDb();
   const present = new Set(tableNames(db));
   for (const t of EXPECTED_TABLES) {
     assert.ok(present.has(t), `table "${t}" is present`);
   }
-  assert.equal(EXPECTED_TABLES.length, 15, 'the spec defines exactly 15 tables (v2: +sub_agents)');
+  assert.equal(EXPECTED_TABLES.length, 17, 'the spec defines exactly 17 tables (v4: +pipeline_phases +pipeline_tasks)');
 });
 
 test('migrate creates every required index', () => {
@@ -131,10 +133,21 @@ test('migrate creates every required index', () => {
   }
 });
 
-test('migrate stamps user_version = 3', () => {
+test('migrate stamps user_version = 4', () => {
   const db = getDb();
   const { user_version } = db.prepare('PRAGMA user_version').get();
-  assert.equal(user_version, 3, 'schema version is 3 after migrate');
+  assert.equal(user_version, 4, 'schema version is 4 after migrate');
+});
+
+test('v4 adds pipeline_phases + pipeline_tasks with expected columns', () => {
+  const db = getDb();
+  const phaseCols = db.prepare('PRAGMA table_info(pipeline_phases)').all().map((c) => c.name);
+  assert.deepEqual(phaseCols, ['pipeline_id', 'ordinal', 'status', 'started_at', 'finished_at']);
+  const taskCols = db.prepare('PRAGMA table_info(pipeline_tasks)').all().map((c) => c.name);
+  assert.deepEqual(taskCols, [
+    'pipeline_id', 'id', 'phase_ordinal', 'task_index', 'title',
+    'file_rel_path', 'node_id', 'status', 'started_at', 'finished_at',
+  ]);
 });
 
 test('migrate() is idempotent — second run is a no-op, version stable', () => {
@@ -222,13 +235,13 @@ test('getDb() calls maybeMigrateFromFs(db) once after migrate()', () => {
   // "Cannot redefine property". Instead the Phase-1 stub increments an exported
   // module-level call counter; we assert the OBSERVABLE effect (called exactly
   // once on first open) AND that the schema was already migrated when it ran
-  // (user_version === 3 proves migrate() ran before the hook).
+  // (user_version === 4 proves migrate() ran before the hook).
   assert.equal(_migrateFromFsCallCount(), 0, 'counter starts at 0 before first open');
   const db = getDb();
   assert.equal(_migrateFromFsCallCount(), 1, 'hook invoked exactly once on first open');
   // The schema must already exist when the hook runs (it reads/writes rows).
   const { user_version } = db.prepare('PRAGMA user_version').get();
-  assert.equal(user_version, 3, 'migrate() ran before the hook');
+  assert.equal(user_version, 4, 'migrate() ran before the hook');
   // Cached singleton: a repeat getDb() must NOT re-run the one-shot hook.
   getDb();
   assert.equal(_migrateFromFsCallCount(), 1, 'hook not re-run on cached getDb()');
@@ -278,7 +291,7 @@ test('getDb() first-launch is concurrency-safe across N processes (no lock/exist
 
   // The shared DB is migrated exactly once: v2 stamped, exactly one projects table.
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3, 'migrated to v3');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4, 'migrated to v4');
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='projects'").get().n,
     1, 'exactly one projects table after the race');

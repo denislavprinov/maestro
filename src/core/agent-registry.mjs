@@ -26,13 +26,14 @@ const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
  */
 const DEFAULT_SPEC = {
   clarify:              { consumes: ['userPrompt'],                       produces: ['clarify'],         connectsTo: ['planner'] },
-  planner:              { consumes: ['userPrompt', 'clarify', 'review'],  optionalConsumes: ['clarify', 'review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer'] },
-  refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner'] },
+  planner:              { consumes: ['userPrompt', 'clarify', 'review'],  optionalConsumes: ['clarify', 'review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer', 'decomposer'] },
+  refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner', 'decomposer'] },
+  decomposer:           { consumes: ['plan'],              produces: ['decomposition'],   connectsTo: ['implementer'] },
   implementer:          { consumes: ['plan', 'review'],    optionalConsumes: ['review'],  produces: ['code'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
   reviewer:             { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer', 'manualTestsChecklist'] },
   manualTestsChecklist: { consumes: ['plan', 'code'],      produces: ['checklist'],       connectsTo: ['manualWebUiTesting'] },
   manualWebUiTesting:   { consumes: ['checklist', 'code'], produces: ['review'],          connectsTo: ['implementer'] },
-  planReviewer:         { consumes: ['plan'],              produces: ['review'],          connectsTo: ['planner', 'implementer'] },
+  planReviewer:         { consumes: ['plan'],              produces: ['review'],          connectsTo: ['planner', 'implementer', 'decomposer'] },
   // Workspace agents (scope:'workspace-only', §6.2). The scanner is off-pipeline
   // (connectsTo:[] -> non-composable); the reviewer slots into the code->review->
   // implementer loop exactly like `reviewer`.
@@ -153,8 +154,8 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR) {
  *
  * §6.6/C9: `scope:'workspace-only'` agents are EXCLUDED — they are not part of the
  * single-project UI stepper / per-step config keyspace that AGENT_STEPS drives, so
- * this still returns EXACTLY the 7 project-scope steps (the byte-identity invariant;
- * without the exclusion the two workspace sidecars would push it to 9).
+ * this still returns EXACTLY the 9 project-scope steps (the byte-identity invariant;
+ * without the exclusion the two workspace sidecars would push it to 11).
  * @param {Record<string, object>} registry
  * @returns {Array<{key:string,label:string,fanOut:boolean}>}
  */

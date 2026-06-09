@@ -11,6 +11,6 @@
   "produces": ["plan"],
   "consumes": ["userPrompt", "clarify", "review"],
   "optionalConsumes": ["clarify", "review"],
-  "connectsTo": ["refiner", "implementer", "planReviewer"],
+  "connectsTo": ["refiner", "implementer", "planReviewer", "decomposer"],
   "order": 1
 }
