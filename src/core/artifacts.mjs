@@ -944,6 +944,82 @@ export async function writeState(pipelineDir, stateObj) {
 }
 
 /**
+ * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
+ * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
+ * catch/finally could write a terminal status, so the row was frozen at 'running'.
+ */
+export const INTERRUPTED_STATUS = 'interrupted';
+
+// The non-terminal statuses a run can be frozen at by a crash.
+const RECONCILE_NON_TERMINAL = ['created', 'starting', 'running'];
+
+/**
+ * Staleness window (ms). A non-terminal row older than this AND not live is dead.
+ * 30 min is deliberately generous: _persist() advances updated_at only on phase
+ * boundaries (orchestrator.mjs:1846) and on an agent's terminal `result` event
+ * (_recordCost :1888-1901) — a single long agent call can be silent for minutes.
+ * A window shorter than that risks relabeling a genuinely-live run owned by a
+ * CONCURRENT process (CLI+UI share one DB, db.mjs:44). The user's stuck record is
+ * hours/days old, so it is swept immediately regardless. Override via env for tests/ops.
+ */
+const DEFAULT_STALE_RUN_MS = 30 * 60 * 1000;
+function staleRunMs() {
+  const n = Number(process.env.MAESTRO_STALE_RUN_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_STALE_RUN_MS;
+}
+
+/**
+ * Flip stale non-terminal pipeline rows (created/starting/running) to INTERRUPTED.
+ * A row is stale when ALL hold:
+ *   - status is non-terminal,
+ *   - COALESCE(updated_at, started_at) is older than `staleMs` (a NULL coalesce is
+ *     NOT < cutoff in SQL, so timestamp-less rows are skipped — never clobbered),
+ *   - its id is not in `liveIds` (runs live in THIS process).
+ * The updated_at threshold shields runs live in a CONCURRENT process; the UPDATE is
+ * additionally guarded `AND status IN (non-terminal)` so a terminal status written by
+ * another process between the SELECT and the UPDATE is never overwritten. The SELECT
+ * runs OUTSIDE tx() (no write lock on the common no-op path); tx() wraps only the
+ * UPDATE loop. Does not change updated_at (preserves History order; idempotent —
+ * INTERRUPTED is terminal, so it is excluded from the filter and a re-run flips nothing).
+ *
+ * Uses node:sqlite (StatementSync): .all()/.run() take anonymous '?' params variadically;
+ * .run() returns { changes }. Callers must NOT invoke this inside an open tx() (it opens
+ * its own); the two production call sites (GET /api/history, boot) are not in a tx.
+ *
+ * @param {{ staleMs?:number, liveIds?:string[], now?:number }} [opts]
+ * @returns {{ reconciled:number, ids:string[] }}  ids = rows actually flipped this call
+ */
+export function reconcileStaleRunning({ staleMs = staleRunMs(), liveIds = [], now = Date.now() } = {}) {
+  const cutoff = new Date(now - staleMs).toISOString();
+  const live = new Set(liveIds.filter(Boolean));
+  const placeholders = RECONCILE_NON_TERMINAL.map(() => '?').join(', ');
+
+  // Read first — no write lock yet. NULL COALESCE is not < cutoff, so timestamp-less
+  // rows are never selected (conservative no-clobber).
+  const rows = getDb().prepare(`
+    SELECT id FROM pipelines
+    WHERE status IN (${placeholders})
+      AND COALESCE(updated_at, started_at) < ?
+  `).all(...RECONCILE_NON_TERMINAL, cutoff);
+
+  const candidates = rows.map((r) => r.id).filter((id) => !live.has(id));
+  if (candidates.length === 0) return { reconciled: 0, ids: [] };
+
+  // Status-guarded UPDATE: refuse to overwrite a terminal status a concurrent process
+  // may have committed since the SELECT. changes>0 => we actually flipped this row.
+  return tx(() => {
+    const upd = getDb().prepare(
+      `UPDATE pipelines SET status = ? WHERE id = ? AND status IN (${placeholders})`);
+    const flipped = [];
+    for (const id of candidates) {
+      const info = upd.run(INTERRUPTED_STATUS, id, ...RECONCILE_NON_TERMINAL);
+      if (info.changes > 0) flipped.push(id);
+    }
+    return { reconciled: flipped.length, ids: flipped };
+  });
+}
+
+/**
  * Map a live state object to the named params of the pipelines UPSERT. JSON columns
  * are stringified here; the workspace superset collapses into workspace_meta.
  *

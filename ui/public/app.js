@@ -2550,7 +2550,7 @@ async function postAnswer(r, payload) {
 // by liveRuns (to exclude finished runs) and postAnswer (to refuse a late POST).
 function isTerminalStatus(status) {
   const s = String(status || '').toLowerCase();
-  return s === 'done' || s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed' || s === 'complete' || s === 'completed';
+  return s === 'done' || s === 'error' || s === 'stopped' || s === 'aborted' || s === 'failed' || s === 'complete' || s === 'completed' || s === 'interrupted';
 }
 
 // Disable/enable the panel's interactive controls and reflect a "Resuming…"
@@ -4213,6 +4213,7 @@ function historyBadge(p) {
   if (s === 'done' || s === 'complete' || s === 'completed') return { cls: 'badge green', text: 'DONE' };
   if (s === 'stopped' || s === 'aborted') return { cls: 'badge red', text: 'STOPPED' };
   if (s === 'error' || s === 'failed') return { cls: 'badge red', text: 'ERROR' };
+  if (s === 'interrupted') return { cls: 'badge red', text: 'INTERRUPTED' };
   if (p.live || s === 'running' || s === 'starting') return { cls: 'badge running', text: 'RUNNING' };
   return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
 }
@@ -4574,7 +4575,7 @@ function paintHistStepper(detail, st) {
   if (!host) return;
   const manifest = manifestFor(st.stepper);
   const status = String(st.status || '').toLowerCase();
-  const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed';
+  const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed' || status === 'interrupted';
   const isDone = status === 'done' || status === 'complete' || status === 'completed';
   const reached = histReachedCell(manifest, st);
   const durs = durByNode(st.steps, 0, false);

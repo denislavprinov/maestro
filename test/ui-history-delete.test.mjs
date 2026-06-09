@@ -61,6 +61,17 @@ test('running entry hides the Delete button', async () => {
   assert.equal(btn.hidden, true);
 });
 
+test('interrupted entry shows the Delete button', async () => {
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([{ ...FIN, status: 'interrupted' }], false) : null),
+  });
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  const btn = card.querySelector('.hist-detail .hist-delete');
+  assert.equal(btn.hidden, false, 'interrupted is terminal -> deletable');
+});
+
 test('confirm + click issues DELETE with the id and removes the card', async () => {
   let deleted = null;
   const { window, showHistory } = await boot({
