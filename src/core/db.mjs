@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -412,6 +412,32 @@ CREATE INDEX idx_pipeline_tasks_pipeline ON pipeline_tasks (pipeline_id);
 `;
 
 /**
+ * V5: pipeline_assets — one row per asset invocation (Skill / Agent sub-agent /
+ * graphify) detected on the MAIN claude stream from inside a phase. Mirrors sub_agents:
+ * FK to pipelines ONLY (ON DELETE CASCADE), written via idempotent UPSERTs keyed on the
+ * tool_use id, so rows survive the writeState pipeline_steps delete-all refresh. Dedup +
+ * counts are computed at read/render time, not stored.
+ */
+const SCHEMA_V5 = `
+  CREATE TABLE pipeline_assets (
+    pipeline_id TEXT NOT NULL,
+    id          TEXT NOT NULL,            -- tool_use id; unique per invocation
+    kind        TEXT NOT NULL,            -- 'skill' | 'agent' | 'graphify'
+    name        TEXT NOT NULL,            -- dedup identity (skill / subagent_type / 'graphify')
+    detail      TEXT,
+    node_id     TEXT,
+    ui_phase    TEXT,
+    step_index  INTEGER,
+    cycle       INTEGER,
+    step_key    TEXT,
+    invoked_at  TEXT,
+    PRIMARY KEY (pipeline_id, id),
+    FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+  );
+  CREATE INDEX idx_pipeline_assets_pipeline ON pipeline_assets (pipeline_id);
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -441,6 +467,7 @@ export function migrate(db) {
     if (current < 2) db.exec(SCHEMA_V2);
     if (current < 3) db.exec(SCHEMA_V3);
     if (current < 4) db.exec(SCHEMA_V4);
+    if (current < 5) db.exec(SCHEMA_V5);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

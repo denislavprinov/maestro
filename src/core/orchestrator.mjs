@@ -29,6 +29,7 @@ import {
   today,
   recordArtifact,
   upsertSubAgent,
+  upsertAssetInvocation,
   writeClarify,
   writeReview,
   reviewKindOf,
@@ -206,6 +207,10 @@ class Orchestrator extends EventEmitter {
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
       // status ∈ 'running'|'finished'|'error'|'stopped'.
       subAgents: [],
+      // Asset invocations (Skill / Agent sub-agent / graphify) captured from inside a
+      // phase on the MAIN stream; mirrored to pipeline_assets. Each:
+      // { id, kind, name, detail, nodeId, uiPhase, stepIndex, cycle, stepKey, invokedAt }.
+      assets: [],
     };
   }
 
@@ -1488,7 +1493,12 @@ class Orchestrator extends EventEmitter {
       // Lifecycle: a NEW Task/Agent tool_use on the MAIN stream = a sub-agent spawn.
       // Needs `attr` to pin nodeId/stepIndex/cycle/stepKey; the clarify pre-step
       // (attr === null) carries no node, so it is logged but not lifecycle-tracked.
-      if (attr) this._recordSubAgentSpawns(e.raw, attr);
+      if (attr) {
+        this._recordSubAgentSpawns(e.raw, attr);
+        // Assets (Skill/Agent/graphify) invoked from inside a phase — same gate,
+        // same stream, same attribution as sub-agent spawns.
+        this._recordAssetInvocations(e.raw, attr);
+      }
       // Finish: a tool_result on the MAIN stream whose tool_use_id is a tracked
       // sub-agent → finished/error. These `user` envelopes were previously dropped.
       this._recordSubAgentFinishes(e.raw);
@@ -1587,6 +1597,35 @@ class Orchestrator extends EventEmitter {
   _upsertSubAgent(rec) {
     if (!this.pipeline) return;
     try { upsertSubAgent(this.pipeline.id, rec); } catch { /* best-effort */ }
+  }
+
+  /**
+   * Asset reducer: scan a MAIN-stream event for Skill/Agent/graphify invocations,
+   * stamp attribution from `attr`, push to state.assets (idempotent on tool_use id),
+   * mirror to pipeline_assets, and emit an `asset` delta. Mirrors _recordSubAgentSpawns.
+   */
+  _recordAssetInvocations(raw, attr) {
+    const uses = assetUsesFromEvent(raw);
+    if (!uses.length) return;
+    for (const u of uses) {
+      if (this.state.assets.some((a) => a.id === u.id)) continue; // idempotent within a run
+      const rec = {
+        id: u.id, kind: u.kind, name: u.name, detail: u.detail ?? null,
+        nodeId: attr?.nodeId ?? null, uiPhase: attr?.uiPhase ?? null,
+        stepIndex: attr?.stepIndex ?? null, cycle: attr?.cycle ?? null,
+        stepKey: attr?.stepKey ?? null, invokedAt: new Date().toISOString(),
+      };
+      this.state.assets.push(rec);
+      this._upsertAsset(rec);
+      this._emit('asset', { ...rec, ts: rec.invokedAt });
+    }
+  }
+
+  /** Best-effort mirror of an asset record to the pipeline_assets table. Guarded
+   *  exactly like _upsertSubAgent: no pipeline → in-memory only (unit ctx). */
+  _upsertAsset(rec) {
+    if (!this.pipeline) return;
+    try { upsertAssetInvocation(this.pipeline.id, rec); } catch { /* best-effort */ }
   }
 
   /** Emit a hybrid `subagent` delta. The full `state` snapshot remains the
@@ -2104,6 +2143,46 @@ function describeToolUses(raw, projectDir) {
     }
   }
   return calls;
+}
+
+/**
+ * Pure detector: scan a MAIN-stream event for asset invocations (Skill / Agent
+ * sub-agent / graphify), returning one `{ id, kind, name, detail }` per tool_use.
+ * Attribution (nodeId/stepIndex/…) is added by the instance recorder, not here.
+ * Reuses the module-level hoisted `clip(text, n)` defined below — do NOT redeclare clip.
+ *   - Skill (skill !== 'graphify') → kind 'skill', name = skill/command, detail = args.
+ *   - Skill (skill === 'graphify')  → kind 'graphify', detail = 'skill: ' + args.
+ *   - Task/Agent → kind 'agent', name = subagent_type ?? 'general-purpose'.
+ *   - Bash whose command trim-starts 'graphify' → kind 'graphify', detail = first 2 tokens.
+ */
+export function assetUsesFromEvent(raw) {
+  const content = raw?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  for (const c of content) {
+    if (!c || c.type !== 'tool_use' || !c.id) continue;
+    if (c.name === 'Skill') {
+      const skill = c.input?.skill ?? c.input?.command ?? null;
+      if (!skill) continue;
+      if (skill === 'graphify') {
+        out.push({ id: c.id, kind: 'graphify', name: 'graphify', detail: 'skill: ' + clip(c.input?.args, 60) });
+      } else {
+        out.push({ id: c.id, kind: 'skill', name: skill, detail: clip(c.input?.args, 60) });
+      }
+    } else if (c.name === 'Task' || c.name === 'Agent') {
+      out.push({
+        id: c.id, kind: 'agent',
+        name: c.input?.subagent_type ?? 'general-purpose',
+        detail: clip(c.input?.description ?? c.input?.prompt, 60),
+      });
+    } else if (c.name === 'Bash') {
+      const cmd = (c.input?.command ?? '').trim();
+      if (cmd.startsWith('graphify')) {
+        out.push({ id: c.id, kind: 'graphify', name: 'graphify', detail: cmd.split(/\s+/).slice(0, 2).join(' ') });
+      }
+    }
+  }
+  return out;
 }
 
 /** A short, human-readable target for a tool call (file, command, pattern…). */

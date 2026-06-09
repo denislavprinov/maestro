@@ -108,7 +108,7 @@ function liveRunIds() {
   return ids;
 }
 
-const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent'];
+const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'asset'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
