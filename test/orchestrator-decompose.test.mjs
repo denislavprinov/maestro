@@ -62,3 +62,22 @@ test('a decomposer run records phases + tasks and fans out implementers (mock)',
   assert.ok(ids.includes('s_impl_p2_t1'));
   assert.ok(!ids.includes('s2_0'), 'original implementer node should be replaced');
 });
+
+test('decomposed run records a pipeline step per task node', async () => {
+  const wf = await writeWorkflow({
+    name: 'Decompose Steps',
+    steps: [
+      [{ id: 's0_0', key: 'planner' }],
+      [{ id: 's_dec', key: 'decomposer' }],
+      [{ id: 's2_0', key: 'implementer' }],
+      [{ id: 's3_0', key: 'reviewer' }],
+    ],
+    feedbacks: [],
+  });
+  const orch = createOrchestrator({ projectDir: proj, prompt: 'demo', workflowId: wf.id, auto: true, claude: { mock: true } });
+  await orch.run();
+  const stepNodeIds = orch.getState().steps.map((s) => s.nodeId);
+  assert.ok(stepNodeIds.includes('s_impl_p1_t1'));
+  assert.ok(stepNodeIds.includes('s_impl_p1_t2'));
+  assert.ok(stepNodeIds.includes('s_impl_p2_t1'));
+});

@@ -947,6 +947,17 @@ class Orchestrator extends EventEmitter {
    * Returns an array of { node, result } in node order.
    */
   async _runStep(group, stepIndex, cycle, bus) {
+    // Decomposed implement: a single implementer step (and not an already-synthetic
+    // task node) + a decomposition on the bus + NOT a fix cycle => fan out one
+    // implementer per task, phases sequential, tasks parallel. A fix-cycle rewind
+    // (bus.review present) runs the normal single implementer on the combined diff.
+    if (
+      group.length === 1 && group[0].key === 'implementer' && !group[0].decomposedTask &&
+      bus.decomposition && Array.isArray(bus.decomposition.phases) && bus.decomposition.phases.length &&
+      !bus.review
+    ) {
+      return this._runDecomposedImplement(group[0], stepIndex, cycle, bus);
+    }
     // CONV-6: each node reads a FROZEN snapshot of the inbound bus; nodes never
     // mutate shared state concurrently. Results merge back in node order after all
     // nodes settle, so the outcome is independent of completion timing.
@@ -994,6 +1005,104 @@ class Orchestrator extends EventEmitter {
     }
     writeDecomposition(this.pipeline.id, phases);
     await appendAudit(this.pipeline.dir, `Decomposed plan into ${phases.length} phase(s).`);
+  }
+
+  /**
+   * Run the decomposed implement stage. Rewrite + persist the UI stepper into per-phase
+   * / per-task cells, then run each phase IN ORDER (tasks within a phase in PARALLEL,
+   * shared working tree). Abort immediately on the first genuine task failure. Stages
+   * the combined tree itself (the guard returns early from _runStep, skipping its tail
+   * stage). Returns the dispatcher's [{node,result,ctx}] shape with ONE synthetic
+   * implementer result so the reviewer step sees a settled 'code' producer.
+   */
+  async _runDecomposedImplement(implNode, stepIndex, cycle, bus) {
+    const phases = bus.decomposition.phases;
+    // 1) Rewrite + persist the UI manifest so the live/history view stacks per task.
+    this.state.stepper = rewriteStepperForDecomposition(this.state.stepper, phases);
+    await this._persist();
+    this._emit('state', this.getState());
+
+    const snapshot = Object.freeze({ ...bus });
+
+    // 2) Run each phase in order.
+    for (const ph of phases) {
+      const tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
+      updatePhaseStatus(this.pipeline.id, ph.ordinal, 'running', new Date().toISOString());
+      await appendAudit(this.pipeline.dir, `Phase ${ph.ordinal}: ${tasks.length} task(s) starting.`);
+
+      const phaseAbort = new AbortController();
+      const settled = await Promise.allSettled(tasks.map((task) => {
+        const taskNode = {
+          nodeId: task.nodeId,
+          key: 'implementer',
+          uiPhase: 'implement',
+          runnerType: 'producer',
+          decomposedTask: true,
+          model: implNode.model,
+          effort: implNode.effort,
+          tools: implNode.tools,
+          taskPath: join(this.pipeline.dir, task.file || ''),
+          produces: ['code'],
+          consumes: ['plan'],
+        };
+        return this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+      }));
+
+      // Abort-immediately on the FIRST genuine (non-abort) failure.
+      let firstError = null;
+      settled.forEach((r, k) => {
+        if (r.status === 'rejected' && !isAbort(r.reason) && !firstError) {
+          firstError = { task: tasks[k], reason: r.reason };
+          phaseAbort.abort();
+        }
+      });
+      if (firstError) {
+        updatePhaseStatus(this.pipeline.id, ph.ordinal, 'error', new Date().toISOString());
+        await appendAudit(this.pipeline.dir,
+          `Phase ${ph.ordinal}: task "${firstError.task.title || firstError.task.id}" failed — aborting run.`);
+        throw new Error(`Decomposed implement failed in phase ${ph.ordinal}: task "${firstError.task.title || firstError.task.id}": ${firstError.reason?.message || firstError.reason}`);
+      }
+      updatePhaseStatus(this.pipeline.id, ph.ordinal, 'done', new Date().toISOString());
+    }
+
+    // 3) Stage the combined tree so the reviewer's diff sees every task's files.
+    await this._stageWorkingTree();
+
+    // 4) Synthetic dispatcher result (one settled 'code' producer). NOT published via
+    //    _publishNodeIo (the guard returned early); bus.code is the standing worktree
+    //    channel the reviewer already binds, so the staged tree is all it needs.
+    return [{
+      node: { ...implNode, produces: ['code'], consumes: ['plan'] },
+      result: { status: 'ok', summary: `Decomposed implementation complete (${phases.length} phase(s)).` },
+      ctx: { outputs: {} },
+    }];
+  }
+
+  /**
+   * Run one decomposed task through the standard node machinery: _nodeStep records its
+   * own pipeline step (distinct nodeId), _nodeCtx wires its own onEvent (so sub-agents
+   * are attributed to this task), and the producer runner runs the implementer with the
+   * self-contained TASK file authoritative (ctx.node.taskPath). The phase-local abort is
+   * folded with the run-wide signal so a sibling failure cancels it. updateTaskStatus
+   * tracks running/done/error. Errors propagate.
+   */
+  async _runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort) {
+    this._nodeStep(taskNode, stepIndex, cycle, 'start');
+    updateTaskStatus(this.pipeline.id, task.id, 'running', new Date().toISOString());
+    const ctx = this._nodeCtx(taskNode, { stepIndex, cycle });
+    Object.assign(ctx, this._bindNodeIo(taskNode, cycle, snapshot));
+    ctx.signal = AbortSignal.any([this.abort.signal, phaseAbort.signal]); // sibling-failure cancel
+    let status = 'done';
+    try {
+      const runner = this._runners[taskNode.runnerType];
+      await runner(ctx); // producer -> runImplementer({ ..., taskPath: ctx.node.taskPath })
+    } catch (err) {
+      status = 'error';
+      throw err;
+    } finally {
+      updateTaskStatus(this.pipeline.id, task.id, status, new Date().toISOString());
+      this._nodeStep(taskNode, stepIndex, cycle, status === 'error' ? 'error' : 'done');
+    }
   }
 
   /**
