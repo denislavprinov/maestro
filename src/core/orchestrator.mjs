@@ -17,6 +17,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join, basename, resolve, dirname, sep, relative } from 'node:path';
+import { existsSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
 
 import {
@@ -165,6 +166,7 @@ class Orchestrator extends EventEmitter {
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
+    this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this.agentPrompts = null;
     this.toolInstruction = '';
@@ -500,6 +502,130 @@ class Orchestrator extends EventEmitter {
       // kept (every member's, on a workspace run), only the disposable checkout is
       // removed. But NEVER on a pause: the checkout (with any uncommitted agent
       // work) is the thing we resume into.
+      if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
+        if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
+        else await this._teardownWorktree().catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Continue a paused pipeline from its persisted resume point. Mirrors run()'s
+   * shell but skips createPipeline / checkpoint / worktree / graph setup — those
+   * artifacts exist from the original run. Resolves like run().
+   */
+  async resume() {
+    const saved = this.resumeOpts;
+    if (!saved?.row || !saved?.resumePoint) throw new Error('resume(): no saved pipeline provided');
+    const { row, resumePoint: rp, steps } = saved;
+    if (row.status !== 'paused') throw new Error(`resume(): pipeline is "${row.status}", not paused`);
+    if (rp.version !== 1) throw new Error(`resume(): unsupported resume point version ${rp.version}`);
+    try {
+      // ── rehydrate identity + state ──
+      this.state.id = row.id;
+      this.state.title = row.title;
+      this.state.startedAt = row.started_at;
+      this.state.prompt = row.prompt;
+      this.state.stepper = safeParse(row.stepper);
+      this.state.tools = safeParse(row.tools);
+      this.state.branch = safeParse(row.branch);
+      this.state.steps = (steps || []).map((s) => ({ ...s, runningSince: null }));
+      this.baseName = row.base_name;
+      this.planDatePrefix = row.date_prefix;
+      this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };
+      this.state.pipelineDir = rp.pipelineDir;
+      this.stepModels = rp.stepModels || null;
+      this.workflowId = rp.workflowId || this.workflowId;
+      this.toolInstruction = this.state.tools?.instruction || '';
+
+      // ── worktree re-attach (single-project; workspace below) ──
+      const wt = this.state.branch?.worktreeDir;
+      if (wt && !existsSync(wt)) throw new Error(`worktree missing: ${wt} — cannot resume`);
+      if (wt) {
+        this.workDir = wt;
+        this.branchInfo = {
+          worktreeDir: wt,
+          branch: this.state.branch.feature,
+          sourceBranch: this.state.branch.source,
+          reusedExisting: true,
+        };
+      }
+      this.checkpointRef = rp.bus?.code?.baseRef || null;
+
+      // ── workspace rehydration (no-op on single-project) ──
+      const meta = safeParse(row.workspace_meta);
+      if (this.isWorkspace && meta) {
+        this.workspaceDescription = meta.workspaceDescription || '';
+        this.checkpointRefs = meta.checkpointRefs || {};
+        for (const p of rp.bus?.workspace?.projects || []) {
+          if (p.projectKey && p.worktreeDir) {
+            if (!existsSync(p.worktreeDir)) throw new Error(`worktree missing: ${p.worktreeDir} — cannot resume`);
+            this.workDirs.set(p.projectKey, p.worktreeDir);
+            this.toolInstructions.set(p.projectKey, p.graphInstruction || '');
+          }
+        }
+        Object.assign(this.state, {
+          target: 'workspace', workspaceId: meta.workspaceId, workspaceKey: this.workspaceKey,
+          workspaceName: meta.workspaceName, workspaceDescription: this.workspaceDescription,
+          projectKeys: meta.projectKeys || [], projects: meta.projects || [],
+          checkpointRefs: this.checkpointRefs, branches: meta.branches || {},
+        });
+      }
+
+      // ── prompts/registry (cheap, local) ──
+      this.registry = await loadAgentRegistry();
+      this.agentPrompts = await this._loadAgentPrompts();
+
+      this.state.resumePoint = null; // consumed; cleared on the next persist
+      this._setStatus('running');
+      await this._persist();
+      await appendAudit(this.pipeline.dir, `Pipeline **resumed** (from ${rp.kind} at step ${rp.stepIndex}).`);
+      this._emit('state', this.getState());
+
+      // ── plan: frozen at pause time; a pre-dispatch boundary pause re-resolves ──
+      let plan = rp.plan;
+      if (!plan) {
+        plan = await resolveWorkflow(this.projectDir, this.workflowId, this.registry, undefined, {
+          isWorkspace: this.isWorkspace,
+        });
+      }
+
+      const dispatched = await this._dispatch(plan, { resume: rp });
+      this._checkAbort();
+      if (dispatched === 'paused') return await this._completePaused();
+
+      this._setStatus('done');
+      this._phase('done', 0, 'done');
+      await this._persist();
+      await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
+      return { status: 'done', pipelineDir: this.pipeline.dir };
+    } catch (err) {
+      if ((isPause(err) || this.state.status === 'pausing') && this.state.status !== 'stopped') {
+        if (this.pipeline) return await this._completePaused();
+      }
+      if (isAbort(err) || this.state.status === 'stopped') {
+        this._setStatus('stopped');
+        // Stopped runs are not resumable: never persist a resume point alongside
+        // a torn-down worktree (mirrors run()'s stopped branch).
+        this.state.resumePoint = null;
+        if (this.pipeline) {
+          await this._persist().catch(() => {});
+          await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+        }
+        this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
+        return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
+      }
+      this._setStatus('error');
+      const message = err?.message || String(err);
+      this._emit('error', { message });
+      if (this.pipeline) {
+        await this._persist().catch(() => {});
+        await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+      }
+      this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
+      return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
+    } finally {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
         else await this._teardownWorktree().catch(() => {});
@@ -888,6 +1014,7 @@ class Orchestrator extends EventEmitter {
   async _dispatch(plan, runArgs = {}) {
     const steps = Array.isArray(plan?.steps) ? plan.steps : [];
     const feedbacks = Array.isArray(plan?.feedbacks) ? plan.feedbacks : [];
+    const resume = runArgs.resume || null;
 
     // D4: surface channel-reachability / governance warnings where they matter — a
     // saved-then-illegalized pipeline runs anyway, but the operator sees why a (e.g.)
@@ -912,9 +1039,11 @@ class Orchestrator extends EventEmitter {
       if (!fbByFrom.has(fromIdx)) fbByFrom.set(fromIdx, []);
       fbByFrom.get(fromIdx).push({ ...fb, fromIdx, toIdx: toIndex(fb.to), maxCycles: numOr(fb.maxCycles, 1) });
     }
-    const loopState = {}; // fb.id -> { cycle }
+    const loopState = resume?.loopState ? JSON.parse(JSON.stringify(resume.loopState)) : {}; // fb.id -> { cycle }
     // The active run cycle per step index while a loop is replaying through it.
-    const stepCycle = new Array(steps.length).fill(1);
+    const stepCycle = resume?.stepCycle?.length === steps.length
+      ? [...resume.stepCycle]
+      : new Array(steps.length).fill(1);
 
     // Typed channel bus (replaces the old `io` bag). plan/checklist are pre-seeded
     // with their default destinations (as today); code is the standing worktree
@@ -937,6 +1066,12 @@ class Orchestrator extends EventEmitter {
       // here, never re-published (CONV-6). null on a single-project run.
       workspace: this.isWorkspace ? this._workspaceChannel() : null,
     };
+    if (resume?.bus) {
+      // Restore the paused run's channel state verbatim (paths/text/answers/dirs
+      // are plain JSON). The fresh literal above only provides defaults for any
+      // channel a future schema adds after the pause.
+      for (const [k, v] of Object.entries(resume.bus)) bus[k] = jsonClone(v);
+    }
 
     // Prompt-as-entry-artifact: fill any materializable channel the topology requires
     // before any step produces it (a pipeline that starts mid-stream — implementer or
@@ -947,21 +1082,53 @@ class Orchestrator extends EventEmitter {
     // unchanged, so the frozen per-step snapshots already point at the now-existing
     // file. A real producer later overwrites the file (latest-writer-wins), as today.
     this.extrasFiles = await this._collectExtras();
-    for (const c of entrySeedChannels(steps)) {
-      const handle = bus[c];
-      if (!handle?.path) continue;
-      await mkdir(dirname(handle.path), { recursive: true }); // plans/ dir is lazy
-      await writeFile(handle.path, renderPromptArtifact(this.pipeline.promptText, this.extrasFiles), 'utf8');
-      await appendAudit(this.pipeline.dir, `Seeded "${c}" from the user prompt (no upstream producer).`);
+    if (!resume) {
+      for (const c of entrySeedChannels(steps)) {
+        const handle = bus[c];
+        if (!handle?.path) continue;
+        await mkdir(dirname(handle.path), { recursive: true }); // plans/ dir is lazy
+        await writeFile(handle.path, renderPromptArtifact(this.pipeline.promptText, this.extrasFiles), 'utf8');
+        await appendAudit(this.pipeline.dir, `Seeded "${c}" from the user prompt (no upstream producer).`);
+      }
     }
 
-    let i = 0;
+    let i = resume ? Math.min(Math.max(0, resume.stepIndex | 0), steps.length) : 0;
+    // One-shot session re-attach map: only the interrupted step's nodes resume their
+    // captured claude sessions; every later step starts fresh.
+    this._resumeNodeSessions = resume?.kind === 'node'
+      ? new Map((resume.nodes || []).filter((n) => n.sessionId).map((n) => [n.nodeId, n.sessionId]))
+      : null;
+    let pendingGate = resume?.kind === 'gate' && resume.gate ? { ...resume.gate } : null;
     try {
       while (i < steps.length) {
+        if (pendingGate) {
+          // Re-enter exactly at the interrupted gate: no step re-run.
+          const fb = (fbByFrom.get(i) || []).find((f) => f.id === pendingGate.fbId);
+          const g = pendingGate;
+          pendingGate = null;
+          if (fb) {
+            const st = (loopState[fb.id] ||= { cycle: g.cycle || 1 });
+            this._pauseGate = { ...g };
+            const decision = await this._gate(fb.id, g.cycle, g.issues || []);
+            this._pauseGate = null;
+            this._checkAbort();
+            if (decision === 'another') {
+              st.cycle = (g.cycle || 1) + 1;
+              for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
+              await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${g.cycle}: user approved another cycle.`);
+              i = fb.toIdx;
+              continue;
+            }
+            await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${g.cycle}: user chose to continue with open issue(s).`);
+          }
+          i += 1;
+          continue;
+        }
         this._checkAbort();
         this._checkPause();
         const cycle = stepCycle[i];
         const results = await this._runStep(steps[i], i, cycle, bus);
+        this._resumeNodeSessions = null; // one-shot: only the interrupted step re-attaches
 
         // Did any feedback originating in THIS step fire?
         const loops = fbByFrom.get(i) || [];
@@ -2204,6 +2371,15 @@ function isPause(err) {
  *  plan nodes are plain data, so this is lossless for them. */
 function jsonClone(v) {
   return v == null ? null : JSON.parse(JSON.stringify(v));
+}
+
+/** Fail-safe JSON.parse for nullable DB text columns; null on absent/bad JSON. */
+function safeParse(text) {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
 }
 
 function firstLine(text) {

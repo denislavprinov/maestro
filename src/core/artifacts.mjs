@@ -1022,6 +1022,25 @@ export function reconcileStaleRunning({ staleMs = staleRunMs(), liveIds = [], no
 }
 
 /**
+ * Load everything resume needs for one pipeline: the raw pipelines row, the parsed
+ * resume_point, and the saved steps (camelCase via rowToState, sessionId included).
+ * Returns null when the id is unknown. Pure read — no status checks here (callers
+ * guard on row.status).
+ */
+export function readPipelineForResume(pipelineId) {
+  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(pipelineId);
+  if (!row) return null;
+  let resumePoint = null;
+  try {
+    resumePoint = row.resume_point ? JSON.parse(row.resume_point) : null;
+  } catch {
+    resumePoint = null;
+  }
+  const state = rowToState(row);
+  return { row, resumePoint, steps: state?.steps || [] };
+}
+
+/**
  * Map a live state object to the named params of the pipelines UPSERT. JSON columns
  * are stringified here; the workspace superset collapses into workspace_meta.
  *
@@ -1308,6 +1327,7 @@ function stepRowToStep(r) {
     activeMs: r.active_ms ?? 0,
     runningSince: r.running_since == null ? null : Number(r.running_since),
     costUsd: r.cost_usd ?? 0,
+    sessionId: r.session_id ?? undefined,
   };
   if (r.node_id != null) step.nodeId = r.node_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
@@ -1344,7 +1364,7 @@ function rowToState(row) {
     tools: j(row.tools, null),
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd
+             active_ms, running_since, cost_usd, session_id
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
