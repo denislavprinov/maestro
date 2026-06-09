@@ -204,9 +204,20 @@
                     </div>
                   </div>
 
-                  <!-- Default-workflow stages: the original four rows, shown when the
-                       Default workflow is selected (backward-compat). -->
+                  <!-- Default-workflow stages: Clarify + the original four rows, shown
+                       when the Default workflow is selected (backward-compat). -->
                   <div id="wf-default-stages">
+                    <div class="stage-cfg">
+                      <div class="acc red"></div>
+                      <div class="meta"><b>Clarify</b><small>surface open decisions before planning</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="clarify" aria-label="Clarify model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="clarify" aria-label="Clarify effort"></select></div>
+                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="clarify" aria-label="Clarify fan-out"><span>Fan-out</span></label>
+                      </div>
+                      <small class="step-current" data-role="clarify"></small>
+                    </div>
+
                     <div class="stage-cfg">
                       <div class="acc violet"></div>
                       <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
