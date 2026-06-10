@@ -3693,6 +3693,7 @@ async function deleteAgentCard(card, a) {
     const data = await safeJson(res);
     if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     state.agentsList = state.agentsList.filter((x) => x.key !== a.key);
+    state.agents = {}; // invalidate the composer palette cache (getAgentsApi memoizes)
     setAgentsMsg('Agent deleted.', 'ok');
     renderAgentsList();
   } catch (err) { setAgentsMsg(err.message, 'err'); }
@@ -3711,6 +3712,7 @@ async function duplicateAgentCard(a) {
     });
     const data = await safeJson(res);
     if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    state.agents = {}; // invalidate the composer palette cache (getAgentsApi memoizes)
     setAgentsMsg(`Duplicated as "${data.meta.key}".`, 'ok');
     await loadAgentsView();
   } catch (err) { setAgentsMsg(err.message, 'err'); }
@@ -3728,6 +3730,14 @@ if (el.agentsList) {
     if (e.target.closest('.agent-duplicate')) { e.stopPropagation(); if (a) duplicateAgentCard(a); return; }
     if (e.target.closest('.agent-edit')) { e.stopPropagation(); if (a) openAgentEdit(card, a); return; }
     if (e.target.closest('.agent-head')) toggleAgentDetail(card);
+  });
+  // Keyboard access for the role=button header (mirrors the ws-head pattern).
+  el.agentsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const head = e.target.closest && e.target.closest('.agent-head');
+    if (!head) return;
+    e.preventDefault();
+    toggleAgentDetail(head.closest('.agent-card'));
   });
 }
 if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { location.hash = 'agent-create'; });
