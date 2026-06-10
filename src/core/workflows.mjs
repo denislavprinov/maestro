@@ -32,15 +32,23 @@ const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
  * `tools:` line is a comma-separated list (matches agents/*.md convention).
  * @param {string} agentsDir
  * @param {string|null} agentFile
+ * @param {string|null} [agentPath]
  * @returns {Promise<{prompt:string, tools:string[]}>}
  */
-async function loadAgentFile(agentsDir, agentFile) {
-  if (!agentFile) return { prompt: '', tools: [] };
+async function loadAgentFile(agentsDir, agentFile, agentPath = null) {
+  if (!agentFile && !agentPath) return { prompt: '', tools: [] };
   let text = '';
   try {
-    text = await readFile(join(agentsDir, agentFile), 'utf8');
+    // Layered registry: the meta's stamped absolute agentPath (built-in OR user
+    // layer) wins; the classic agentsDir+agentFile join is the fallback for
+    // hand-built registries (tests) and a vanished user .md.
+    text = await readFile(agentPath || join(agentsDir, agentFile), 'utf8');
   } catch {
-    return { prompt: '', tools: [] };
+    if (agentPath && agentFile) {
+      try { text = await readFile(join(agentsDir, agentFile), 'utf8'); } catch { return { prompt: '', tools: [] }; }
+    } else {
+      return { prompt: '', tools: [] };
+    }
   }
   return { prompt: text, tools: parseFrontmatterTools(text) };
 }
@@ -265,7 +273,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
         throw new Error('workspaceScanner is an off-pipeline producer and cannot be a workflow node');
       }
       const meta = reg[key] || {};
-      const { prompt, tools } = await loadAgentFile(agentsDir, meta.agentFile ?? null);
+      const { prompt, tools } = await loadAgentFile(agentsDir, meta.agentFile ?? null, meta.agentPath ?? null);
       const sel = nodeCfg[node.id] || {};
       // Legacy per-role config is keyed by the ORIGINAL UI step key (e.g. `reviewer`),
       // so a substituted workspaceReviewer still inherits the user's review model/effort.
@@ -273,10 +281,11 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
       resolvedGroup.push({
         nodeId: node.id,
         key,
-        uiPhase: UI_PHASE[key] || key,   // CONV-4: live-UI stepper bucket
+        uiPhase: UI_PHASE[key] || meta.uiPhase || key,   // CONV-4 map > meta.uiPhase (v2) > key
         runnerType: meta.runnerType || 'producer',
         agentFile: meta.agentFile ?? null,
         agentPrompt: prompt,
+        promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
         model: firstDefined(sel.model, legacy.model),     // undefined unless configured (folded later)
         effort: firstDefined(sel.effort, legacy.effort),  // undefined unless configured
         fanOut: !!firstDefined(sel.fanOut, legacy.fanOut, meta.fanOut, false), // node > role > sidecar > false

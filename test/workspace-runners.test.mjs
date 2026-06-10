@@ -2,8 +2,9 @@
 // M4: the runners.mjs wiring for the workspace agents.
 //  - verifier(workspaceReviewer): routes to runWorkspaceReviewer; cycle 1 blocked,
 //    cycle 2 ok (mock decreases blocking count so the loop terminates).
-//  - the off-pipeline scanner is NEVER dispatched as a node: producer(workspaceScanner)
-//    throws `unknown producer agent "workspaceScanner"` (proves the off-pipeline contract).
+//  - the off-pipeline scanner has NO bespoke producer branch: dispatching it as a
+//    node falls through to the generic producer (the off-pipeline contract is now
+//    "no workflow ever declares it as a node", not a runner throw).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
@@ -89,12 +90,13 @@ test('workspaceReviewer mock writes a merged union review (projectKey-prefixed l
   }
 });
 
-test('dispatching the off-pipeline scanner as a node throws unknown producer', async () => {
+test('dispatching the off-pipeline scanner as a node no longer throws — generic producer', async () => {
+  // Since the generic-runner fallthrough, an unknown producer key (including the
+  // off-pipeline scanner) runs runGenericProducer instead of throwing. The scanner
+  // stays off-pipeline because no workflow declares it as a node — not via a throw.
   const dir = await makeTmpDir();
   const node = { nodeId: 'x', key: 'workspaceScanner', runnerType: 'producer', loopSource: false };
-  await assert.rejects(
-    () => runners.producer(ctxFor(dir, node)),
-    /unknown producer agent "workspaceScanner"/,
-    'the scanner must never be routed through runners.mjs as a node',
-  );
+  const res = await runners.producer(ctxFor(dir, node, { inputs: {}, outputs: {} }));
+  assert.equal(res.status, 'ok');
+  assert.ok(typeof res.summary === 'string' && res.summary.length > 0);
 });

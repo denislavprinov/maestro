@@ -11,6 +11,16 @@ import { planPath, reviewPath } from './artifacts.mjs';
  *  description + member set; it is seeded once and never re-published (CONV-6). */
 export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
 
+/** Channels the dispatcher pre-seeds WITH VALUES on the bus at run start
+ *  (orchestrator.mjs _dispatch bus literal): userPrompt IS the prompt,
+ *  plan/checklist get default destinations, code is the standing worktree.
+ *  The bus literal also carries workspace (metadata or null) and clarify/
+ *  decomposition seeded as null — those are deliberately NOT listed here so the
+ *  validator keeps warning when they are consumed with no upstream producer
+ *  (current behavior). Single source for the validator's reachability pass —
+ *  keep in sync with the _dispatch bus literal. */
+export const PRESEEDED_CHANNELS = ['userPrompt', 'plan', 'checklist', 'code'];
+
 /**
  * Mint the concrete OUTPUT handle for a channel the node produces. This is the
  * relocated output half of the old _nodeIo switch; paths are byte-identical so
@@ -33,29 +43,37 @@ export function allocate(channel, ctx) {
     }
     case 'review': {
       // Review json basename differs by producing role (keeps existing filenames).
-      const base = key === 'refiner'
-        ? 'refine-review'
-        : key === 'manualWebUiTesting'
-          ? 'webui-review'
-          : key === 'planReviewer'
-            ? 'plan-review'
-            : key === 'workspaceReviewer'
-              ? 'ws-review'
-              : 'impl-review';
+      // A CUSTOM verifier key gets its own `<key>-review` basename so it can never
+      // clobber the built-in reviewer's impl-review files.
+      const k = key || 'reviewer';
+      const BESPOKE_BASE = {
+        reviewer: 'impl-review',
+        refiner: 'refine-review',
+        manualWebUiTesting: 'webui-review',
+        planReviewer: 'plan-review',
+        workspaceReviewer: 'ws-review',
+      };
+      let base = BESPOKE_BASE[k] || `${k}-review`;
+      // A custom key like "impl" would mint impl-review-* and clobber the built-in
+      // reviewer's files AND its DB verdict (reviewKind upsert); divert it.
+      if (!BESPOKE_BASE[k] && Object.values(BESPOKE_BASE).includes(base)) base = `${k}-agent-review`;
       // ▲ C2: the refiner emits ONLY a json verdict (its md is null => private to its
       // self-loop). Every other verifier carries a review md so publish() folds it
       // onto the shared `review` channel its loop target consumes. workspaceKey routes
       // the review md to the workspace store (the json stays per-cycle in the pipeline
-      // dir, store-root independent); absent it is byte-identical.
-      const mdPath = key === 'refiner'
+      // dir, store-root independent); absent it is byte-identical. Custom verifiers
+      // keep their md pipeline-dir-local (like webui-review).
+      const mdPath = k === 'refiner'
         ? null
-        : key === 'manualWebUiTesting'
+        : k === 'manualWebUiTesting'
           ? join(pipelineDir, `webui-review-cycle${cycle}.md`)
-          : key === 'planReviewer'
+          : k === 'planReviewer'
             ? reviewPath(projectDir, baseName, datePrefix, 'plan-review', workspaceKey)
-            : key === 'workspaceReviewer'
+            : k === 'workspaceReviewer'
               ? reviewPath(projectDir, baseName, datePrefix, 'ws-review', workspaceKey)
-              : reviewPath(projectDir, baseName, datePrefix, 'impl-review', workspaceKey);
+              : k === 'reviewer'
+                ? reviewPath(projectDir, baseName, datePrefix, 'impl-review', workspaceKey)
+                : join(pipelineDir, `${base}-cycle${cycle}.md`);
       return { kind: 'review', mdPath, jsonPath: join(pipelineDir, `${base}-cycle${cycle}.json`), reviewKind: base };
     }
     case 'checklist':
@@ -75,8 +93,18 @@ export function allocate(channel, ctx) {
       // The clarify agent writes clarify.json into the pipeline dir as scratch; the
       // DB clarify row is authoritative. Same path the legacy pre-step used.
       return { kind: 'clarify', path: join(pipelineDir, 'clarify.json') };
-    default:
-      return null;
+    default: {
+      // Open vocabulary: any custom channel allocates a generic pipeline-dir
+      // artifact. A registry channelDef (threaded via ctx.channelDefs) overrides
+      // kind (md|json) and filename; absent a def the channel defaults to
+      // markdown <id>.md. Loop re-runs suffix -cycle<N> so a rewind never
+      // clobbers an earlier cycle's output.
+      const def = (ctx.channelDefs && ctx.channelDefs[channel]) || null;
+      const ext = def?.kind === 'json' ? 'json' : 'md';
+      const stem = String(def?.filename || `${channel}.${ext}`).replace(/\.(md|json)$/i, '');
+      const name = Number(cycle) > 1 ? `${stem}-cycle${cycle}.${ext}` : `${stem}.${ext}`;
+      return { kind: 'artifact', path: join(pipelineDir, name), channel };
+    }
   }
 }
 
@@ -142,6 +170,11 @@ export function publish(produces, result, outputs, bus) {
         path: path || null,
         phases: Array.isArray(result.decomposition?.phases) ? result.decomposition.phases : [],
       };
+    } else {
+      // Open vocabulary: a custom channel folds its allocated artifact handle onto
+      // the bus (latest-writer-wins), mirroring plan/checklist.
+      const path = outputs?.[c]?.path;
+      if (path) bus[c] = { kind: 'artifact', path };
     }
   }
 }
@@ -196,7 +229,9 @@ function legacyRoleFields(node, inputs, outputs, cycle, baseName) {
     case 'manualWebUiTesting':
       return { checklistPath: inputs.checklist?.path, reviewMdPath: outputs.review?.mdPath, reviewJsonPath: outputs.review?.jsonPath, cycle };
     default:
-      return { cycle };
+      // Generic agents: no bespoke field names. The generic runners consume the
+      // typed inputs/outputs maps directly (same references _bindNodeIo spreads).
+      return { cycle, inputs, outputs };
   }
 }
 

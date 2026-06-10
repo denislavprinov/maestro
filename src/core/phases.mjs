@@ -226,6 +226,22 @@ export function buildSystemPrompt(toolInstruction, agentBody, role, workspace) {
   return parts.filter(Boolean).join('\n\n');
 }
 
+/**
+ * Resolve the agent .md body for a runner: the node's own resolved `agentPrompt`
+ * (stamped by resolveWorkflow from its meta.agentFile — built-in OR user layer)
+ * wins; the orchestrator's bulk-loaded ctx.agentPrompts[key] is the fallback (the
+ * clarify pre-step and direct-unit ctxs have no node); FALLBACK_PROMPTS[role]
+ * backstops inside buildSystemPrompt. Single resolution path for EVERY runner —
+ * this is what fixes the decomposer's empty system prompt (agentPrompts never
+ * carried a `decomposer` key and FALLBACK_PROMPTS has no `decomposer` role).
+ * Exported for testing.
+ */
+export function resolveAgentBody(ctx, key) {
+  const nodeBody = typeof ctx?.node?.agentPrompt === 'string' ? ctx.node.agentPrompt.trim() : '';
+  if (nodeBody) return ctx.node.agentPrompt;
+  return ctx?.agentPrompts?.[key];
+}
+
 /** Render the MOCK marker block appended to every task prompt. */
 function mockMarkers(fields) {
   const lines = [];
@@ -372,7 +388,7 @@ export async function runClarify(ctx, opts = {}) {
   const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
   const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
   const role = 'clarify';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.clarify, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'clarify'), role, ctx.workspace);
   const prompt = buildClarifyPrompt(ctx, { round, priorAnswers });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
@@ -401,7 +417,7 @@ export async function runClarify(ctx, opts = {}) {
 export async function runPlannerPlan(ctx, opts) {
   const { answers = [], planFilePath, baseName, reviewPath } = opts || {};
   const role = 'planner-plan';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'planner'), role, ctx.workspace);
   const replanBlock = reviewPath
     ? '\n## Revise to address the review\n\n' +
       'A reviewer found issues with the previous plan. Re-plan from scratch (cold start) and ' +
@@ -438,7 +454,7 @@ export async function runPlannerPlan(ctx, opts) {
 export async function runRefiner(ctx, opts) {
   const { inPlanPath, outPlanPath, cycle, reviewJsonPath } = opts || {};
   const role = 'refiner';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.refiner, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'refiner'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Refine the plan (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -478,7 +494,7 @@ export async function runDecomposer(ctx, opts) {
   const { planPath, decompositionPath } = opts || {};
   const role = 'decomposer';
   const tasksDir = join(dirname(decompositionPath), 'tasks');
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.decomposer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'decomposer'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, 'Decompose the plan into vertical-slice tasks') +
     '\n## What to do\n\n' +
@@ -586,7 +602,7 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
 export async function runImplementer(ctx, opts) {
   const { planPath, reviewPath, taskPath, siblings, mode = 'implement' } = opts || {};
   const role = 'implementer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.implementer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'implementer'), role, ctx.workspace);
 
   const body = implementerBody({ mode, planPath, reviewPath, taskPath, siblings });
 
@@ -615,7 +631,7 @@ export async function runImplementer(ctx, opts) {
 export async function runReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'reviewer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.reviewer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'reviewer'), role, ctx.workspace);
   // Prefer diffing against the recorded checkpoint commit. New files are made
   // visible via the orchestrator's intent-to-add staging after each implement
   // pass, so `git diff <ref>` and `git status` both show greenfield work.
@@ -663,7 +679,7 @@ export async function runReviewer(ctx, opts) {
 export async function runPlanReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'plan-review';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planReviewer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'planReviewer'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Review the plan (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -707,7 +723,7 @@ export async function runWorkspaceReviewer(ctx, opts) {
   const role = 'workspace-reviewer';
   // The body is the contract (C10: no FALLBACK_PROMPTS entry); the system prompt
   // ALSO carries the `## Workspace Context` block via ctx.workspace.
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.workspaceReviewer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceReviewer'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Review the workspace implementation (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -757,7 +773,7 @@ export async function runWorkspaceScan(ctx, opts = {}) {
   const outPath = opts.outPath || joinPipeline(ctx.pipelineDir, 'workspace-description.md');
   // The scanner IS the source of the workspace description, so it does NOT receive
   // an injected workspace block (4th arg undefined). The body is the contract (C10).
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.workspaceScanner, role, undefined);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined);
 
   const memberLines = projects.map((p) =>
     `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): investigate \`${p.scanDir || p.projectDir}\`` +
@@ -822,7 +838,7 @@ export async function runManualTestsChecklist(ctx, opts) {
   const role = 'manual-tests-checklist';
   const systemPrompt = buildSystemPrompt(
     ctx.toolInstruction,
-    ctx.agentPrompts?.manualTestsChecklist,
+    resolveAgentBody(ctx, 'manualTestsChecklist'),
     role,
     ctx.workspace,
   );
@@ -856,7 +872,7 @@ export async function runManualWebUiTesting(ctx, opts) {
   const role = 'manual-web-ui-testing';
   const systemPrompt = buildSystemPrompt(
     ctx.toolInstruction,
-    ctx.agentPrompts?.manualWebUiTesting,
+    resolveAgentBody(ctx, 'manualWebUiTesting'),
     role,
     ctx.workspace,
   );
@@ -882,6 +898,115 @@ export async function runManualWebUiTesting(ctx, opts) {
 
   const review = await readReview(reviewJsonPath);
   return { review };
+}
+
+// ── generic runners (metadata-declared agents, zero bespoke core code) ──────────
+
+/**
+ * Pure: render the generic `## Inputs` / `## Outputs` blocks from the node's
+ * typed channel handles (allocate()/bindInputs() output). userPrompt is skipped
+ * (the task header already carries the request); the worktree channel renders an
+ * inspect hint instead of a path. Exported for testing.
+ */
+export function genericIoBlock(inputs = {}, outputs = {}) {
+  const inLines = [];
+  for (const [c, h] of Object.entries(inputs || {})) {
+    if (!h || c === 'userPrompt') continue;
+    const p = h.path || h.mdPath
+      || (h.kind === 'worktree' ? '(the working tree — inspect with `git diff` / `git status` in your cwd)' : null);
+    if (p) inLines.push(`- ${c}: ${p}`);
+  }
+  const outLines = [];
+  for (const [c, h] of Object.entries(outputs || {})) {
+    if (!h) continue;
+    if (h.kind === 'review') {
+      if (h.mdPath) outLines.push(`- Write the ${c} markdown (human-readable review) to: ${h.mdPath}`);
+      if (h.jsonPath) outLines.push(`- Write the ${c} JSON (machine-readable verdict) to: ${h.jsonPath}`);
+    } else if (h.path) {
+      outLines.push(`- Write ${c} to: ${h.path}`);
+    }
+  }
+  return (
+    '## Inputs\n\n' +
+    (inLines.length ? inLines.join('\n') : '- (none — work from the request above)') +
+    '\n\n## Outputs\n\n' +
+    (outLines.length ? outLines.join('\n') : '- (none — report your findings as your final message)') +
+    '\n\n'
+  );
+}
+
+/**
+ * Generic producer — any metadata-declared producer with no bespoke branch.
+ * Prompt = taskHeader + role hints + Inputs/Outputs channel->path lists; the
+ * system prompt body is the agent's own .md (node.agentPrompt). Returns { summary }.
+ */
+export async function runGenericProducer(ctx) {
+  const key = ctx.node?.key || 'agent';
+  const role = `generic:${key}`; // no FALLBACK entry: the .md body is the contract
+  const body = resolveAgentBody(ctx, key);
+  if (!String(body || '').trim()) {
+    console.warn(`[phases] generic producer "${key}": no agent .md body resolved — running with an empty system prompt`);
+  }
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
+  const outputs = ctx.outputs || {};
+  const primary = Object.values(outputs).find((h) => h && h.path)?.path;
+  const hints = (ctx.node?.promptHints || '').trim();
+  const prompt =
+    taskHeader(ctx, `Run agent "${key}"`) +
+    '\n## What to do\n\n' +
+    'You are a pipeline agent. Read every input below, do your job exactly as your role ' +
+    'instructions describe, and write EVERY declared output to its exact path.\n\n' +
+    (hints ? hints + '\n\n' : '') +
+    fanOutDirective(ctxFanOut(ctx)) +
+    genericIoBlock(ctx.inputs, outputs) +
+    mockMarkers({ MOCK_ROLE: 'generic-producer', MOCK_OUT: primary, MOCK_CYCLE: ctx.cycle });
+
+  const { text } = await runClaude(
+    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
+  );
+  return { summary: (text || '').trim() || `Agent ${key} completed.` };
+}
+
+/**
+ * Generic verifier — any metadata-declared verifier with no bespoke branch. Emits
+ * the standard protocol review (md + json); paths come from the allocated `review`
+ * output (pipeline-local `<key>-review-cycleN.*` when the node mints no review).
+ * Returns { review, reviewMdPath } for runners.verifier's verdict wrap.
+ */
+export async function runGenericVerifier(ctx) {
+  const key = ctx.node?.key || 'agent';
+  const role = `generic:${key}`;
+  const body = resolveAgentBody(ctx, key);
+  if (!String(body || '').trim()) {
+    console.warn(`[phases] generic verifier "${key}": no agent .md body resolved — running with an empty system prompt`);
+  }
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
+  const cycle = Number(ctx.cycle) > 0 ? Number(ctx.cycle) : 1;
+  const { review: reviewOut, ...otherOutputs } = ctx.outputs || {};
+  const reviewMdPath = reviewOut?.mdPath ?? joinPipeline(ctx.pipelineDir, `${key}-review-cycle${cycle}.md`);
+  const reviewJsonPath = reviewOut?.jsonPath ?? joinPipeline(ctx.pipelineDir, `${key}-review-cycle${cycle}.json`);
+  const hints = (ctx.node?.promptHints || '').trim();
+  // Route the (possibly fallback-pathed) review handle through the IO block so the
+  // Outputs section never renders the "(none — report as final message)" placeholder
+  // in contradiction with the review-write instructions that follow.
+  const ioOutputs = { ...otherOutputs, review: { kind: 'review', mdPath: reviewMdPath, jsonPath: reviewJsonPath } };
+  const prompt =
+    taskHeader(ctx, `Verify: ${key} (cycle ${cycle})`) +
+    '\n## What to do\n\n' +
+    'You are a verifier. Inspect the inputs below exactly as your role instructions describe, ' +
+    'then write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
+    (hints ? hints + '\n\n' : '') +
+    fanOutDirective(ctxFanOut(ctx)) +
+    genericIoBlock(ctx.inputs, ioOutputs) +
+    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
+    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
+    'pipeline.\n\n' +
+    mockMarkers({ MOCK_ROLE: 'generic-verifier', MOCK_OUT: reviewMdPath, MOCK_JSON: reviewJsonPath, MOCK_CYCLE: cycle });
+
+  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+
+  const review = await readReview(reviewJsonPath);
+  return { review, reviewMdPath };
 }
 
 // ── small local helpers ────────────────────────────────────────────────────────

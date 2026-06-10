@@ -1,9 +1,10 @@
 // src/core/workflow-validator.mjs
-// Pure, dependency-free validator for a WorkflowTemplate against an agent
-// registry. Collects ALL violations (does not short-circuit) so the UI/API can
-// show every problem at once. Returns { ok, errors:string[], warnings:string[] }
-// (warnings are soft: reachability/governance/multi-producer hints that never
-// set ok=false, so saved topology-only pipelines stay valid).
+// Pure validator (imports only the channel constants from channels.mjs) for a
+// WorkflowTemplate against an agent registry. Collects ALL violations (does not
+// short-circuit) so the UI/API can show every problem at once. Returns
+// { ok, errors:string[], warnings:string[] } (warnings are soft: reachability/
+// governance/multi-producer hints that never set ok=false, so saved
+// topology-only pipelines stay valid).
 //
 // Rules (CONTRACT §workflow-validator):
 //   1. template is a non-null object with a non-empty steps array;
@@ -15,6 +16,8 @@
 //      (a same-node self-loop, from===to, is allowed; the forward graph is
 //       otherwise acyclic so only back-edges are legal feedbacks);
 //   7. feedback ids are unique.
+
+import { CHANNEL_IDS, PRESEEDED_CHANNELS } from './channels.mjs';
 
 /**
  * @param {object} tpl  WorkflowTemplate { steps:[[{id,key}]], feedbacks:[{id,from,to}] }
@@ -104,9 +107,9 @@ export function validateWorkflow(tpl, registry) {
   // Pass 3: WARNINGS (never block saves, so existing topology-only pipelines stay
   // valid). Forward order = step order.
   const warnings = [];
-  // Pre-seeded channels are always reachable (the bus seeds them at run start) and
-  // therefore never warn. Only `review` is a non-pre-seeded consumable.
-  const PRESEEDED = new Set(['userPrompt', 'plan', 'checklist', 'code']);
+  // Pre-seeded channels (derived from channels.mjs — the dispatcher's bus literal)
+  // are always reachable and never warn.
+  const PRESEEDED = new Set(PRESEEDED_CHANNELS);
   const NON_MULTIPLEXABLE = new Set(['code', 'plan']); // one producer per step
   const produced = new Set();
   for (let i = 0; i < tpl.steps.length; i++) {
@@ -142,6 +145,24 @@ export function validateWorkflow(tpl, registry) {
     }
     // commit this step's production AFTER the step (matches the frozen-snapshot model)
     for (const [c] of stepProducers) produced.add(c);
+  }
+  // (d) custom-channel hygiene: a PRODUCED channel that is neither built-in nor
+  // declared by any registry channelDef silently defaults to a generic markdown
+  // artifact — surface that once per channel so a wizard/meta typo is visible.
+  const builtinChannels = new Set(CHANNEL_IDS);
+  const definedCustom = new Set();
+  for (const m of Object.values(reg)) {
+    for (const d of m?.channelDefs || []) if (d?.id) definedCustom.add(d.id);
+  }
+  const flaggedDefless = new Set();
+  for (const group of tpl.steps) {
+    for (const node of Array.isArray(group) ? group : []) {
+      for (const c of reg[node?.key]?.produces || []) {
+        if (builtinChannels.has(c) || definedCustom.has(c) || flaggedDefless.has(c)) continue;
+        flaggedDefless.add(c);
+        warnings.push(`custom channel "${c}" (produced by "${node.id}") has no channelDef; it defaults to markdown "${c}.md"`);
+      }
+    }
   }
   // (c) governance: every adjacent forward edge + every feedback edge must be allowed
   const keyOf = new Map();

@@ -482,6 +482,9 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
     case 'workspace-scan':
       text = await mockWorkspaceScan(m, prompt, onEvent);
       break;
+    case 'agent-gen':
+      text = await mockAgentGen(m, onEvent);
+      break;
     case 'workspace-reviewer':
       text = await mockWorkspaceReviewer(m, cycle, onEvent);
       break;
@@ -490,6 +493,14 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
       break;
     case 'manual-web-ui-testing':
       text = await mockManualWebUiTesting(m, cycle, onEvent);
+      break;
+    case 'generic-producer':
+      text = await mockGenericProducer(m, onEvent);
+      break;
+    case 'generic-verifier':
+      // Reuses the reviewer mock: writes MOCK_OUT md + MOCK_JSON verdict with the
+      // standard cycle-decreasing severity, so generic loops terminate offline.
+      text = await mockReviewer(m, cycle, onEvent);
       break;
     default:
       await emitLog(onEvent, `[mock] no side effects for unknown role`);
@@ -559,6 +570,22 @@ async function mockClarify(m, cycle, onEvent) {
   await writeFile(out, JSON.stringify(payload, null, 2) + '\n', 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return JSON.stringify(payload);
+}
+
+/** Generic producer mock: deterministic content to MOCK_OUT (json if the path
+ *  ends .json, else markdown). Lets user-defined agents run offline with no
+ *  bespoke mock branch. */
+async function mockGenericProducer(m, onEvent) {
+  const out = m.MOCK_OUT;
+  await emitLog(onEvent, '[mock] generic producer writing output artifact');
+  if (!out) return '[mock] generic-producer: no MOCK_OUT given';
+  const body = out.endsWith('.json')
+    ? JSON.stringify({ mock: true, note: 'generic artifact' }, null, 2) + '\n'
+    : '# Mock artifact\n\nDeterministic generic producer output.\n';
+  await ensureDir(out);
+  await writeFile(out, body, 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] generic artifact written to ${out}`;
 }
 
 async function mockPlannerPlan(m, onEvent) {
@@ -880,6 +907,37 @@ async function mockWorkspaceScan(m, prompt, onEvent) {
   await writeFile(out, md, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return `[mock] workspace description written to ${out}`;
+}
+
+/**
+ * Mock the agent builder. Writes a deterministic meta JSON to MOCK_JSON and —
+ * ONLY when MOCK_OUT is present (Mode A) — a deterministic agent body to MOCK_OUT.
+ * Mode B (user-pasted markdown) omits MOCK_OUT so the mock never writes a body.
+ */
+async function mockAgentGen(m, onEvent) {
+  const name = m.MOCK_BASE || 'Custom Agent';
+  await emitLog(onEvent, `DRAFTING agent metadata for ${name}`);
+  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.toLowerCase());
+  const key = words.length
+    ? words[0] + words.slice(1).map((w) => w[0].toUpperCase() + w.slice(1)).join('')
+    : 'customAgent';
+  const meta = {
+    key, displayName: name, description: `mock-generated agent for ${name}`,
+    color: 'amber', runnerType: 'producer', loopSource: false, fanOut: false,
+    consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99,
+  };
+  if (m.MOCK_OUT) {
+    const md = `# Agent: ${name}\n\nYou are ${name} (deterministic mock body).\n\n## Inputs\n- the plan\n\n## Outputs\n- a review markdown\n`;
+    await ensureDir(m.MOCK_OUT);
+    await writeFile(m.MOCK_OUT, md, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });
+  }
+  if (m.MOCK_JSON) {
+    await ensureDir(m.MOCK_JSON);
+    await writeFile(m.MOCK_JSON, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_JSON}`, raw: { mock: true, file: m.MOCK_JSON } });
+  }
+  return '[mock] agent draft written';
 }
 
 /**

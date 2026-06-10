@@ -29,6 +29,8 @@ import {
   runWorkspaceReviewer,
   runManualTestsChecklist,
   runManualWebUiTesting,
+  runGenericProducer,
+  runGenericVerifier,
 } from './phases.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 
@@ -95,8 +97,11 @@ async function producer(ctx) {
       });
       return { status: 'ok', checklistPath, summary };
     }
-    default:
-      throw new Error(`unknown producer agent "${key}"`);
+    default: {
+      // Generic branch: a metadata-declared agent runs with ZERO core edits.
+      const { summary } = await runGenericProducer(ctx);
+      return { status: 'ok', summary };
+    }
   }
 }
 
@@ -149,8 +154,12 @@ async function verifier(ctx) {
       // CONV-5: thread the review markdown path (web-UI loop source → implementer fix mode).
       return { ...verdict(review), reviewMdPath: ctx.reviewMdPath };
     }
-    default:
-      throw new Error(`unknown verifier agent "${key}"`);
+    default: {
+      // Generic branch: a metadata-declared verifier emits the standard protocol
+      // verdict; thread the md path so a loop rewind reads the review (CONV-5).
+      const { review, reviewMdPath } = await runGenericVerifier(ctx);
+      return { ...verdict(review), reviewMdPath };
+    }
   }
 }
 

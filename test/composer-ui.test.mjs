@@ -10,6 +10,7 @@ import {
   distinctAgents,
   defaultTopologyFromTemplate,
   mergePalette,
+  canConnect,
   EMBEDDED_AGENTS,
 } from '../ui/public/composer-core.mjs';
 
@@ -153,4 +154,52 @@ test('defaultTopologyFromTemplate() keeps a same-node self-loop and rewires it t
 test('defaultTopologyFromTemplate() tolerates a missing/empty template', () => {
   const model = defaultTopologyFromTemplate(null, (key) => ({ id: 'x', key }));
   assert.deepEqual(model, { steps: [], feedbacks: [] });
+});
+
+test('canConnect: governance block is unchanged (hard ok:false)', () => {
+  const agents = { clarify: { displayName: 'Clarify', connectsTo: ['planner'], produces: ['clarify'], consumes: ['userPrompt'] } };
+  const v = canConnect('clarify', 'reviewer', agents);
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /can’t connect/); // curly apostrophe — matches the real reason string
+});
+
+test('canConnect: an explicit connectsTo allowlist suppresses the channel warn (curated link)', () => {
+  // decomposer -> implementer is sanctioned by connectsTo even though decomposition
+  // is not in implementer.consumes — the plan flows through from upstream via the
+  // bus. Curated links never soft-warn; only wildcard links are channel-checked.
+  const agents = {
+    decomposer: { displayName: 'Decompose', connectsTo: ['implementer'], produces: ['decomposition'], consumes: ['plan'], optionalConsumes: [] },
+    implementer: { displayName: 'Implementation', connectsTo: '*', produces: ['code'], consumes: ['plan', 'review'], optionalConsumes: ['review'] },
+  };
+  const v = canConnect('decomposer', 'implementer', agents);
+  assert.equal(v.ok, true);
+  assert.equal(v.warn, undefined);
+});
+
+test('canConnect: wildcard-link channel mismatch is a WARN, not a block', () => {
+  const agents = {
+    planner: { displayName: 'Plan', connectsTo: '*', produces: ['plan'], consumes: ['userPrompt'], optionalConsumes: [] },
+    manualWebUiTesting: { displayName: 'Manual web UI testing', connectsTo: '*', produces: ['review'], consumes: ['checklist', 'code'], optionalConsumes: [] },
+  };
+  const v = canConnect('planner', 'manualWebUiTesting', agents);
+  assert.equal(v.ok, true, 'warn-level: never blocks');
+  assert.match(v.warn, /produces \[plan\]/);
+  assert.match(v.warn, /needs \[checklist\]/, 'pre-seeded code is excluded from the needs list');
+});
+
+test('canConnect: no warn when the source feeds the target, or required inputs are pre-seeded', () => {
+  const agents = {
+    planner: { displayName: 'Plan', connectsTo: '*', produces: ['plan'], consumes: ['userPrompt'], optionalConsumes: [] },
+    implementer: { displayName: 'Implementation', connectsTo: '*', produces: ['code'], consumes: ['plan', 'review'], optionalConsumes: ['review'] },
+    reviewer: { displayName: 'Review', connectsTo: '*', produces: ['review'], consumes: ['plan', 'code'], optionalConsumes: [] },
+    codeOnly: { displayName: 'CodeOnly', connectsTo: '*', produces: ['review'], consumes: ['code'], optionalConsumes: [] },
+  };
+  assert.equal(canConnect('planner', 'implementer', agents).warn, undefined, 'plan feeds implementer');
+  assert.equal(canConnect('planner', 'codeOnly', agents).warn, undefined, 'code is pre-seeded (worktree)');
+  assert.equal(canConnect('ghost', 'reviewer', agents).ok, true, 'unknown source stays permissive');
+});
+
+test('mergePalette carries optionalConsumes through', () => {
+  const pal = mergePalette({ agents: [{ key: 'x', order: 1, optionalConsumes: ['review'] }] });
+  assert.deepEqual(pal[0].optionalConsumes, ['review']);
 });

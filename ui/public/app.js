@@ -19,6 +19,8 @@ const state = {
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
+  agentsList: [], // GET /api/agents?all=1 list for the Agents management view
+  channelIds: [], // known channel ids from /api/agents (drives the agent editor)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   historyFilter: '', // active projectKey filter for History; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
@@ -32,6 +34,8 @@ const state = {
     step: 1, name: '', selectedPaths: [], scanId: '', description: '',
     graphifyUsed: null, abort: null, editingId: '',
   },
+  // --- Agent creation wizard (ephemeral; reset on wizard close) ---
+  agentWizard: { step: 1, genId: '', abort: null, draft: null, ownMd: false },
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -137,6 +141,29 @@ const el = {
   settingsSave: $('#settingsSave'),
   settingsReset: $('#settingsReset'),
   settingsMsg: $('#settingsMsg'),
+
+  // Agents management view
+  agentsList: $('#agents-list'),
+  agentsMsg: $('#agents-msg'),
+  agentCreateBtn: $('#agent-create-btn'),
+
+  // Agent creation wizard
+  agwName: $('#agw-name'),
+  agwPurpose: $('#agw-purpose'),
+  agwDetails: $('#agw-details'),
+  agwBefore: $('#agw-before'),
+  agwAfter: $('#agw-after'),
+  agwOwnToggle: $('#agw-own-md-toggle'),
+  agwOwnPane: $('#agw-own-md-pane'),
+  agwOwnMd: $('#agw-own-md'),
+  agwStart: $('#agw-start'),
+  agwStatus: $('#agw-status'),
+  agwAbort: $('#agw-abort'),
+  agwStep1Hint: $('#agw-step1-hint'),
+  agwMsg: $('#agw-msg'),
+  agwSave: $('#agw-save'),
+  agwRegen: $('#agw-regen'),
+  agwClose: $('#agw-close'),
 };
 
 // ---------------------------------------------------------------------------
@@ -219,6 +246,13 @@ function handleServerMessage(msg) {
   // socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'scan-progress' || msg.type === 'scan-done' || msg.type === 'scan-error') {
     onScanEvent(msg);
+    return;
+  }
+
+  // Agent-generation events are tagged by genId (not runId) and ride the same
+  // broadcast socket. Handle them BEFORE the !msg.runId early-return below.
+  if (msg.type === 'agentgen-progress' || msg.type === 'agentgen-done' || msg.type === 'agentgen-error') {
+    onAgentGenEvent(msg);
     return;
   }
 
@@ -462,7 +496,7 @@ function runNodeAgent(node) {
   const embedded = key && EMBEDDED_AGENTS[key];
   const meta = live || embedded || {};
   return {
-    icon: meta.icon || RUN_BOOKEND_ICON,
+    icon: safeAgentIcon(meta) || RUN_BOOKEND_ICON,
     color: node.color || meta.color || 'blue',
     label: node.label || meta.displayName || node.id,
     sub: node.sub || meta.description || '',
@@ -746,6 +780,14 @@ function maybeResume(r) {
 // Minimal HTML escape for text interpolated into node innerHTML.
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Built-in icons are repo-shipped SVG fragments (trusted, injected raw). User
+// agents' metadata is user-writable (POST /api/agents, wizard Mode B), so their
+// icon could carry arbitrary markup — they get a fixed glyph instead.
+const USER_AGENT_ICON = '<circle cx="12" cy="12" r="3.4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"></path>';
+function safeAgentIcon(meta) {
+  return meta && meta.origin === 'user' ? USER_AGENT_ICON : String((meta && meta.icon) || '');
 }
 
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
@@ -1072,7 +1114,7 @@ async function saveWorkflow({ name, steps, feedbacks }) {
   });
   const data = await safeJson(res);
   if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
-  return data.workflow;
+  return { workflow: data.workflow, warnings: Array.isArray(data.warnings) ? data.warnings : [] };
 }
 
 async function deleteWorkflow(id) {
@@ -1103,7 +1145,7 @@ const COMPOSER_SEQ = '#B7B7BC';
 
 let _composerReady = false;
 const composer = {
-  agents: {},          // key -> {key,displayName,description,color,icon}
+  agents: {},          // key -> {key,displayName,description,color,icon,origin}
   steps: [],           // Array<Array<{id,key}>> (local ids)
   feedbacks: [],       // Array<{from,to}> (local ids)
   saved: [],           // WorkflowTemplate[] from the server
@@ -1124,8 +1166,26 @@ if (typeof window !== 'undefined') {
   window.__composerAddFeedback = composerAddFeedback;
 }
 
+// Set by agent CRUD (create/edit/duplicate/delete); the palette is refetched on
+// the next composer entry so in-session agent mutations show without a reload.
+let _composerPaletteDirty = false;
+
+/** Refetch the registry and rebuild the composer palette in place. */
+async function refreshComposerPalette() {
+  _composerPaletteDirty = false;
+  const agentsRes = await fetchAgents();
+  const pal = mergePalette(agentsRes);
+  composer.agents = {};
+  pal.forEach((a) => { composer.agents[a.key] = a; });
+  composerBuildPalette(pal);
+}
+
 async function initComposer() {
-  if (_composerReady) { composerDrawWires(); return; }
+  if (_composerReady) {
+    if (_composerPaletteDirty) await refreshComposerPalette();
+    composerDrawWires();
+    return;
+  }
   _composerReady = true;
   composer.els = {
     flow: document.getElementById('composer-flow'),
@@ -1153,11 +1213,7 @@ async function initComposer() {
   if (window.ResizeObserver) new window.ResizeObserver(() => composerDrawWires()).observe(composer.els.flow);
 
   // palette from the registry (or embedded fallback)
-  const agentsRes = await fetchAgents();
-  const pal = mergePalette(agentsRes);
-  composer.agents = {};
-  pal.forEach((a) => { composer.agents[a.key] = a; });
-  composerBuildPalette(pal);
+  await refreshComposerPalette();
 
   // initial canvas = the saved default workflow (4-step)
   await composerReset();
@@ -1173,7 +1229,7 @@ function composerBuildPalette(pal) {
     p.className = 'agent-pill';
     p.draggable = true;
     p.dataset.key = ag.key;
-    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}`;
+    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}`;
     p.addEventListener('dragstart', (e) => {
       composer.dragKey = ag.key; p.classList.add('dragging');
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
@@ -1196,15 +1252,17 @@ function composerNodeEl(a) {
     `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
+    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>` +
     `<div class="nx" title="Remove agent">✕</div>` +
     `<div class="loop" title="Draw a feedback loop from this agent">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
   d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
   d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
   d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
-  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { composerAddFeedback(composer.linkFrom, a.id); composerExitLink(); } });
+  // Exit link mode BEFORE adding the edge: composerExitLink hides the banner and
+  // would swallow the toast composerAddFeedback raises for a block reason or warn.
+  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { const from = composer.linkFrom; composerExitLink(); composerAddFeedback(from, a.id); } });
   return d;
 }
 
@@ -1232,6 +1290,9 @@ function composerMakeStrip(index, full) {
     const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
     if (badPrev) { composerToast(canConnect(badPrev.key, key, composer.agents).reason); composer.dragKey = null; return; }
     if (badNext) { composerToast(canConnect(key, badNext.key, composer.agents).reason); composer.dragKey = null; return; }
+    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
+      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
+    if (wp) composerToast(wp);
     composer.steps.splice(index, 0, [composerMk(key)]); composer.dragKey = null; composerRefresh();
   });
   return s;
@@ -1259,6 +1320,9 @@ function composerMakeCol(stepIdx) {
       const v = badPrev ? canConnect(badPrev.key, key, composer.agents) : canConnect(key, badNext.key, composer.agents);
       composerToast(v.reason); composer.dragKey = null; return;
     }
+    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
+      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
+    if (wp) composerToast(wp);
     composer.steps[stepIdx].push(composerMk(key)); composer.dragKey = null; composerRefresh();
   });
   return col;
@@ -1303,6 +1367,7 @@ function composerAddFeedback(from, to) {
   const toKey = flat.find((n) => n.id === to)?.key;
   const verdict = canConnect(fromKey, toKey, composer.agents);
   if (!verdict.ok) { composerToast(verdict.reason); return; }
+  if (verdict.warn) composerToast(verdict.warn);
   if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
   composerRefresh();
 }
@@ -1441,12 +1506,17 @@ async function composerSave() {
   if (!name) return;
   const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
   const saveBtn = document.getElementById('composer-save');
-  let saved;
+  let saved, warnings;
   try {
-    saved = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks });
+    ({ workflow: saved, warnings } = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks }));
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
     return;
+  }
+  // Soft validator warnings (reachability/governance): the save succeeded, but
+  // tell the user the topology is questionable. Toast the first, count the rest.
+  if (warnings && warnings.length) {
+    composerToast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''));
   }
   await composerLoadSaved();
   // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
@@ -1474,8 +1544,8 @@ function composerRoNode(a) {
   d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
   d.innerHTML =
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>`;
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
+    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>`;
   return d;
 }
 
@@ -1515,7 +1585,7 @@ function composerRenderList() {
     const used = distinctAgents(item.steps);
     const chips = used.map((k) => {
       const ag = composerAgent(k);
-      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}</span>`;
+      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}</span>`;
     }).join('');
     const meta = metaLine(item.steps, item.feedbacks).replace(
       / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
@@ -1526,7 +1596,7 @@ function composerRenderList() {
       `<div class="pl-row">` +
         `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
         `<div class="pl-main">` +
-          `<div class="pl-name">${item.name}</div>` +
+          `<div class="pl-name">${escapeHtml(item.name)}</div>` +
           `<div class="pl-meta">${meta}</div>` +
           `<div class="pl-chips">${chips}</div>` +
         `</div>` +
@@ -3586,6 +3656,431 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// ---- Agents management view -------------------------------------------------
+
+// After any agent mutation: drop the new-pipeline config registry memo
+// (getAgentsApi) and mark the composer palette for a refetch on next entry.
+function invalidateAgentCaches() {
+  state.agents = {};
+  _composerPaletteDirty = true;
+}
+
+async function loadAgentsList() {
+  try {
+    const res = await fetch('/api/agents?all=1');
+    const data = await safeJson(res);
+    state.agentsList = res.ok && Array.isArray(data.agents) ? data.agents : [];
+    if (res.ok && Array.isArray(data.channels)) state.channelIds = data.channels;
+  } catch { state.agentsList = []; }
+  return state.agentsList;
+}
+
+async function loadAgentsView() {
+  await loadAgentsList();
+  renderAgentsList();
+}
+
+function setAgentsMsg(text, kind) {
+  if (!el.agentsMsg) return;
+  el.agentsMsg.textContent = text || '';
+  el.agentsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function agentChip(text, cls) {
+  const s = document.createElement('span');
+  s.className = 'agent-chip ' + cls;
+  s.textContent = text;
+  return s;
+}
+
+function buildAgentCard(a) {
+  const tpl = $('#agent-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  node.dataset.agentKey = a.key || '';
+  node.querySelector('.agent-name').textContent = a.displayName || a.key;
+  node.querySelector('.agent-origin').textContent = a.origin || 'builtin';
+  node.querySelector('.agent-origin').classList.add(a.origin === 'user' ? 'origin-user' : 'origin-builtin');
+  node.querySelector('.agent-sub').textContent = `${a.key} · ${a.runnerType || 'producer'} — ${a.description || ''}`;
+  const chips = node.querySelector('.agent-chips');
+  (Array.isArray(a.consumes) ? a.consumes : []).forEach((c) => chips.appendChild(agentChip(c, 'cons')));
+  (Array.isArray(a.produces) ? a.produces : []).forEach((c) => chips.appendChild(agentChip(c, 'prod')));
+  const isUser = a.origin === 'user';
+  node.querySelector('.agent-edit').hidden = !isUser;
+  node.querySelector('.agent-delete').hidden = !isUser;
+  node.querySelector('.agent-duplicate').hidden = isUser;
+  return node;
+}
+
+function renderAgentsList() {
+  const host = el.agentsList;
+  if (!host) return;
+  host.innerHTML = '';
+  if (!state.agentsList.length) {
+    host.appendChild(histEmpty('No agents found — is the server running?'));
+    return;
+  }
+  const groups = [
+    ['Built-in agents', state.agentsList.filter((a) => a.origin !== 'user')],
+    ['Your agents', state.agentsList.filter((a) => a.origin === 'user')],
+  ];
+  for (const [label, list] of groups) {
+    if (!list.length) continue;
+    const h = document.createElement('div');
+    h.className = 'agents-group-label';
+    h.textContent = label;
+    host.appendChild(h);
+    for (const a of list) host.appendChild(buildAgentCard(a));
+  }
+}
+
+function toggleAgentDetail(card) {
+  const head = card.querySelector('.agent-head');
+  const detail = card.querySelector('.agent-detail');
+  const open = head.getAttribute('aria-expanded') === 'true';
+  head.setAttribute('aria-expanded', String(!open));
+  detail.hidden = open;
+  if (!open && !detail.dataset.loaded) {
+    detail.dataset.loaded = '1';
+    fetchAgentFull(card.dataset.agentKey).then((data) => {
+      const pre = card.querySelector('.agent-md-view');
+      if (pre) pre.textContent = (data && data.markdown) || '(no markdown body)';
+    });
+  }
+}
+
+async function fetchAgentFull(key) {
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(key)}`);
+    const data = await safeJson(res);
+    return res.ok ? data : null;
+  } catch { return null; }
+}
+
+async function deleteAgentCard(card, a) {
+  if (!window.confirm(`Delete agent "${a.displayName || a.key}"?\n\nThis removes its markdown + metadata pair. This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(a.key)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    state.agentsList = state.agentsList.filter((x) => x.key !== a.key);
+    invalidateAgentCaches();
+    setAgentsMsg('Agent deleted.', 'ok');
+    renderAgentsList();
+  } catch (err) { setAgentsMsg(err.message, 'err'); }
+}
+
+async function duplicateAgentCard(a) {
+  const full = await fetchAgentFull(a.key);
+  if (!full) { setAgentsMsg('Could not load the agent to duplicate.', 'err'); return; }
+  const { key, origin, agentFile, ...rest } = full.meta || {};
+  const meta = { ...rest, displayName: `${full.meta.displayName || a.key} (copy)` };
+  try {
+    const res = await fetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meta, markdown: full.markdown }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    invalidateAgentCaches();
+    setAgentsMsg(`Duplicated as "${data.meta.key}".`, 'ok');
+    await loadAgentsView();
+  } catch (err) { setAgentsMsg(err.message, 'err'); }
+}
+
+// ---- Shared agent metadata form (used by the card editor AND wizard Step 3) ---
+
+// One checkbox per option into host; values bound via .checked (never innerHTML).
+function buildChipChecks(host, options, selected) {
+  host.innerHTML = '';
+  const sel = new Set(Array.isArray(selected) ? selected : []);
+  for (const opt of options) {
+    const row = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = opt;
+    cb.checked = sel.has(opt);
+    const txt = document.createElement('span');
+    txt.textContent = opt;
+    row.append(cb, txt);
+    host.appendChild(row);
+  }
+}
+const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
+
+// Fill every .agent-f-* field under `root` from meta (+ optional markdown).
+function agentFormFill(root, meta, markdown) {
+  const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+  // Channels are an open vocabulary: union the server list with the meta's own
+  // ids (known first, then its extra customs) so a stale/closed list can never
+  // drop a custom channel on the edit round-trip.
+  const channels = [...known];
+  const own = [meta.consumes, meta.optionalConsumes, meta.produces];
+  for (const list of own) {
+    for (const id of Array.isArray(list) ? list : []) {
+      if (typeof id === 'string' && id && !channels.includes(id)) channels.push(id);
+    }
+  }
+  const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
+  root.querySelector('.agent-f-name').value = meta.displayName || '';
+  root.querySelector('.agent-f-desc').value = meta.description || '';
+  root.querySelector('.agent-f-color').value = meta.color || 'amber';
+  root.querySelector('.agent-f-runner').value = meta.runnerType || 'producer';
+  buildChipChecks(root.querySelector('.agent-f-consumes'), channels, meta.consumes);
+  buildChipChecks(root.querySelector('.agent-f-optional'), channels, meta.optionalConsumes);
+  buildChipChecks(root.querySelector('.agent-f-produces'), channels, meta.produces);
+  const any = meta.connectsTo === '*' || meta.connectsTo === undefined;
+  root.querySelector('.agent-f-connect-any').checked = any;
+  buildChipChecks(root.querySelector('.agent-f-connects'), agentKeys, any ? [] : meta.connectsTo);
+  root.querySelector('.agent-f-connects').hidden = any;
+  root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
+  root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
+  root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
+  if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
+}
+
+// Read the form back into { meta, markdown }.
+function agentFormRead(root) {
+  const any = root.querySelector('.agent-f-connect-any').checked;
+  return {
+    meta: {
+      displayName: root.querySelector('.agent-f-name').value.trim(),
+      description: root.querySelector('.agent-f-desc').value.trim(),
+      color: root.querySelector('.agent-f-color').value,
+      runnerType: root.querySelector('.agent-f-runner').value,
+      consumes: chipValues(root.querySelector('.agent-f-consumes')),
+      optionalConsumes: chipValues(root.querySelector('.agent-f-optional')),
+      produces: chipValues(root.querySelector('.agent-f-produces')),
+      connectsTo: any ? '*' : chipValues(root.querySelector('.agent-f-connects')),
+      order: Number(root.querySelector('.agent-f-order').value),
+      fanOut: root.querySelector('.agent-f-fanout').checked,
+      loopSource: root.querySelector('.agent-f-loopsource').checked,
+    },
+    markdown: root.querySelector('.agent-f-md').value,
+  };
+}
+
+async function openAgentEdit(card, a) {
+  const detail = card.querySelector('.agent-detail');
+  const head = card.querySelector('.agent-head');
+  if (detail.hidden) { detail.hidden = false; head.setAttribute('aria-expanded', 'true'); }
+  const full = await fetchAgentFull(a.key);
+  if (!full) { setAgentsMsg('Could not load the agent.', 'err'); return; }
+  const pane = card.querySelector('.agent-edit-pane');
+  agentFormFill(pane, full.meta, full.markdown);
+  pane.hidden = false;
+  const anyCb = pane.querySelector('.agent-f-connect-any');
+  anyCb.onchange = () => { pane.querySelector('.agent-f-connects').hidden = anyCb.checked; };
+  pane.querySelector('.agent-edit-cancel').onclick = () => { pane.hidden = true; };
+  pane.querySelector('.agent-edit-save').onclick = () => saveAgentEdit(card, a, pane);
+}
+
+async function saveAgentEdit(card, a, pane) {
+  const msg = pane.querySelector('.agent-edit-msg');
+  msg.textContent = '';
+  msg.className = 'agent-edit-msg form-msg';
+  const body = agentFormRead(pane);
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(a.key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { msg.textContent = data.error || `HTTP ${res.status}`; msg.className = 'agent-edit-msg form-msg err'; return; }
+    pane.hidden = true;
+    invalidateAgentCaches();
+    setAgentsMsg('Agent saved.', 'ok');
+    await loadAgentsView();
+  } catch (err) { msg.textContent = err.message; msg.className = 'agent-edit-msg form-msg err'; }
+}
+
+if (el.agentsList) {
+  el.agentsList.addEventListener('click', (e) => {
+    const card = e.target.closest && e.target.closest('.agent-card');
+    if (!card) return;
+    const a = state.agentsList.find((x) => x.key === card.dataset.agentKey);
+    if (e.target.closest('.agent-delete')) { e.stopPropagation(); if (a) deleteAgentCard(card, a); return; }
+    if (e.target.closest('.agent-duplicate')) { e.stopPropagation(); if (a) duplicateAgentCard(a); return; }
+    if (e.target.closest('.agent-edit')) { e.stopPropagation(); if (a) openAgentEdit(card, a); return; }
+    if (e.target.closest('.agent-head')) toggleAgentDetail(card);
+  });
+  // Keyboard access for the role=button header (mirrors the ws-head pattern).
+  el.agentsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const head = e.target.closest && e.target.closest('.agent-head');
+    if (!head) return;
+    e.preventDefault();
+    toggleAgentDetail(head.closest('.agent-card'));
+  });
+}
+if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { location.hash = 'agent-create'; });
+
+// Test hook (mirrors window.__ws).
+if (typeof window !== 'undefined') {
+  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard, agentFormFill, agentFormRead, openAgentEdit };
+}
+
+// ---- Agent creation wizard ---------------------------------------------------
+
+function resetAgentWizard() {
+  state.agentWizard = { step: 1, genId: '', abort: null, draft: null, ownMd: false };
+}
+
+async function enterAgentWizard() {
+  if (!state.agentWizard.genId && !state.agentWizard.abort) resetAgentWizard();
+  if (!state.agentsList.length) await loadAgentsList();
+  const keys = state.agentsList.filter((a) => a.scope !== 'workspace-only').map((a) => a.key);
+  buildChipChecks(el.agwBefore, keys, []);
+  buildChipChecks(el.agwAfter, keys, []);
+  showAgentWizardStep(state.agentWizard.step || 1);
+  syncAgwStartEnabled();
+}
+
+function showAgentWizardStep(step) {
+  state.agentWizard.step = step;
+  for (let i = 1; i <= 3; i++) {
+    const pane = document.getElementById(`agw-step-${i}`);
+    if (pane) pane.classList.toggle('hidden', i !== step);
+  }
+}
+
+function syncAgwStartEnabled() {
+  const name = el.agwName ? el.agwName.value.trim() : '';
+  const purpose = el.agwPurpose ? el.agwPurpose.value.trim() : '';
+  const own = state.agentWizard.ownMd;
+  const md = el.agwOwnMd ? el.agwOwnMd.value.trim() : '';
+  if (el.agwStart) el.agwStart.disabled = !(name && (own ? md : purpose));
+}
+
+async function startAgentGenerate() {
+  state.agentWizard.genId = ''; // gate stale events before the POST resolves
+  if (el.agwStatus) el.agwStatus.textContent = 'Starting…';
+  if (el.agwMsg) el.agwMsg.textContent = '';
+  showAgentWizardStep(2);
+  const abort = new AbortController();
+  state.agentWizard.abort = abort;
+  const body = {
+    name: el.agwName.value.trim(),
+    purpose: el.agwPurpose.value.trim(),
+    details: el.agwDetails.value,
+    expectedBefore: chipValues(el.agwBefore),
+    expectedAfter: chipValues(el.agwAfter),
+  };
+  if (state.agentWizard.ownMd && el.agwOwnMd.value.trim()) body.userMarkdown = el.agwOwnMd.value;
+  try {
+    const res = await fetch('/api/agents/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: abort.signal,
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !data.genId) {
+      state.agentWizard.abort = null;
+      showAgentWizardStep(1);
+      if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${data.error || res.status}`;
+      return;
+    }
+    state.agentWizard.genId = data.genId;
+    const ws = state.ws;
+    if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'subscribe', genId: data.genId })); } catch { /* ignore */ } }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    state.agentWizard.abort = null;
+    showAgentWizardStep(1);
+    if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${err.message}`;
+  }
+}
+
+function onAgentGenEvent(msg) {
+  if (!msg || !msg.genId || msg.genId !== state.agentWizard.genId) return; // stale/aborted gen
+  if (msg.type === 'agentgen-progress') {
+    if (el.agwStatus) el.agwStatus.textContent = msg.message || '';
+    return;
+  }
+  if (msg.type === 'agentgen-done') {
+    state.agentWizard.abort = null;
+    state.agentWizard.draft = msg.draft || null;
+    const root = document.getElementById('agw-step-3');
+    if (root && msg.draft) agentFormFill(root, msg.draft.meta || {}, msg.draft.markdown || '');
+    const anyCb = root && root.querySelector('.agent-f-connect-any');
+    if (anyCb) anyCb.onchange = () => { root.querySelector('.agent-f-connects').hidden = anyCb.checked; };
+    showAgentWizardStep(3);
+    return;
+  }
+  if (msg.type === 'agentgen-error') {
+    state.agentWizard.abort = null;
+    state.agentWizard.genId = '';
+    showAgentWizardStep(1);
+    if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${msg.message || 'failed'}`;
+  }
+}
+
+async function saveGeneratedAgent() {
+  const root = document.getElementById('agw-step-3');
+  const { meta, markdown } = agentFormRead(root);
+  if (el.agwMsg) { el.agwMsg.textContent = ''; el.agwMsg.className = 'form-msg'; }
+  if (el.agwSave) el.agwSave.disabled = true;
+  try {
+    const res = await fetch('/api/agents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meta, markdown }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { // 400/409 keep the user on Step 3 with the error verbatim
+      if (el.agwMsg) { el.agwMsg.textContent = data.error || `HTTP ${res.status}`; el.agwMsg.className = 'form-msg err'; }
+      return;
+    }
+    invalidateAgentCaches();
+    resetAgentWizard();
+    setAgentsMsg(`Agent "${data.meta.key}" created.`, 'ok');
+    location.hash = 'agents';
+  } catch (err) {
+    if (el.agwMsg) { el.agwMsg.textContent = err.message; el.agwMsg.className = 'form-msg err'; }
+  } finally {
+    if (el.agwSave) el.agwSave.disabled = false;
+  }
+}
+
+function abortAgentGen() {
+  const genId = state.agentWizard.genId;
+  if (state.agentWizard.abort) { try { state.agentWizard.abort.abort(); } catch { /* ignore */ } }
+  if (genId) {
+    fetch('/api/agents/generate/stop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ genId }),
+    }).catch(() => {});
+    const ws = state.ws;
+    if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'unsubscribe', genId })); } catch { /* ignore */ } }
+  }
+  state.agentWizard.abort = null;
+  state.agentWizard.genId = '';
+}
+
+if (el.agwStart) el.agwStart.addEventListener('click', () => startAgentGenerate());
+if (el.agwAbort) el.agwAbort.addEventListener('click', () => { abortAgentGen(); showAgentWizardStep(1); });
+if (el.agwRegen) el.agwRegen.addEventListener('click', () => startAgentGenerate());
+if (el.agwSave) el.agwSave.addEventListener('click', () => saveGeneratedAgent());
+if (el.agwClose) el.agwClose.addEventListener('click', () => { location.hash = 'agents'; });
+for (const input of [el.agwName, el.agwPurpose, el.agwOwnMd]) {
+  if (input) input.addEventListener('input', syncAgwStartEnabled);
+}
+if (el.agwOwnToggle) el.agwOwnToggle.addEventListener('click', () => {
+  state.agentWizard.ownMd = !state.agentWizard.ownMd;
+  el.agwOwnToggle.classList.toggle('on', state.agentWizard.ownMd);
+  el.agwOwnToggle.setAttribute('aria-checked', String(state.agentWizard.ownMd));
+  if (el.agwOwnPane) el.agwOwnPane.classList.toggle('hidden', !state.agentWizard.ownMd);
+  syncAgwStartEnabled();
+});
+// role=switch needs Space/Enter (mirrors the mock + autoscroll switches).
+if (el.agwOwnToggle) el.agwOwnToggle.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  e.preventDefault();
+  el.agwOwnToggle.click();
+});
+
+if (typeof window !== 'undefined') {
+  window.__agw = { enterAgentWizard, showAgentWizardStep, startAgentGenerate, onAgentGenEvent, saveGeneratedAgent, abortAgentGen, resetAgentWizard };
+}
+
 // ---------------------------------------------------------------------------
 // Start a run
 // ---------------------------------------------------------------------------
@@ -5166,7 +5661,7 @@ const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'settings'];
 
 function showView(name) {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -5174,6 +5669,11 @@ function showView(name) {
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
     if (state.wizard.scanId || state.wizard.abort) abortWizardScan();
     resetWizard();
+  }
+  // Same guard for the agent wizard: stop a live generation on the way out.
+  if (currentShownView === 'agent-create' && name !== 'agent-create') {
+    if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
+    resetAgentWizard();
   }
   currentShownView = name;
 
@@ -5186,6 +5686,8 @@ function showView(name) {
   if (name === 'history') loadHistoryView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
+  if (name === 'agents') loadAgentsView();
+  if (name === 'agent-create') enterAgentWizard();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
 }

@@ -26,7 +26,7 @@ import { listProjects, addProject, removeProject, normalizeProjectPath } from '.
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
+  PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
 } from '../src/core/config.mjs';
 import {
@@ -44,6 +44,9 @@ import {
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
+import { createAgentGen } from '../src/core/agent-gen.mjs';
+import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
+import { CHANNEL_IDS } from '../src/core/channels.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -113,6 +116,10 @@ const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'e
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
 const SCAN_EVENT_NAMES = ['scan-progress', 'scan-done', 'scan-error'];
+// The agentgen-* WS family (Agent Platform, Phase 2). Same pattern as scan-*:
+// a NEW family in the SAME runs Map. createAgentGen emits many agentgen-progress
+// then exactly one terminal agentgen-done OR agentgen-error.
+const AGENTGEN_EVENT_NAMES = ['agentgen-progress', 'agentgen-done', 'agentgen-error'];
 const MAX_BUFFER = 5000;
 
 // ---------------------------------------------------------------------------
@@ -133,20 +140,24 @@ wss.on('connection', (ws, req) => {
     return;
   }
   sockets.add(ws);
-  // Optional ?runId=... (or ?scanId=...) -> replay that entry's buffered events so
-  // a reconnecting client immediately sees the full state. Scan entries live in the
-  // SAME runs Map keyed by scanId, so a single id lookup serves both families.
+  // Optional ?runId=... (or ?scanId=.../?genId=...) -> replay that entry's buffered
+  // events so a reconnecting client immediately sees the full state. Scan + agentgen
+  // entries live in the SAME runs Map keyed by scanId/genId, so a single id lookup
+  // serves all families.
   let requestedRunId = null;
   let requestedScanId = null;
+  let requestedGenId = null;
   try {
     const u = new URL(req.url, 'http://localhost');
     requestedRunId = u.searchParams.get('runId');
     requestedScanId = u.searchParams.get('scanId');
+    requestedGenId = u.searchParams.get('genId');
   } catch {
     requestedRunId = null;
     requestedScanId = null;
+    requestedGenId = null;
   }
-  const id = requestedRunId || requestedScanId;
+  const id = requestedRunId || requestedScanId || requestedGenId;
 
   send(ws, { type: 'hello', runs: summarizeRuns() });
 
@@ -160,14 +171,15 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => sockets.delete(ws));
   ws.on('message', (data) => {
     // Clients may ask to (re)subscribe / replay an entry's history. A scan's
-    // {type:'subscribe', scanId} is accepted identically to a run's runId.
+    // {type:'subscribe', scanId} and an agent generation's {type:'subscribe',
+    // genId} are accepted identically to a run's runId.
     let msg = null;
     try {
       msg = JSON.parse(String(data));
     } catch {
       return;
     }
-    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId) : null;
+    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId) : null;
     if (subId && runs.has(subId)) {
       const entry = runs.get(subId);
       for (const ev of entry.events) send(ws, ev);
@@ -226,10 +238,12 @@ function summarizeRuns() {
     status: r.status,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
-    // kind discriminator so the client routes runs vs scans vs workspace runs
-    // without guessing; scanId/workspaceId are the matching attribution fields.
+    // kind discriminator so the client routes runs vs scans vs agent generations
+    // vs workspace runs without guessing; scanId/genId/workspaceId are the
+    // matching attribution fields.
     kind: r.kind || 'run',
     scanId: r.scanId || null,
+    genId: r.genId || null,
     workspaceId: r.workspaceId || null,
   }));
 }
@@ -324,6 +338,37 @@ function wireScan(entry) {
       if (name === 'scan-progress') entry.status = 'running';
       else if (name === 'scan-done') entry.status = 'done';
       else if (name === 'scan-error') entry.status = 'error';
+      record(event);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wire an AgentGen's events onto the WebSocket, tagged with genId. The
+// agentgen-* family: same runs Map, same ring-buffer/replay plumbing as
+// wireScan; the 7-event run plumbing (wireRun) is untouched. createAgentGen
+// emits many agentgen-progress then exactly one terminal agentgen-done OR
+// agentgen-error (run() never throws).
+// ---------------------------------------------------------------------------
+function wireAgentGen(entry) {
+  const { genId, orch } = entry;
+
+  const record = (event) => {
+    // genId LAST so the runs-Map key always wins (the engine already tags its
+    // payload with the same id; this is a defensive override against drift).
+    const tagged = { ...event, genId };
+    entry.events.push(tagged);
+    if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
+    broadcast(tagged);
+    return tagged;
+  };
+
+  for (const name of AGENTGEN_EVENT_NAMES) {
+    subscribe(orch, name, (payload) => {
+      const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
+      if (name === 'agentgen-progress') entry.status = 'running';
+      else if (name === 'agentgen-done') entry.status = 'done';
+      else if (name === 'agentgen-error') entry.status = 'error';
       record(event);
     });
   }
@@ -1282,7 +1327,7 @@ app.get('/api/config', async (req, res) => {
   // project-less response carries only the predefined Opus/Sonnet/Haiku set.
   if (raw == null || raw === '') {
     const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
-    return res.json({ config: { steps: {}, customModels: [] }, models, steps: AGENT_STEPS, efforts: EFFORTS });
+    return res.json({ config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS });
   }
   const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
@@ -1292,7 +1337,7 @@ app.get('/api/config', async (req, res) => {
     // activeWorkflowId. It is a superset of readConfig, so the client keeps using
     // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
     const [config, models] = await Promise.all([readRunConfig(projectDir), listModels(projectDir)]);
-    res.json({ config, models, steps: AGENT_STEPS, efforts: EFFORTS });
+    res.json({ config, models, steps: agentSteps(), efforts: EFFORTS });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1417,11 +1462,11 @@ app.post('/api/workflows', async (req, res) => {
   if (!tpl.name) return badRequest(res, 'name is required');
   try {
     const registry = loadAgentRegistry(AGENTS_DIR);
-    const { ok, errors } = validateWorkflow(tpl, registry);
-    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors });
+    const { ok, errors, warnings } = validateWorkflow(tpl, registry);
+    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors, warnings });
     // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
     const workflow = await writeWorkflow(tpl); // CONV-1: await
-    res.status(201).json({ workflow });
+    res.status(201).json({ workflow, warnings });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1441,21 +1486,178 @@ app.delete('/api/workflows/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/agents -> the agent registry for the Composer palette. Scanned from
-// agents/*.meta.json by src/core/agent-registry.mjs and returned as an array in
-// palette render order (.order ascending). The client builds draggable pills
-// (colored dot + displayName + icon) from this.
+// /api/agents* -> agent registry + user-agent CRUD, delegated to
+// src/core/agent-store.mjs (layered builtin + ~/.maestro/agents user pairs).
+// GET returns palette render order (.order ascending) with origin stamped; the
+// client builds draggable pills (colored dot + displayName + icon) from this.
 // ---------------------------------------------------------------------------
-app.get('/api/agents', (_req, res) => {
+// Channel vocabulary for the UI editor/wizard: built-in CHANNEL_IDS first, then
+// every CUSTOM id any registry agent references (produces/consumes/
+// optionalConsumes/channelDefs[].id), appended sorted + deduped. Channels are an
+// open vocabulary — a closed list would silently strip custom ids on edit.
+function collectChannelIds(agents) {
+  const customs = new Set();
+  for (const a of Array.isArray(agents) ? agents : []) {
+    if (!a) continue;
+    const ids = [
+      ...(Array.isArray(a.produces) ? a.produces : []),
+      ...(Array.isArray(a.consumes) ? a.consumes : []),
+      ...(Array.isArray(a.optionalConsumes) ? a.optionalConsumes : []),
+      ...(Array.isArray(a.channelDefs) ? a.channelDefs.map((d) => d && d.id) : []),
+    ];
+    for (const id of ids) {
+      if (typeof id === 'string' && id && !CHANNEL_IDS.includes(id)) customs.add(id);
+    }
+  }
+  return [...CHANNEL_IDS, ...[...customs].sort()];
+}
+
+app.get('/api/agents', async (req, res) => {
   try {
-    const registry = loadAgentRegistry(AGENTS_DIR); // { [key]: AgentMeta }, sorted by .order
-    // §6.6: scope:'workspace-only' agents are EXCLUDED from the single-project
-    // Composer palette (the scanner is non-composable in either palette; the
-    // workspace reviewer is selected only by the workspace-default workflow).
-    const agents = Object.values(registry).filter((m) => m.scope !== 'workspace-only');
-    res.json({ agents });
+    const all = await listAgents(); // merged builtin+user, origin stamped, .order ascending
+    // §6.6: workspace-only agents stay out of the Composer palette by default;
+    // the Agents management view passes ?all=1 to see them too.
+    const agents = isTruthy(req.query.all) ? all : all.filter((m) => m.scope !== 'workspace-only');
+    res.json({ agents, channels: collectChannelIds(all) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Map agent-store err.code -> HTTP (mirrors workspaceErrorStatus).
+function agentErrorStatus(code) {
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'BAD_REQUEST') return 400;
+  if (code === 'BUILTIN' || code === 'DUPLICATE' || code === 'REFERENCED') return 409;
+  return 500;
+}
+
+/**
+ * Fire-and-forget agent generation (mirrors startScan). Mints genId, registers
+ * a kind:'agentgen' entry in the SAME runs Map, wires its agentgen-* events,
+ * starts createAgentGen(...).run() detached with a .catch backstop, returns
+ * genId. The draft is NEVER saved — persistence is the wizard's explicit
+ * follow-up POST /api/agents.
+ * @returns {string} genId
+ */
+function startAgentGen(input) {
+  const orch = createAgentGen({
+    ...input,
+    // Same open vocabulary as GET /api/agents (callers pass the registry union);
+    // built-ins-only fallback keeps direct/_testing callers working.
+    channels: Array.isArray(input.channels) && input.channels.length ? input.channels : CHANNEL_IDS,
+    claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK) },
+  });
+  // The engine mints its own genId (agen_<uuid>) and tags every emitted event
+  // with it; use THAT as the runs-Map key + the returned id so the entry, its
+  // buffered events, and WS reconnect/replay (?genId=) all agree on one id.
+  const genId = orch.getState().genId;
+  const entry = {
+    id: genId, genId, orch, kind: 'agentgen', projectDir: null,
+    title: `agent: ${input.name}`, status: 'running',
+    startedAt: new Date().toISOString(), events: [], pendingQuestion: null,
+  };
+  runs.set(genId, entry);
+  wireAgentGen(entry);
+
+  Promise.resolve()
+    .then(() => orch.run())
+    .catch((err) => {
+      // run() should never throw (it emits agentgen-error), but a defensive
+      // backstop mirrors startScan: surface an unexpected throw as a tagged
+      // agentgen-error.
+      const event = { genId, type: 'agentgen-error', message: err && err.message ? err.message : String(err) };
+      entry.status = 'error';
+      entry.events.push(event);
+      broadcast(event);
+    });
+
+  return genId;
+}
+
+// POST /api/agents/generate. Registered BEFORE GET /api/agents/:key so the
+// literal segment is never swallowed by the :key param. Mode A (purpose given):
+// the LLM drafts both the .md body and the meta JSON. Mode B (userMarkdown
+// given): the body is the user's verbatim; the LLM infers ONLY the meta.
+app.post('/api/agents/generate', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) return badRequest(res, 'name is required');
+    const userMarkdown = typeof body.userMarkdown === 'string' && body.userMarkdown.trim() ? body.userMarkdown : '';
+    if (!userMarkdown && !(typeof body.purpose === 'string' && body.purpose.trim())) {
+      return badRequest(res, 'purpose is required (or paste your own markdown)');
+    }
+    // Resolve neighbor keys to full agent metas (produces/consumes feed the
+    // prompt's neighbor block); unknown keys are silently dropped.
+    const allAgents = await listAgents();
+    const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
+    const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
+    const genId = startAgentGen({
+      name, purpose: String(body.purpose || ''), details: String(body.details || ''),
+      expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
+      userMarkdown, channels: collectChannelIds(allAgents),
+    });
+    res.json({ genId });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/agents/generate/stop  body:{genId} -> entry.orch.stop() (aborts the
+// in-flight runClaude; the engine's finally reaps its scratch dir); marks the
+// entry 'stopped'. Idempotent: an unknown/finished generation still returns ok
+// (mirrors POST /api/scan/stop).
+app.post('/api/agents/generate/stop', (req, res) => {
+  const genId = req.body && typeof req.body.genId === 'string' ? req.body.genId : '';
+  const entry = genId ? runs.get(genId) : null;
+  if (entry && entry.kind === 'agentgen' && entry.orch && typeof entry.orch.stop === 'function') {
+    try { entry.orch.stop(); } catch { /* best-effort */ }
+    entry.status = 'stopped';
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/agents/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!AGENT_KEY_RE.test(key)) return res.status(404).json({ error: 'agent not found' });
+  try {
+    const data = await readAgent(key);
+    if (!data) return res.status(404).json({ error: 'agent not found' });
+    res.json(data); // { meta (incl. origin), markdown }
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/agents', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const created = await createAgent({ meta: body.meta, markdown: body.markdown });
+    res.status(201).json(created);
+  } catch (err) {
+    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.put('/api/agents/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!AGENT_KEY_RE.test(key)) return res.status(404).json({ error: 'agent not found' });
+  const body = req.body || {};
+  try {
+    res.json(await updateAgent(key, { meta: body.meta, markdown: body.markdown }));
+  } catch (err) {
+    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/agents/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!AGENT_KEY_RE.test(key)) return res.status(404).json({ error: 'agent not found' });
+  try {
+    res.json(await deleteAgent(key));
+  } catch (err) {
+    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
@@ -1610,4 +1812,4 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, wireScan, summarizeRuns, startScan };
+export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen };

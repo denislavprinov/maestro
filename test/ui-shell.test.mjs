@@ -4,11 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
 
-test('exactly seven routed views', () => {
-  assert.equal((html.match(/data-view/g) || []).length, 7);
+test('exactly nine routed views', () => {
+  assert.equal((html.match(/data-view/g) || []).length, 9);
 });
-test('seven views include composer + the two workspace views', () => {
-  for (const v of ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'settings'])
+test('nine views include composer + the two workspace views + the two agent views', () => {
+  for (const v of ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'settings'])
     assert.ok(html.includes(`data-view="${v}"`), `missing data-view=${v}`);
 });
 test('nav targets: the five base + workspaces (workspace-create is NOT a nav target)', () => {
