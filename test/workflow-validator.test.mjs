@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
+import { PRESEEDED_CHANNELS } from '../src/core/channels.mjs';
 
 // Inline fake registry (matches Phase 1's AgentMeta shape) so this phase tests
 // independently of agent-registry.mjs. Only `key` is consulted by the validator.
@@ -167,4 +168,50 @@ test('default workflow has no warnings (pre-seeded channels never warn)', () => 
   const res = validateWorkflow(tpl, registry);
   assert.deepEqual(res.errors, []);
   assert.deepEqual(res.warnings, []);
+});
+
+// ── custom channels + derived PRESEEDED (open vocabulary hardening) ────────────
+
+test('PRESEEDED derives from channels.mjs (single source; no hardcoded copy)', async () => {
+  assert.deepEqual(PRESEEDED_CHANNELS, ['userPrompt', 'plan', 'checklist', 'code']);
+  const src = await import('node:fs/promises').then((fs) =>
+    fs.readFile(new URL('../src/core/workflow-validator.mjs', import.meta.url), 'utf8'));
+  assert.doesNotMatch(src, /\[\s*'userPrompt'\s*,\s*'plan'\s*,\s*'checklist'\s*,\s*'code'\s*\]/,
+    'the validator must import PRESEEDED_CHANNELS, not restate it');
+});
+
+test('custom channel produced upstream then consumed downstream: ok, no warnings', () => {
+  const registry = {
+    specWriter: { key: 'specWriter', produces: ['spec'], consumes: ['plan'], connectsTo: '*',
+      channelDefs: [{ id: 'spec', kind: 'md', filename: 'api-spec.md' }] },
+    specAuditor: { key: 'specAuditor', produces: ['review'], consumes: ['spec'], connectsTo: '*' },
+  };
+  const tpl = { steps: [[{ id: 's0', key: 'specWriter' }], [{ id: 's1', key: 'specAuditor' }]], feedbacks: [] };
+  const res = validateWorkflow(tpl, registry);
+  assert.equal(res.ok, true, res.errors.join('; '));
+  assert.deepEqual(res.warnings, []);
+});
+
+test('custom channel consumed with NO upstream producer warns (not pre-seeded)', () => {
+  const registry = {
+    specAuditor: { key: 'specAuditor', produces: ['review'], consumes: ['spec'], connectsTo: '*' },
+  };
+  const tpl = { steps: [[{ id: 's0', key: 'specAuditor' }]], feedbacks: [] };
+  const res = validateWorkflow(tpl, registry);
+  assert.equal(res.ok, true);
+  assert.ok(res.warnings.some((w) => /"spec"/.test(w) && /no upstream/.test(w)), res.warnings.join('; '));
+});
+
+test('a produced custom channel with no channelDef anywhere warns once (defaults to markdown)', () => {
+  const registry = {
+    a: { key: 'a', produces: ['spec'], consumes: ['userPrompt'], connectsTo: '*' },
+    b: { key: 'b', produces: ['spec'], consumes: ['spec'], connectsTo: '*' },
+  };
+  const tpl = { steps: [[{ id: 's0', key: 'a' }], [{ id: 's1', key: 'b' }]], feedbacks: [] };
+  const res = validateWorkflow(tpl, registry);
+  assert.equal(res.ok, true);
+  const defWarnings = res.warnings.filter((w) => /channelDef/.test(w));
+  assert.equal(defWarnings.length, 1, 'one warning per channel, not per producer');
+  assert.match(defWarnings[0], /"spec"/);
+  assert.match(defWarnings[0], /spec\.md/);
 });
