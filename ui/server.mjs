@@ -1491,13 +1491,34 @@ app.delete('/api/workflows/:id', async (req, res) => {
 // GET returns palette render order (.order ascending) with origin stamped; the
 // client builds draggable pills (colored dot + displayName + icon) from this.
 // ---------------------------------------------------------------------------
+// Channel vocabulary for the UI editor/wizard: built-in CHANNEL_IDS first, then
+// every CUSTOM id any registry agent references (produces/consumes/
+// optionalConsumes/channelDefs[].id), appended sorted + deduped. Channels are an
+// open vocabulary — a closed list would silently strip custom ids on edit.
+function collectChannelIds(agents) {
+  const customs = new Set();
+  for (const a of Array.isArray(agents) ? agents : []) {
+    if (!a) continue;
+    const ids = [
+      ...(Array.isArray(a.produces) ? a.produces : []),
+      ...(Array.isArray(a.consumes) ? a.consumes : []),
+      ...(Array.isArray(a.optionalConsumes) ? a.optionalConsumes : []),
+      ...(Array.isArray(a.channelDefs) ? a.channelDefs.map((d) => d && d.id) : []),
+    ];
+    for (const id of ids) {
+      if (typeof id === 'string' && id && !CHANNEL_IDS.includes(id)) customs.add(id);
+    }
+  }
+  return [...CHANNEL_IDS, ...[...customs].sort()];
+}
+
 app.get('/api/agents', async (req, res) => {
   try {
     const all = await listAgents(); // merged builtin+user, origin stamped, .order ascending
     // §6.6: workspace-only agents stay out of the Composer palette by default;
     // the Agents management view passes ?all=1 to see them too.
     const agents = isTruthy(req.query.all) ? all : all.filter((m) => m.scope !== 'workspace-only');
-    res.json({ agents, channels: CHANNEL_IDS });
+    res.json({ agents, channels: collectChannelIds(all) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1522,7 +1543,9 @@ function agentErrorStatus(code) {
 function startAgentGen(input) {
   const orch = createAgentGen({
     ...input,
-    channels: CHANNEL_IDS,
+    // Same open vocabulary as GET /api/agents (callers pass the registry union);
+    // built-ins-only fallback keeps direct/_testing callers working.
+    channels: Array.isArray(input.channels) && input.channels.length ? input.channels : CHANNEL_IDS,
     claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK) },
   });
   // The engine mints its own genId (agen_<uuid>) and tags every emitted event
@@ -1567,12 +1590,13 @@ app.post('/api/agents/generate', async (req, res) => {
     }
     // Resolve neighbor keys to full agent metas (produces/consumes feed the
     // prompt's neighbor block); unknown keys are silently dropped.
-    const byKey = Object.fromEntries((await listAgents()).map((m) => [m.key, m]));
+    const allAgents = await listAgents();
+    const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
     const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
     const genId = startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
-      userMarkdown,
+      userMarkdown, channels: collectChannelIds(allAgents),
     });
     res.json({ genId });
   } catch (err) {

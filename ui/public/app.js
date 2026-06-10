@@ -496,7 +496,7 @@ function runNodeAgent(node) {
   const embedded = key && EMBEDDED_AGENTS[key];
   const meta = live || embedded || {};
   return {
-    icon: meta.icon || RUN_BOOKEND_ICON,
+    icon: safeAgentIcon(meta) || RUN_BOOKEND_ICON,
     color: node.color || meta.color || 'blue',
     label: node.label || meta.displayName || node.id,
     sub: node.sub || meta.description || '',
@@ -780,6 +780,14 @@ function maybeResume(r) {
 // Minimal HTML escape for text interpolated into node innerHTML.
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Built-in icons are repo-shipped SVG fragments (trusted, injected raw). User
+// agents' metadata is user-writable (POST /api/agents, wizard Mode B), so their
+// icon could carry arbitrary markup — they get a fixed glyph instead.
+const USER_AGENT_ICON = '<circle cx="12" cy="12" r="3.4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"></path>';
+function safeAgentIcon(meta) {
+  return meta && meta.origin === 'user' ? USER_AGENT_ICON : String((meta && meta.icon) || '');
 }
 
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
@@ -1137,7 +1145,7 @@ const COMPOSER_SEQ = '#B7B7BC';
 
 let _composerReady = false;
 const composer = {
-  agents: {},          // key -> {key,displayName,description,color,icon}
+  agents: {},          // key -> {key,displayName,description,color,icon,origin}
   steps: [],           // Array<Array<{id,key}>> (local ids)
   feedbacks: [],       // Array<{from,to}> (local ids)
   saved: [],           // WorkflowTemplate[] from the server
@@ -1221,7 +1229,7 @@ function composerBuildPalette(pal) {
     p.className = 'agent-pill';
     p.draggable = true;
     p.dataset.key = ag.key;
-    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}`;
+    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}`;
     p.addEventListener('dragstart', (e) => {
       composer.dragKey = ag.key; p.classList.add('dragging');
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
@@ -1244,8 +1252,8 @@ function composerNodeEl(a) {
     `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
+    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>` +
     `<div class="nx" title="Remove agent">✕</div>` +
     `<div class="loop" title="Draw a feedback loop from this agent">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
@@ -1536,8 +1544,8 @@ function composerRoNode(a) {
   d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
   d.innerHTML =
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${ag.displayName}</b><small>${ag.description}</small></div>`;
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
+    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>`;
   return d;
 }
 
@@ -1577,7 +1585,7 @@ function composerRenderList() {
     const used = distinctAgents(item.steps);
     const chips = used.map((k) => {
       const ag = composerAgent(k);
-      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${ag.displayName}</span>`;
+      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}</span>`;
     }).join('');
     const meta = metaLine(item.steps, item.feedbacks).replace(
       / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
@@ -1588,7 +1596,7 @@ function composerRenderList() {
       `<div class="pl-row">` +
         `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
         `<div class="pl-main">` +
-          `<div class="pl-name">${item.name}</div>` +
+          `<div class="pl-name">${escapeHtml(item.name)}</div>` +
           `<div class="pl-meta">${meta}</div>` +
           `<div class="pl-chips">${chips}</div>` +
         `</div>` +
@@ -3802,7 +3810,17 @@ const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c)
 
 // Fill every .agent-f-* field under `root` from meta (+ optional markdown).
 function agentFormFill(root, meta, markdown) {
-  const channels = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+  const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+  // Channels are an open vocabulary: union the server list with the meta's own
+  // ids (known first, then its extra customs) so a stale/closed list can never
+  // drop a custom channel on the edit round-trip.
+  const channels = [...known];
+  const own = [meta.consumes, meta.optionalConsumes, meta.produces];
+  for (const list of own) {
+    for (const id of Array.isArray(list) ? list : []) {
+      if (typeof id === 'string' && id && !channels.includes(id)) channels.push(id);
+    }
+  }
   const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
   root.querySelector('.agent-f-name').value = meta.displayName || '';
   root.querySelector('.agent-f-desc').value = meta.description || '';

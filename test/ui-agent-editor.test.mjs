@@ -94,6 +94,34 @@ test('Edit opens the pane, fills fields via .value (markup inert), and PUTs the 
   assert.equal(puts[0].markdown, MD_XSS + 'edited\n');
 });
 
+test('editing an agent with a custom channel id keeps it: chip renders checked, save round-trips it', async () => {
+  const puts = [];
+  const metaWithCustom = { ...AGENTS[1], consumes: ['plan', 'spec'] }; // 'spec' NOT in the CHANNELS stub
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/agents/docsWriter') && (!opts.method || opts.method === 'GET')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: metaWithCustom, markdown: '# b' }) });
+      }
+      if (u.endsWith('/api/agents/docsWriter') && opts.method === 'PUT') {
+        puts.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: metaWithCustom, markdown: '# b' }) });
+      }
+      return null;
+    },
+  });
+  await goAgents(window);
+  const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
+  click(window, card.querySelector('.agent-edit'));
+  await new Promise((r) => setTimeout(r, 0));
+  const specCb = [...card.querySelectorAll('.agent-f-consumes input')].find((c) => c.value === 'spec');
+  assert.ok(specCb, 'custom channel renders a chip even though the channels list omits it');
+  assert.equal(specCb.checked, true, 'custom channel chip is checked');
+  click(window, card.querySelector('.agent-edit-save')); // save WITHOUT touching any chip
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(puts.length, 1);
+  assert.deepEqual(puts[0].meta.consumes, ['plan', 'spec'], 'custom id survives the edit round-trip');
+});
+
 test('a 400 on save keeps the pane open and surfaces the error in the form', async () => {
   const { window } = await boot({
     fetchHandler: (u, opts) => {

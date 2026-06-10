@@ -101,7 +101,7 @@ export const EMBEDDED_AGENTS = {
   },
 };
 
-// mergePalette(agentsResponse) -> ordered Array<{key,displayName,description,color,icon,order}>.
+// mergePalette(agentsResponse) -> ordered Array<{key,displayName,description,color,icon,origin,order}>.
 // Prefers the live registry (GET /api/agents -> { agents:[…] } or a bare array);
 // falls back to EMBEDDED_AGENTS. Always sorted by .order so the palette is stable.
 export function mergePalette(agentsResponse) {
@@ -116,6 +116,9 @@ export function mergePalette(agentsResponse) {
       description: a.description || '',
       color: a.color || 'blue',
       icon: a.icon || '',
+      // Trusted-icon gate: only 'user' is untrusted; the EMBEDDED_AGENTS
+      // fallback has no origin and is repo-shipped -> 'builtin' is correct.
+      origin: a.origin === 'user' ? 'user' : 'builtin',
       order: typeof a.order === 'number' ? a.order : 99,
       connectsTo: a.connectsTo === undefined ? '*' : a.connectsTo,
       produces: Array.isArray(a.produces) ? a.produces : [],
