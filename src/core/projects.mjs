@@ -23,6 +23,18 @@ import { projectKey } from './store.mjs';
  */
 export function maestroHome() {
   const env = process.env.MAESTRO_HOME;
+  if (!(env && env.trim()) && process.env.NODE_TEST_CONTEXT &&
+      !process.env.MAESTRO_TEST_ALLOW_HOME_FALLBACK) {
+    // Under the node:test runner the real ~/.maestro must be unreachable: a test
+    // (or a fire-and-forget write outliving its teardown) that resolves the home
+    // with no MAESTRO_HOME set would silently pollute the user's real store.
+    // MAESTRO_TEST_ALLOW_HOME_FALLBACK opts out for tests that exercise the
+    // settings/home fallback tiers and sandbox HOME/USERPROFILE themselves.
+    throw new Error(
+      'maestroHome(): MAESTRO_HOME is unset under the node:test runner — ' +
+      'tests must never touch the real ~/.maestro (use test/helpers/temp-home.mjs#useTempHome)'
+    );
+  }
   const base = env && env.trim() ? env : (getMaestroRoot() || defaultRoot());
   return join(resolve(base), '.maestro');
 }

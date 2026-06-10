@@ -16,15 +16,21 @@ async function withSandbox(fn) {
   const home = await mkdtemp(join(tmpdir(), 'maestro-set-'));
   const prev = {
     HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, MAESTRO_HOME: process.env.MAESTRO_HOME,
+    MAESTRO_TEST_ALLOW_HOME_FALLBACK: process.env.MAESTRO_TEST_ALLOW_HOME_FALLBACK,
   };
   process.env.HOME = home; process.env.USERPROFILE = home; delete process.env.MAESTRO_HOME;
+  // These tests exercise the settings/home fallback tiers with no MAESTRO_HOME,
+  // which the maestroHome() test-runner guard otherwise forbids. Safe here:
+  // HOME/USERPROFILE point into the sandbox, so the fallback cannot reach the
+  // real ~/.maestro.
+  process.env.MAESTRO_TEST_ALLOW_HOME_FALLBACK = '1';
   try { return await fn(home); }
   finally {
     // These tests delete MAESTRO_HOME + repoint HOME mid-suite. Reset the db.mjs
     // singleton on the way OUT (Task 6.14) so the next file reopens cleanly at
     // .maestro-test instead of against a stale/sandbox handle.
     _resetForTests();
-    for (const k of ['HOME', 'USERPROFILE', 'MAESTRO_HOME']) {
+    for (const k of ['HOME', 'USERPROFILE', 'MAESTRO_HOME', 'MAESTRO_TEST_ALLOW_HOME_FALLBACK']) {
       if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
     }
     await rm(home, { recursive: true, force: true });
