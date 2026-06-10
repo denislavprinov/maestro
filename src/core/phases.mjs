@@ -517,13 +517,39 @@ async function readDecomposition(path) {
 }
 
 /**
+ * The shared-working-tree warning for a decomposed task that runs alongside phase
+ * siblings. Parallel implementers share ONE tree with no locking, so the block
+ * pins down the only safe behaviors: own files only, scoped tests, no tree-wide
+ * git ops. Empty string when there are no siblings (solo task in its phase).
+ * @param {Array<{id:string,title?:string,file?:string}>|undefined} siblings
+ */
+function siblingsBlock(siblings) {
+  if (!Array.isArray(siblings) || !siblings.length) return '';
+  const lines = siblings
+    .map((s) => `- ${s.id}${s.title ? ` "${s.title}"` : ''}${s.file ? ` (${s.file})` : ''}`)
+    .join('\n');
+  return (
+    `\n## Parallel siblings — shared working tree\n\n` +
+    `${siblings.length} other implementer(s) are editing THIS SAME working tree right now, each on its own task:\n` +
+    `${lines}\n\n` +
+    `Hard rules:\n` +
+    `1. Edit ONLY the files your TASK file lists. If you need another file, DO NOT touch it — record a deviation and stop that step.\n` +
+    `2. Run tests SCOPED to your slice (the TASK file's verify command or your own test files). Do NOT run the full suite — siblings' in-progress red tests make it nondeterministic. Full-suite verification happens after the phase.\n` +
+    `3. A failure in a file you do not own is a sibling's work in progress. Ignore it. Never edit or "fix" a sibling's file.\n` +
+    `4. No tree-wide git operations: no stash, no checkout --, no reset, no clean, no add, no commit.\n`
+  );
+}
+
+/**
  * Build the implementer task body. Pure (exported for tests). When `taskPath` is
  * present (a decomposed run), the self-contained task file is authoritative and the
- * plan is reference/context only — the implementer no longer reads the whole plan.
- * Absent a taskPath, behavior is byte-identical to today (plan is authoritative).
- * @param {{ mode:'implement'|'fix', planPath:string, reviewPath?:string, taskPath?:string }} o
+ * plan is reference/context only — the implementer no longer reads the whole plan;
+ * `siblings` (the OTHER tasks of the same phase) appends the shared-tree rules.
+ * Absent a taskPath, behavior is byte-identical to today (plan is authoritative)
+ * and siblings are ignored, as they are in fix mode (the fix pass is always solo).
+ * @param {{ mode:'implement'|'fix', planPath:string, reviewPath?:string, taskPath?:string, siblings?:Array<{id:string,title?:string,file?:string}> }} o
  */
-export function implementerBody({ mode = 'implement', planPath, reviewPath, taskPath } = {}) {
+export function implementerBody({ mode = 'implement', planPath, reviewPath, taskPath, siblings } = {}) {
   if (mode === 'fix') {
     // VERBATIM from the original phases.mjs fix-mode body.
     return (
@@ -540,7 +566,8 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
       `nothing outside its scope. The plan is reference/context only; you do NOT need to ` +
       `read the whole plan.\n\n` +
       `TASK (authoritative, self-contained): ${taskPath}\n` +
-      `Plan (reference only): ${planPath}\n`
+      `Plan (reference only): ${planPath}\n` +
+      siblingsBlock(siblings)
     );
   }
   // VERBATIM from the original phases.mjs implement-mode body.
@@ -554,14 +581,14 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
 /**
  * Implementer — implement or fix. Returns { summary }.
  * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, reviewPath?: string, taskPath?: string, mode: "implement"|"fix" }} opts
+ * @param {{ planPath: string, reviewPath?: string, taskPath?: string, siblings?: Array<{id:string,title?:string,file?:string}>, mode: "implement"|"fix" }} opts
  */
 export async function runImplementer(ctx, opts) {
-  const { planPath, reviewPath, taskPath, mode = 'implement' } = opts || {};
+  const { planPath, reviewPath, taskPath, siblings, mode = 'implement' } = opts || {};
   const role = 'implementer';
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.implementer, role, ctx.workspace);
 
-  const body = implementerBody({ mode, planPath, reviewPath, taskPath });
+  const body = implementerBody({ mode, planPath, reviewPath, taskPath, siblings });
 
   const prompt =
     taskHeader(ctx, mode === 'fix' ? 'Fix the implementation' : 'Implement the plan') +

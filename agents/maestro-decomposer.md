@@ -46,6 +46,17 @@ context (the relevant plan excerpt, the EXACT files it may touch, the acceptance
 check, and the TDD steps) for an implementer to do the task WITHOUT reading the full
 plan and WITHOUT touching any file outside its listed set.
 
+Every task file MUST also carry a **scoped verify command** — a single command that
+exercises ONLY this slice's tests (e.g. `npx vitest run test/foo.test.mjs`,
+`node --test test/foo.test.mjs`). Never "run the full suite": implementers run in
+parallel in one working tree, and siblings' in-progress red tests make a full-suite
+run meaningless mid-phase.
+
+Make the FINAL phase a single **integration-verify** task: alone in its phase (no
+siblings), it runs the project's full test suite and fixes only trivial integration
+breakage (a missed import, a stale snapshot) — no new features. This is the one
+place the full suite runs.
+
 Write each task file to the tasks directory the prompt gives you, named
 `p<phaseOrdinal>-t<taskIndex+1>-<kebab-title>.md`.
 

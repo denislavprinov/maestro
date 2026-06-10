@@ -83,6 +83,7 @@ async function producer(ctx) {
         planPath: ctx.planPath,
         reviewPath: ctx.reviewPath,
         taskPath: ctx.node?.taskPath,
+        siblings: ctx.node?.siblings,
         mode: ctx.mode || 'implement',
       });
       return { status: 'ok', summary };

@@ -87,6 +87,34 @@ const FANOUT_ELIGIBLE = new Set([
 ]);
 
 /**
+ * Build the synthetic implementer node for one decomposed task. Pure (exported for
+ * tests). `siblings` carries the OTHER tasks of the same phase so the implementer
+ * prompt can warn about the shared working tree (see implementerBody).
+ * @param {{model?:string,effort?:string,tools?:string[]}} implNode the original implementer node
+ * @param {{id:string,nodeId:string,title?:string,file?:string}} task
+ * @param {Array<{id:string,title?:string,file?:string}>} phaseTasks all tasks of the task's phase
+ * @param {string} pipelineDir
+ */
+export function decomposedTaskNode(implNode, task, phaseTasks, pipelineDir) {
+  return {
+    nodeId: task.nodeId,
+    key: 'implementer',
+    uiPhase: 'implement',
+    runnerType: 'producer',
+    decomposedTask: true,
+    model: implNode.model,
+    effort: implNode.effort,
+    tools: implNode.tools,
+    taskPath: join(pipelineDir, task.file || ''),
+    siblings: (Array.isArray(phaseTasks) ? phaseTasks : [])
+      .filter((t) => t && t !== task)
+      .map((t) => ({ id: t.id, title: t.title, file: t.file })),
+    produces: ['code'],
+    consumes: ['plan'],
+  };
+}
+
+/**
  * Create an orchestrator instance.
  *
  * @param {object} opts
@@ -1318,19 +1346,7 @@ class Orchestrator extends EventEmitter {
 
       const phaseAbort = new AbortController();
       const settled = await Promise.allSettled(tasks.map((task) => {
-        const taskNode = {
-          nodeId: task.nodeId,
-          key: 'implementer',
-          uiPhase: 'implement',
-          runnerType: 'producer',
-          decomposedTask: true,
-          model: implNode.model,
-          effort: implNode.effort,
-          tools: implNode.tools,
-          taskPath: join(this.pipeline.dir, task.file || ''),
-          produces: ['code'],
-          consumes: ['plan'],
-        };
+        const taskNode = decomposedTaskNode(implNode, task, tasks, this.pipeline.dir);
         return this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
       }));
 

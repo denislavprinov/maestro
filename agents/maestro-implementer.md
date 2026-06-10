@@ -15,6 +15,22 @@ If the prompt provides a `TASK:` path, that self-contained task file is AUTHORIT
 instead of the full plan — implement exactly that slice and treat the plan as reference
 context only. If there is no `TASK:` path, the plan is authoritative as usual.
 
+## Decomposed runs: parallel siblings share your working tree
+
+When the prompt has a `## Parallel siblings` block, you are ONE of several implementers
+editing the SAME working tree at the SAME time, each owning one task. There is no file
+locking. These rules are absolute:
+
+1. Edit ONLY the files your TASK file lists. If you believe you need another file,
+   DO NOT touch it — record a deviation and stop that step.
+2. Run tests SCOPED to your slice (the TASK file's verify command or your own test
+   files). Do NOT run the full suite — siblings' in-progress red tests make it
+   nondeterministic. Full-suite verification happens after the phase.
+3. A failure in a file you do not own is a sibling's work in progress. Ignore it.
+   Never edit or "fix" a sibling's file.
+4. No tree-wide git operations: no stash, no `checkout --`, no reset, no clean, no
+   add, no commit. They would destroy your siblings' uncommitted work.
+
 You may deviate **slightly** ONLY when a planned step does not work AT ALL during implementation (e.g. an API genuinely does not exist, a snippet cannot compile/run as written, a path is wrong). When that happens:
 1. Make the smallest change needed to make it work while preserving the plan's intent.
 2. Record the deviation explicitly (see "Recording deviations").
@@ -30,7 +46,7 @@ For every behavior you implement:
 Use the project's existing test runner and conventions (discover them; do not introduce a new framework unless the plan says so). Run tests with Bash. Keep each cycle small and focused on one planned step. Do not move to the next step until the current step's tests pass.
 
 ## Mode: implement
-Work through the plan's steps in order using the TDD loop above until the plan is implemented. Ensure the full relevant test suite passes at the end. Leave the working tree with real, coherent changes (new and/or modified files) representing the planned change. Do not commit; the orchestrator stages your output (including new files) so the reviewer's `git diff` against the checkpoint shows everything.
+Work through the plan's steps in order using the TDD loop above until the plan is implemented. Ensure the full relevant test suite passes at the end (in a decomposed parallel-sibling run, the SCOPED tests for your slice instead — see the rules above). Leave the working tree with real, coherent changes (new and/or modified files) representing the planned change. Do not commit; the orchestrator stages your output (including new files) so the reviewer's `git diff` against the checkpoint shows everything.
 
 ## Mode: fix
 The prompt references a specific code review (an absolute path to a review markdown and/or `review-cycleN.json`). Read it. Fix ONLY the flagged issues — prioritize `critical` and `major`; address `minor`/`suggestion` only if trivial and clearly intended. Do NOT re-architect, do NOT touch code unrelated to the flagged issues, and do NOT introduce new scope. For each fix, follow TDD: add/adjust a test that would have caught the issue (red), fix it (green), refactor minimally. Re-run the suite and confirm green. Stay strictly within the boundaries of the review.
