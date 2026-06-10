@@ -281,10 +281,11 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
       resolvedGroup.push({
         nodeId: node.id,
         key,
-        uiPhase: UI_PHASE[key] || key,   // CONV-4: live-UI stepper bucket
+        uiPhase: UI_PHASE[key] || meta.uiPhase || key,   // CONV-4 map > meta.uiPhase (v2) > key
         runnerType: meta.runnerType || 'producer',
         agentFile: meta.agentFile ?? null,
         agentPrompt: prompt,
+        promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
         model: firstDefined(sel.model, legacy.model),     // undefined unless configured (folded later)
         effort: firstDefined(sel.effort, legacy.effort),  // undefined unless configured
         fanOut: !!firstDefined(sel.fanOut, legacy.fanOut, meta.fanOut, false), // node > role > sidecar > false

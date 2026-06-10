@@ -46,7 +46,7 @@ import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
-import { loadAgentRegistry } from './agent-registry.mjs';
+import { loadAgentRegistry, collectChannelDefs } from './agent-registry.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
@@ -319,6 +319,7 @@ class Orchestrator extends EventEmitter {
       // after createPipeline below.
       const registry = loadAgentRegistry(this.agentsDir);
       this.registry = registry; // ▲ v3: expose for run-start workflow validation (D4)
+      this.channelDefs = collectChannelDefs(registry); // custom-channel kind/filename for allocate()
       // [C5/M4] On a workspace run, resolveWorkflow substitutes the review node's key
       // reviewer -> workspaceReviewer (the fan-out synthesizer). Single-project runs
       // pass isWorkspace:false, so the resolved plan is byte-identical to today.
@@ -605,6 +606,7 @@ class Orchestrator extends EventEmitter {
 
       // ── prompts/registry (cheap, local) ──
       this.registry = loadAgentRegistry(this.agentsDir);
+      this.channelDefs = collectChannelDefs(this.registry); // custom-channel kind/filename for allocate()
       this.agentPrompts = await this._loadAgentPrompts();
 
       this.state.resumePoint = null; // consumed; cleared on the next persist
@@ -1484,6 +1486,9 @@ class Orchestrator extends EventEmitter {
       // allocate() forwards workspaceKey into planPath/reviewPath so a workspace
       // run's unified plan/review route to the workspace store; null otherwise.
       workspaceKey: this.workspaceKey,
+      // Registry-collected custom channel definitions (kind/filename) so allocate()'s
+      // generic default branch can mint <pipelineDir>/<filename>[-cycleN].<ext>.
+      channelDefs: this.channelDefs || {},
     };
     const inputs = bindInputs(consumes, optional, snapshot);
     const outputs = {};
