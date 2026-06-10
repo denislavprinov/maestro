@@ -427,6 +427,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .badge.running{background:var(--peach-bg);color:var(--peach-ink);}
 .badge.red,.badge.error,.badge.stopped{background:var(--red-bg);color:var(--red-ink);}
 .badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
+/* `.badge`'s display overrides the UA [hidden] rule at equal specificity, so the
+   attribute alone won't hide a badge — restore it for attribute-hidden badges. */
+.badge[hidden]{display:none;}
 
 /* ---------- History cards (expandable) ---------- */
 .hist-card{padding:18px 22px;}
