@@ -4016,6 +4016,12 @@ if (el.agwOwnToggle) el.agwOwnToggle.addEventListener('click', () => {
   if (el.agwOwnPane) el.agwOwnPane.classList.toggle('hidden', !state.agentWizard.ownMd);
   syncAgwStartEnabled();
 });
+// role=switch needs Space/Enter (mirrors the mock + autoscroll switches).
+if (el.agwOwnToggle) el.agwOwnToggle.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  e.preventDefault();
+  el.agwOwnToggle.click();
+});
 
 if (typeof window !== 'undefined') {
   window.__agw = { enterAgentWizard, showAgentWizardStep, startAgentGenerate, onAgentGenEvent, saveGeneratedAgent, abortAgentGen, resetAgentWizard };
