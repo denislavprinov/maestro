@@ -1238,7 +1238,9 @@ function composerNodeEl(a) {
   d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
   d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
   d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
-  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { composerAddFeedback(composer.linkFrom, a.id); composerExitLink(); } });
+  // Exit link mode BEFORE adding the edge: composerExitLink hides the banner and
+  // would swallow the toast composerAddFeedback raises for a block reason or warn.
+  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { const from = composer.linkFrom; composerExitLink(); composerAddFeedback(from, a.id); } });
   return d;
 }
 
