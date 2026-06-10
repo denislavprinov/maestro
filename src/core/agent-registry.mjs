@@ -193,8 +193,8 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
  *
  * §6.6/C9: `scope:'workspace-only'` agents are EXCLUDED — they are not part of the
  * single-project UI stepper / per-step config keyspace that AGENT_STEPS drives, so
- * this still returns EXACTLY the 9 project-scope steps (the byte-identity invariant;
- * without the exclusion the two workspace sidecars would push it to 11).
+ * this returns the 9 built-in project-scope steps plus any user-layer project
+ * agents (without the exclusion the two workspace sidecars would add 2 more).
  * @param {Record<string, object>} registry
  * @returns {Array<{key:string,label:string,fanOut:boolean}>}
  */
