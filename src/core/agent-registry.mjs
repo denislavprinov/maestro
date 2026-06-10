@@ -11,6 +11,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
+import { maestroHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 
 /** Default location of the agent metadata sidecars, relative to this module. */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
@@ -118,30 +119,68 @@ function normalizeMeta(raw) {
 }
 
 /**
- * Scan `agentsDir` for `*.meta.json` and build the registry.
- * @param {string} [agentsDir]
- * @returns {Record<string, object>} agent key -> AgentMeta, sorted by `.order`
+ * Directory of USER agents: <maestroHome()>/agents (~/.maestro/agents). Resolved
+ * fresh on every call (mirrors maestroHome's read-fresh contract). Returns null
+ * when the home cannot be resolved (e.g. under the node:test runner with no
+ * MAESTRO_HOME — projects.mjs throws there to protect the real store), so module
+ * import and registry loads never throw.
  */
-export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR) {
+export function userAgentsDir() {
+  try { return join(maestroHome(), 'agents'); } catch { return null; }
+}
+
+/** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath fields. */
+function scanLayer(dir, origin) {
   let files;
   try {
-    files = readdirSync(agentsDir);
+    files = readdirSync(dir);
   } catch {
-    return {};
+    return []; // missing layer dir => empty layer (fails safe)
   }
   const metas = [];
   for (const f of files) {
     if (!f.endsWith('.meta.json')) continue;
     let parsed;
     try {
-      parsed = JSON.parse(readFileSync(join(agentsDir, f), 'utf8'));
+      parsed = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     } catch {
       continue; // skip unreadable / malformed sidecars
     }
     const meta = normalizeMeta(parsed);
-    if (meta) metas.push(meta);
+    if (!meta) continue;
+    meta.origin = origin;                                              // computed, never stored
+    meta.agentPath = meta.agentFile ? join(dir, meta.agentFile) : null; // layer-correct abs path
+    metas.push(meta);
   }
-  metas.sort((a, b) => a.order - b.order);
+  return metas;
+}
+
+/**
+ * Scan the built-in layer (`agentsDir`) AND the user layer (~/.maestro/agents) and
+ * build the merged registry. Built-ins are IMMUTABLE: a user sidecar whose key
+ * collides with a built-in is skipped with a warning. Re-scans both layers on
+ * every call (no module-level cache), so the registry is always reloadable.
+ * @param {string} [agentsDir]   built-in layer (repo agents/)
+ * @param {{userAgentsDir?: string|null}} [opts]  user layer override; null disables
+ * @returns {Record<string, object>} agent key -> AgentMeta, sorted by `.order`
+ */
+export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
+  const builtins = scanLayer(agentsDir, 'builtin');
+  const builtinKeys = new Set(builtins.map((m) => m.key));
+  const userDir = opts.userAgentsDir === undefined ? userAgentsDir() : opts.userAgentsDir;
+  const users = [];
+  if (userDir) {
+    for (const m of scanLayer(userDir, 'user')) {
+      if (builtinKeys.has(m.key)) {
+        console.warn(
+          `[agent-registry] user agent "${m.key}" shadows a built-in and was skipped (built-ins are immutable)`,
+        );
+        continue;
+      }
+      users.push(m);
+    }
+  }
+  const metas = [...builtins, ...users].sort((a, b) => a.order - b.order); // stable sort
   const registry = {};
   for (const m of metas) registry[m.key] = m;
   return registry;
