@@ -1158,8 +1158,26 @@ if (typeof window !== 'undefined') {
   window.__composerAddFeedback = composerAddFeedback;
 }
 
+// Set by agent CRUD (create/edit/duplicate/delete); the palette is refetched on
+// the next composer entry so in-session agent mutations show without a reload.
+let _composerPaletteDirty = false;
+
+/** Refetch the registry and rebuild the composer palette in place. */
+async function refreshComposerPalette() {
+  _composerPaletteDirty = false;
+  const agentsRes = await fetchAgents();
+  const pal = mergePalette(agentsRes);
+  composer.agents = {};
+  pal.forEach((a) => { composer.agents[a.key] = a; });
+  composerBuildPalette(pal);
+}
+
 async function initComposer() {
-  if (_composerReady) { composerDrawWires(); return; }
+  if (_composerReady) {
+    if (_composerPaletteDirty) await refreshComposerPalette();
+    composerDrawWires();
+    return;
+  }
   _composerReady = true;
   composer.els = {
     flow: document.getElementById('composer-flow'),
@@ -1187,11 +1205,7 @@ async function initComposer() {
   if (window.ResizeObserver) new window.ResizeObserver(() => composerDrawWires()).observe(composer.els.flow);
 
   // palette from the registry (or embedded fallback)
-  const agentsRes = await fetchAgents();
-  const pal = mergePalette(agentsRes);
-  composer.agents = {};
-  pal.forEach((a) => { composer.agents[a.key] = a; });
-  composerBuildPalette(pal);
+  await refreshComposerPalette();
 
   // initial canvas = the saved default workflow (4-step)
   await composerReset();
@@ -3636,6 +3650,13 @@ if (typeof window !== 'undefined') {
 
 // ---- Agents management view -------------------------------------------------
 
+// After any agent mutation: drop the new-pipeline config registry memo
+// (getAgentsApi) and mark the composer palette for a refetch on next entry.
+function invalidateAgentCaches() {
+  state.agents = {};
+  _composerPaletteDirty = true;
+}
+
 async function loadAgentsList() {
   try {
     const res = await fetch('/api/agents?all=1');
@@ -3734,7 +3755,7 @@ async function deleteAgentCard(card, a) {
     const data = await safeJson(res);
     if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     state.agentsList = state.agentsList.filter((x) => x.key !== a.key);
-    state.agents = {}; // invalidate the composer palette cache (getAgentsApi memoizes)
+    invalidateAgentCaches();
     setAgentsMsg('Agent deleted.', 'ok');
     renderAgentsList();
   } catch (err) { setAgentsMsg(err.message, 'err'); }
@@ -3753,7 +3774,7 @@ async function duplicateAgentCard(a) {
     });
     const data = await safeJson(res);
     if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    state.agents = {}; // invalidate the composer palette cache (getAgentsApi memoizes)
+    invalidateAgentCaches();
     setAgentsMsg(`Duplicated as "${data.meta.key}".`, 'ok');
     await loadAgentsView();
   } catch (err) { setAgentsMsg(err.message, 'err'); }
@@ -3850,7 +3871,7 @@ async function saveAgentEdit(card, a, pane) {
     const data = await safeJson(res);
     if (!res.ok) { msg.textContent = data.error || `HTTP ${res.status}`; msg.className = 'agent-edit-msg form-msg err'; return; }
     pane.hidden = true;
-    state.agents = {}; // invalidate the composer palette cache (getAgentsApi memoizes)
+    invalidateAgentCaches();
     setAgentsMsg('Agent saved.', 'ok');
     await loadAgentsView();
   } catch (err) { msg.textContent = err.message; msg.className = 'agent-edit-msg form-msg err'; }
@@ -3991,6 +4012,7 @@ async function saveGeneratedAgent() {
       if (el.agwMsg) { el.agwMsg.textContent = data.error || `HTTP ${res.status}`; el.agwMsg.className = 'form-msg err'; }
       return;
     }
+    invalidateAgentCaches();
     resetAgentWizard();
     setAgentsMsg(`Agent "${data.meta.key}" created.`, 'ok');
     location.hash = 'agents';
