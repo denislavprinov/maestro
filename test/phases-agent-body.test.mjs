@@ -6,11 +6,14 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { resolveAgentBody, buildSystemPrompt } from '../src/core/phases.mjs';
 import { writeWorkflow, resolveWorkflow } from '../src/core/workflows.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { maestroHome } from '../src/core/projects.mjs';
 
 useTempHome(after);
 
@@ -39,4 +42,18 @@ test('resolveWorkflow stamps a NON-EMPTY agentPrompt on a decomposer node (end-t
   const plan = await resolveWorkflow('/tmp/whatever-proj', wf.id, loadAgentRegistry());
   const node = plan.steps[0][0];
   assert.ok(node.agentPrompt.length > 100, 'maestro-decomposer.md body loaded onto the node');
+});
+
+test('a USER-layer agent .md (only in ~/.maestro/agents) reaches node.agentPrompt via agentPath', async () => {
+  const dir = join(maestroHome(), 'agents');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'specWriter.md'), 'USER LAYER BODY: you write specs.\n');
+  writeFileSync(join(dir, 'specWriter.meta.json'), JSON.stringify({
+    key: 'specWriter', displayName: 'Spec Writer', description: 'd', color: 'green',
+    icon: '<p/>', agentFile: 'specWriter.md', runnerType: 'producer', loopSource: false,
+    produces: ['plan'], consumes: ['userPrompt'], connectsTo: '*', order: 42,
+  }));
+  const wf = await writeWorkflow({ name: 'UL', steps: [[{ id: 's0', key: 'specWriter' }]], feedbacks: [] });
+  const plan = await resolveWorkflow('/tmp/whatever-proj', wf.id, loadAgentRegistry());
+  assert.equal(plan.steps[0][0].agentPrompt, 'USER LAYER BODY: you write specs.\n');
 });
