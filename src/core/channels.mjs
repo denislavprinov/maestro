@@ -53,7 +53,10 @@ export function allocate(channel, ctx) {
         planReviewer: 'plan-review',
         workspaceReviewer: 'ws-review',
       };
-      const base = BESPOKE_BASE[k] || `${k}-review`;
+      let base = BESPOKE_BASE[k] || `${k}-review`;
+      // A custom key like "impl" would mint impl-review-* and clobber the built-in
+      // reviewer's files AND its DB verdict (reviewKind upsert); divert it.
+      if (!BESPOKE_BASE[k] && Object.values(BESPOKE_BASE).includes(base)) base = `${k}-agent-review`;
       // ▲ C2: the refiner emits ONLY a json verdict (its md is null => private to its
       // self-loop). Every other verifier carries a review md so publish() folds it
       // onto the shared `review` channel its loop target consumes. workspaceKey routes

@@ -140,11 +140,19 @@ export function collectChannelDefs(registry) {
   return defs;
 }
 
+/** Agent keys become filename stems (review basenames, config keys); keep them
+ *  identifier-shaped so a key can never escape a directory. */
+const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
 /** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable. */
 function normalizeMeta(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
+  if (!AGENT_KEY_RE.test(key)) {
+    console.warn(`[agent-registry] sidecar key "${key}" is not a valid agent key; skipped`);
+    return null;
+  }
   const order = Number(raw.order);
   if (!Number.isFinite(order)) return null;
   const color = COLORS.has(raw.color) ? raw.color : 'amber';
