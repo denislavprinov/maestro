@@ -34,6 +34,8 @@ const state = {
     step: 1, name: '', selectedPaths: [], scanId: '', description: '',
     graphifyUsed: null, abort: null, editingId: '',
   },
+  // --- Agent creation wizard (ephemeral; reset on wizard close) ---
+  agentWizard: { step: 1, genId: '', abort: null, draft: null, ownMd: false },
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -144,6 +146,24 @@ const el = {
   agentsList: $('#agents-list'),
   agentsMsg: $('#agents-msg'),
   agentCreateBtn: $('#agent-create-btn'),
+
+  // Agent creation wizard
+  agwName: $('#agw-name'),
+  agwPurpose: $('#agw-purpose'),
+  agwDetails: $('#agw-details'),
+  agwBefore: $('#agw-before'),
+  agwAfter: $('#agw-after'),
+  agwOwnToggle: $('#agw-own-md-toggle'),
+  agwOwnPane: $('#agw-own-md-pane'),
+  agwOwnMd: $('#agw-own-md'),
+  agwStart: $('#agw-start'),
+  agwStatus: $('#agw-status'),
+  agwAbort: $('#agw-abort'),
+  agwStep1Hint: $('#agw-step1-hint'),
+  agwMsg: $('#agw-msg'),
+  agwSave: $('#agw-save'),
+  agwRegen: $('#agw-regen'),
+  agwClose: $('#agw-close'),
 };
 
 // ---------------------------------------------------------------------------
@@ -226,6 +246,13 @@ function handleServerMessage(msg) {
   // socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'scan-progress' || msg.type === 'scan-done' || msg.type === 'scan-error') {
     onScanEvent(msg);
+    return;
+  }
+
+  // Agent-generation events are tagged by genId (not runId) and ride the same
+  // broadcast socket. Handle them BEFORE the !msg.runId early-return below.
+  if (msg.type === 'agentgen-progress' || msg.type === 'agentgen-done' || msg.type === 'agentgen-error') {
+    onAgentGenEvent(msg);
     return;
   }
 
@@ -3841,6 +3868,159 @@ if (typeof window !== 'undefined') {
   window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard, agentFormFill, agentFormRead, openAgentEdit };
 }
 
+// ---- Agent creation wizard ---------------------------------------------------
+
+function resetAgentWizard() {
+  state.agentWizard = { step: 1, genId: '', abort: null, draft: null, ownMd: false };
+}
+
+async function enterAgentWizard() {
+  if (!state.agentWizard.genId && !state.agentWizard.abort) resetAgentWizard();
+  if (!state.agentsList.length) await loadAgentsList();
+  const keys = state.agentsList.filter((a) => a.scope !== 'workspace-only').map((a) => a.key);
+  buildChipChecks(el.agwBefore, keys, []);
+  buildChipChecks(el.agwAfter, keys, []);
+  showAgentWizardStep(state.agentWizard.step || 1);
+  syncAgwStartEnabled();
+}
+
+function showAgentWizardStep(step) {
+  state.agentWizard.step = step;
+  for (let i = 1; i <= 3; i++) {
+    const pane = document.getElementById(`agw-step-${i}`);
+    if (pane) pane.classList.toggle('hidden', i !== step);
+  }
+}
+
+function syncAgwStartEnabled() {
+  const name = el.agwName ? el.agwName.value.trim() : '';
+  const purpose = el.agwPurpose ? el.agwPurpose.value.trim() : '';
+  const own = state.agentWizard.ownMd;
+  const md = el.agwOwnMd ? el.agwOwnMd.value.trim() : '';
+  if (el.agwStart) el.agwStart.disabled = !(name && (own ? md : purpose));
+}
+
+async function startAgentGenerate() {
+  state.agentWizard.genId = ''; // gate stale events before the POST resolves
+  if (el.agwStatus) el.agwStatus.textContent = 'Starting…';
+  if (el.agwMsg) el.agwMsg.textContent = '';
+  showAgentWizardStep(2);
+  const abort = new AbortController();
+  state.agentWizard.abort = abort;
+  const body = {
+    name: el.agwName.value.trim(),
+    purpose: el.agwPurpose.value.trim(),
+    details: el.agwDetails.value,
+    expectedBefore: chipValues(el.agwBefore),
+    expectedAfter: chipValues(el.agwAfter),
+  };
+  if (state.agentWizard.ownMd && el.agwOwnMd.value.trim()) body.userMarkdown = el.agwOwnMd.value;
+  try {
+    const res = await fetch('/api/agents/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: abort.signal,
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !data.genId) {
+      state.agentWizard.abort = null;
+      showAgentWizardStep(1);
+      if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${data.error || res.status}`;
+      return;
+    }
+    state.agentWizard.genId = data.genId;
+    const ws = state.ws;
+    if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'subscribe', genId: data.genId })); } catch { /* ignore */ } }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    state.agentWizard.abort = null;
+    showAgentWizardStep(1);
+    if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${err.message}`;
+  }
+}
+
+function onAgentGenEvent(msg) {
+  if (!msg || !msg.genId || msg.genId !== state.agentWizard.genId) return; // stale/aborted gen
+  if (msg.type === 'agentgen-progress') {
+    if (el.agwStatus) el.agwStatus.textContent = msg.message || '';
+    return;
+  }
+  if (msg.type === 'agentgen-done') {
+    state.agentWizard.abort = null;
+    state.agentWizard.draft = msg.draft || null;
+    const root = document.getElementById('agw-step-3');
+    if (root && msg.draft) agentFormFill(root, msg.draft.meta || {}, msg.draft.markdown || '');
+    const anyCb = root && root.querySelector('.agent-f-connect-any');
+    if (anyCb) anyCb.onchange = () => { root.querySelector('.agent-f-connects').hidden = anyCb.checked; };
+    showAgentWizardStep(3);
+    return;
+  }
+  if (msg.type === 'agentgen-error') {
+    state.agentWizard.abort = null;
+    state.agentWizard.genId = '';
+    showAgentWizardStep(1);
+    if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${msg.message || 'failed'}`;
+  }
+}
+
+async function saveGeneratedAgent() {
+  const root = document.getElementById('agw-step-3');
+  const { meta, markdown } = agentFormRead(root);
+  if (el.agwMsg) { el.agwMsg.textContent = ''; el.agwMsg.className = 'form-msg'; }
+  if (el.agwSave) el.agwSave.disabled = true;
+  try {
+    const res = await fetch('/api/agents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meta, markdown }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { // 400/409 keep the user on Step 3 with the error verbatim
+      if (el.agwMsg) { el.agwMsg.textContent = data.error || `HTTP ${res.status}`; el.agwMsg.className = 'form-msg err'; }
+      return;
+    }
+    resetAgentWizard();
+    setAgentsMsg(`Agent "${data.meta.key}" created.`, 'ok');
+    location.hash = 'agents';
+  } catch (err) {
+    if (el.agwMsg) { el.agwMsg.textContent = err.message; el.agwMsg.className = 'form-msg err'; }
+  } finally {
+    if (el.agwSave) el.agwSave.disabled = false;
+  }
+}
+
+function abortAgentGen() {
+  const genId = state.agentWizard.genId;
+  if (state.agentWizard.abort) { try { state.agentWizard.abort.abort(); } catch { /* ignore */ } }
+  if (genId) {
+    fetch('/api/agents/generate/stop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ genId }),
+    }).catch(() => {});
+    const ws = state.ws;
+    if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'unsubscribe', genId })); } catch { /* ignore */ } }
+  }
+  state.agentWizard.abort = null;
+  state.agentWizard.genId = '';
+}
+
+if (el.agwStart) el.agwStart.addEventListener('click', () => startAgentGenerate());
+if (el.agwAbort) el.agwAbort.addEventListener('click', () => { abortAgentGen(); showAgentWizardStep(1); });
+if (el.agwRegen) el.agwRegen.addEventListener('click', () => startAgentGenerate());
+if (el.agwSave) el.agwSave.addEventListener('click', () => saveGeneratedAgent());
+if (el.agwClose) el.agwClose.addEventListener('click', () => { location.hash = 'agents'; });
+for (const input of [el.agwName, el.agwPurpose, el.agwOwnMd]) {
+  if (input) input.addEventListener('input', syncAgwStartEnabled);
+}
+if (el.agwOwnToggle) el.agwOwnToggle.addEventListener('click', () => {
+  state.agentWizard.ownMd = !state.agentWizard.ownMd;
+  el.agwOwnToggle.classList.toggle('on', state.agentWizard.ownMd);
+  el.agwOwnToggle.setAttribute('aria-checked', String(state.agentWizard.ownMd));
+  if (el.agwOwnPane) el.agwOwnPane.classList.toggle('hidden', !state.agentWizard.ownMd);
+  syncAgwStartEnabled();
+});
+
+if (typeof window !== 'undefined') {
+  window.__agw = { enterAgentWizard, showAgentWizardStep, startAgentGenerate, onAgentGenEvent, saveGeneratedAgent, abortAgentGen, resetAgentWizard };
+}
+
 // ---------------------------------------------------------------------------
 // Start a run
 // ---------------------------------------------------------------------------
@@ -5430,6 +5610,11 @@ function showView(name) {
     if (state.wizard.scanId || state.wizard.abort) abortWizardScan();
     resetWizard();
   }
+  // Same guard for the agent wizard: stop a live generation on the way out.
+  if (currentShownView === 'agent-create' && name !== 'agent-create') {
+    if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
+    resetAgentWizard();
+  }
   currentShownView = name;
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -5442,6 +5627,7 @@ function showView(name) {
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
+  if (name === 'agent-create') enterAgentWizard();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
 }
