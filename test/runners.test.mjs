@@ -172,8 +172,10 @@ test('producer(manualTestsChecklist) writes a checklist and returns ok', async (
   assert.match(body, /Manual Test/i);
 });
 
-test('unknown producer key throws a clear error', async () => {
+test('unknown producer key no longer throws — it runs the generic producer', async () => {
   const dir = await makeTmpDir();
   const node = { nodeId: 'x', key: 'nope', runnerType: 'producer', loopSource: false };
-  await assert.rejects(() => runners.producer(ctxFor(dir, node)), /unknown producer agent "nope"/);
+  const res = await runners.producer(ctxFor(dir, node, { inputs: {}, outputs: {} }));
+  assert.equal(res.status, 'ok');
+  assert.ok(typeof res.summary === 'string' && res.summary.length > 0);
 });

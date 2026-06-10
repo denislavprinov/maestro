@@ -491,6 +491,14 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
     case 'manual-web-ui-testing':
       text = await mockManualWebUiTesting(m, cycle, onEvent);
       break;
+    case 'generic-producer':
+      text = await mockGenericProducer(m, onEvent);
+      break;
+    case 'generic-verifier':
+      // Reuses the reviewer mock: writes MOCK_OUT md + MOCK_JSON verdict with the
+      // standard cycle-decreasing severity, so generic loops terminate offline.
+      text = await mockReviewer(m, cycle, onEvent);
+      break;
     default:
       await emitLog(onEvent, `[mock] no side effects for unknown role`);
       break;
@@ -559,6 +567,22 @@ async function mockClarify(m, cycle, onEvent) {
   await writeFile(out, JSON.stringify(payload, null, 2) + '\n', 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return JSON.stringify(payload);
+}
+
+/** Generic producer mock: deterministic content to MOCK_OUT (json if the path
+ *  ends .json, else markdown). Lets user-defined agents run offline with no
+ *  bespoke mock branch. */
+async function mockGenericProducer(m, onEvent) {
+  const out = m.MOCK_OUT;
+  await emitLog(onEvent, '[mock] generic producer writing output artifact');
+  if (!out) return '[mock] generic-producer: no MOCK_OUT given';
+  const body = out.endsWith('.json')
+    ? JSON.stringify({ mock: true, note: 'generic artifact' }, null, 2) + '\n'
+    : '# Mock artifact\n\nDeterministic generic producer output.\n';
+  await ensureDir(out);
+  await writeFile(out, body, 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  return `[mock] generic artifact written to ${out}`;
 }
 
 async function mockPlannerPlan(m, onEvent) {
