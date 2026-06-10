@@ -145,7 +145,7 @@ export function collectChannelDefs(registry) {
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 /** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable. */
-function normalizeMeta(raw) {
+export function normalizeMeta(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
