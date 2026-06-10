@@ -120,6 +120,7 @@ export function mergePalette(agentsResponse) {
       connectsTo: a.connectsTo === undefined ? '*' : a.connectsTo,
       produces: Array.isArray(a.produces) ? a.produces : [],
       consumes: Array.isArray(a.consumes) ? a.consumes : [],
+      optionalConsumes: Array.isArray(a.optionalConsumes) ? a.optionalConsumes : [],
     }))
     .sort((x, y) => x.order - y.order);
 }
@@ -147,14 +148,46 @@ export function defaultTopologyFromTemplate(tpl, mk) {
   return { steps, feedbacks };
 }
 
-// canConnect(fromKey, toKey, agents) -> { ok, reason }. Governance only: an agent
-// may connect to another iff its connectsTo is '*' or lists the target key. An
-// unknown source agent is permissive ('*'). agents = { [key]: {connectsTo} }.
+// Channels a pipeline gets without any producing NODE adjacent on the canvas: the
+// user prompt, the shared worktree, the frozen workspace snapshot, and the clarify
+// pre-step. Module-local on purpose — this is NOT channels.mjs PRESEEDED_CHANNELS
+// (that one lists the validator's value-bearing bus seeds and includes
+// plan/checklist; here plan/checklist stay checkable so a producer-less consumer
+// of real content still warns, while this no-build browser module keeps zero
+// imports from src/core).
+const SOFT_PRESEEDED = ['userPrompt', 'code', 'workspace', 'clarify'];
+
+// canConnect(fromKey, toKey, agents) -> { ok, reason, warn? }.
+// Governance (connectsTo) is the HARD gate, exactly as before — and an explicit
+// allowlist that admits the target is treated as AUTHOR-CURATED: the soft channel
+// check is skipped (e.g. decomposer -> implementer, where the plan flows through
+// from upstream via the bus). Only wildcard links get the soft pairwise check:
+// when the source produces nothing the target consumes AND the target's required
+// inputs are not all pre-seeded, we return ok:true with a `warn` string the UI
+// surfaces as a toast.
 export function canConnect(fromKey, toKey, agents) {
-  const ct = agents && agents[fromKey] ? agents[fromKey].connectsTo : '*';
-  if (ct === '*' || ct === undefined || !Array.isArray(ct)) return { ok: true, reason: '' };
-  if (ct.includes(toKey)) return { ok: true, reason: '' };
-  const from = (agents[fromKey] && agents[fromKey].displayName) || fromKey;
-  const to = (agents[toKey] && agents[toKey].displayName) || toKey;
-  return { ok: false, reason: `${from} can’t connect to ${to}` };
+  const from = agents && agents[fromKey];
+  const ct = from ? from.connectsTo : '*';
+  if (Array.isArray(ct)) {
+    if (!ct.includes(toKey)) {
+      const fn = (from && from.displayName) || fromKey;
+      const tn = (agents[toKey] && agents[toKey].displayName) || toKey;
+      return { ok: false, reason: `${fn} can’t connect to ${tn}` };
+    }
+    return { ok: true, reason: '' }; // curated allowlist: author vetted this link
+  }
+  const to = agents && agents[toKey];
+  if (from && to && Array.isArray(from.produces) && Array.isArray(to.consumes)
+      && from.produces.length && to.consumes.length) {
+    const feeds = from.produces.some((c) => to.consumes.includes(c));
+    const required = to.consumes.filter((c) =>
+      !(Array.isArray(to.optionalConsumes) && to.optionalConsumes.includes(c)) &&
+      !SOFT_PRESEEDED.includes(c));
+    if (!feeds && required.length) {
+      const fn = from.displayName || fromKey;
+      const tn = to.displayName || toKey;
+      return { ok: true, reason: '', warn: `${fn} produces [${from.produces.join(', ')}] but ${tn} needs [${required.join(', ')}]` };
+    }
+  }
+  return { ok: true, reason: '' };
 }

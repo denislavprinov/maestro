@@ -1266,6 +1266,9 @@ function composerMakeStrip(index, full) {
     const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
     if (badPrev) { composerToast(canConnect(badPrev.key, key, composer.agents).reason); composer.dragKey = null; return; }
     if (badNext) { composerToast(canConnect(key, badNext.key, composer.agents).reason); composer.dragKey = null; return; }
+    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
+      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
+    if (wp) composerToast(wp);
     composer.steps.splice(index, 0, [composerMk(key)]); composer.dragKey = null; composerRefresh();
   });
   return s;
@@ -1293,6 +1296,9 @@ function composerMakeCol(stepIdx) {
       const v = badPrev ? canConnect(badPrev.key, key, composer.agents) : canConnect(key, badNext.key, composer.agents);
       composerToast(v.reason); composer.dragKey = null; return;
     }
+    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
+      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
+    if (wp) composerToast(wp);
     composer.steps[stepIdx].push(composerMk(key)); composer.dragKey = null; composerRefresh();
   });
   return col;
@@ -1337,6 +1343,7 @@ function composerAddFeedback(from, to) {
   const toKey = flat.find((n) => n.id === to)?.key;
   const verdict = canConnect(fromKey, toKey, composer.agents);
   if (!verdict.ok) { composerToast(verdict.reason); return; }
+  if (verdict.warn) composerToast(verdict.warn);
   if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
   composerRefresh();
 }
