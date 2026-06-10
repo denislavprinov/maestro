@@ -413,8 +413,8 @@ EventEmitter state machine sequencing all phases + loops + gates.
 
 **Exports:**
 
-- `createOrchestrator(opts) -> { run(), answer(id, payload), stop(), getState(), on(event, cb), ... }`
-  (EventEmitter-like; at minimum supports `on`/`emit` plus the four methods above.)
+- `createOrchestrator(opts) -> { run(), resume(), answer(id, payload), stop(), pause(), getState(), on(event, cb), ... }`
+  (EventEmitter-like; at minimum supports `on`/`emit` plus the methods above.)
 
 **`opts` shape:**
 ```
@@ -429,7 +429,8 @@ EventEmitter state machine sequencing all phases + loops + gates.
   claude: { bin?, permissionMode = "acceptEdits", model?, mock? },
   agentsDir,               // dir containing agents/*.md
   pipelineId?,
-  auto?                    // non-interactive: auto-answer clarify+gates
+  auto?,                   // non-interactive: auto-answer clarify+gates
+  resume?                  // readPipelineForResume(id) result; drives resume() (no prompt needed)
 }
 ```
 
@@ -439,6 +440,19 @@ EventEmitter state machine sequencing all phases + loops + gates.
   - clarify payload: `{ answers: [ { id, choice } ] }`
   - gate payload: `{ decision: "continue" | "another" }`
 - `stop() -> void` — aborts via an `AbortController` and marks state `stopped`.
+- `pause() -> boolean` — graceful pause: SIGTERMs in-flight node children via a
+  pause-only `AbortController`, unwinds the dispatch loop at the next safe point,
+  persists a `resume_point` (§5.4) and marks state `paused` (transiently `pausing`
+  while unwinding). Returns `false` unless currently `running`; stop always wins over
+  a pause in flight. Unlike stop, a pause NEVER tears down the per-pipeline
+  worktree(s) — the checkout (with any uncommitted agent work) is what resume re-enters.
+- `resume() -> Promise<...>` — continues a paused pipeline. Requires
+  `opts.resume = readPipelineForResume(id)` (`{ row, resumePoint, steps }`, src/core/
+  artifacts.mjs); rehydrates identity/steps/worktree(s) entirely from the DB row — so it
+  works in a fresh process after a server restart — re-dispatches from the saved
+  position, and re-attaches the interrupted step's Claude session
+  (`claude --resume <session_id>`), falling back to one fresh re-run (with an audit
+  note) when the session is gone. Refuses non-`paused` rows. Resolves like `run()`.
 - `getState() -> object` — current full state snapshot.
 
 **Sequence performed by `run()`:**
@@ -491,9 +505,16 @@ Flags:
 - `--yes` / `--non-interactive` (sets `auto`)
 - `--install <targetDir>` (run `scripts/install`)
 
+Subcommands:
+- `resume <pipelineId> [--mock] [--yes]` — continue a paused pipeline from its
+  `resume_point` (re-attaches Claude sessions). Resolves the project dir from the
+  registry, falling back to the cwd when the project is not onboarded.
+
 Behavior: subscribes to core events; renders phases + streams logs to the terminal; on
 a `question` event uses `readline` to show 3 options + free-text (clarify) or the two
 gate choices + issue list, then calls `answer()`. On `done`, prints the pipeline dir.
+`Ctrl+C` ladder: the 1st gracefully **pauses** (prints the `maestro resume <id>` hint;
+falls back to stop when not pausable), the 2nd stops, the 3rd hard-exits (130).
 
 ### 4.2 `scripts/install.mjs`
 `node scripts/install.mjs <targetDir> [--force]` — copies `agents/*.md` into
@@ -507,6 +528,11 @@ gate choices + issue list, then calls `answer()`. On `done`, prints the pipeline
   - `POST /api/run` `{ projectDir, prompt|promptMarkdown, title, maxRefine, maxReview, mock }` -> starts a core run, returns `{ runId }`.
   - `POST /api/answer` `{ runId, id, payload }`.
   - `POST /api/stop` `{ runId }`.
+  - `POST /api/pause` `{ runId }` -> gracefully pause a live run (lands on status `paused`).
+  - `POST /api/resume` `{ pipelineId }` -> rehydrate a paused pipeline from the DB
+    (works across server restarts) and continue it as a new live run entry with the
+    SAME pipeline id / history row; returns `{ ok, runId, pipelineId }`. Guards: row must
+    be `paused` with a `resume_point`, not already live, worktree still on disk.
   - `GET /api/runs?projectDir` -> history via `listPipelines`.
   - `GET /api/runs/:id?projectDir` -> `readPipeline`.
   - `POST /api/install` `{ projectDir }` -> runs install into `projectDir`.
@@ -629,7 +655,8 @@ pipelines(
   branch          TEXT,  -- (JSON) { source, feature, worktreeDir, reusedExisting, ... }
   workspace_meta  TEXT,  -- (JSON) { workspaceId, workspaceName, workspaceDescription, projectKeys, projects[], checkpointRefs, branches }
   stepper         TEXT,  -- (JSON) buildStepperManifest() snapshot
-  tools           TEXT   -- (JSON) detectTools()/resolved tool descriptor
+  tools           TEXT,  -- (JSON) detectTools()/resolved tool descriptor
+  resume_point    TEXT   -- (JSON, added v5) serialized dispatch position while paused; NULL otherwise
 )
 -- indexes: (project_key, started_at), (workspace_key, started_at), (status)
 
@@ -641,13 +668,40 @@ pipeline_steps(
   active_ms     INTEGER NOT NULL DEFAULT 0,
   running_since TEXT,            -- resume timestamp (epoch-ms as TEXT); NULL when paused
   cost_usd      REAL NOT NULL DEFAULT 0,
+  session_id    TEXT,            -- (added v5) Claude Code session id (stream-json init event)
   PRIMARY KEY (pipeline_id, key)
 )
 ```
-- `status` ∈ `{ "running", "done", "stopped", "error", "interrupted" }` (on `pipelines.status`).
+- `status` ∈ `{ "running", "done", "stopped", "error", "interrupted", "pausing", "paused" }`
+  (on `pipelines.status`).
   `interrupted` is set by the boot/history reconciler (`reconcileStaleRunning`, src/core/artifacts.mjs)
   for runs whose owning process died before writing a terminal status; staleness window is
-  `MAESTRO_STALE_RUN_MS` (default 30 min).
+  `MAESTRO_STALE_RUN_MS` (default 30 min). `pausing` is TRANSIENT (pause requested, dispatch
+  unwinding) and counts as non-terminal: a process that crashes mid-pause leaves a stale
+  `pausing` row, which the same reconciler sweeps to `interrupted`. `paused` is STABLE — it
+  is never swept, stays resumable indefinitely, and is the only status `resume()` /
+  `POST /api/resume` accept. Delete guards (src/core/pipeline-delete.mjs ACTIVE set) treat
+  `pausing` as live and refuse deletion; a `paused` row is settled and deletable like any
+  finished run (deleting it discards the kept worktree).
+- **`pipelines.resume_point` (TEXT/JSON, added v5)** — the serialized dispatch position of a
+  paused run; NULL otherwise. Shape:
+  `{ version: 1, kind: "node"|"boundary"|"gate", stepIndex, stepCycle[], loopState, bus,
+  stepModels, workflowId, plan, nodes[], gate, toolInstruction, pipelineDir, pausedAt }`.
+  `kind` says where the pause landed (mid-node / between steps / awaiting a gate answer);
+  `plan` is the FROZEN resolved topology and `bus` the channel snapshot; `nodes[]` records
+  the interrupted step's nodes as `{ nodeId, key, sessionId, completed }` (the sessionId
+  drives the one-shot `claude --resume` re-attach); `gate` snapshots an interrupted
+  feedback-loop gate. It also carries `toolInstruction` (the EFFECTIVE post-graph-build
+  instruction, not the detect-time `tools.instruction`) plus `pipelineDir` and `pausedAt`,
+  so resume needs no path re-derivation. Cleared to NULL once the run leaves `paused` (resume consumes it;
+  completion persists the cleared value), and NEVER persisted on `stopped` rows.
+- **`pipeline_steps.session_id` (TEXT, added v5)** — the Claude Code session id captured from
+  the stream-json init event, stamped eagerly on the step row that spawned it (a crash still
+  leaves a resumable trail); deterministic `mock-session-<role>-c<cycle>` in mock mode.
+- **No worktree teardown on pause:** done/stopped/error tear the per-pipeline worktree(s)
+  down (the feature branch is kept), but a pause keeps the checkout on disk for the whole
+  paused period — uncommitted agent work lives there and `resume()` re-attaches to
+  `branch.worktreeDir` (failing fast if it is missing).
 - `phase` ∈ `{ "preflight","plan","refine","plan-review","implement","review","done" }`
   (data-driven workflows may also emit `manual-checklist`/`manual-web`).
 - The old `state.json` scalar fields map 1:1 to `pipelines` columns; the old

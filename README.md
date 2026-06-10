@@ -100,11 +100,33 @@ Then open the printed URL (default `http://localhost:4317`). The UI lets you:
   another cycle and continue" / "I approve another cycle", with the open critical/major
   issues shown);
 - follow a **live streaming log**;
-- **Stop** a run;
+- **Pause** or **Stop** a run;
 - browse **history** of past pipelines and read their saved markdown.
 
 There's also an **"Install agents into this folder"** button that copies the agents +
 skill into a target project so you can use `/maestro` there.
+
+### Pause & resume
+
+A running pipeline can be **paused** and continued later — even from a fresh process:
+
+- **Web UI** — every run card has a **Pause** button next to Stop; a paused pipeline
+  shows an amber **Paused** badge in history, and its history card gets a **Resume**
+  button.
+- **CLI** — the first `Ctrl+C` pauses gracefully (a second stops, a third hard-exits).
+  Continue later with:
+
+```bash
+npm run cli -- resume <pipelineId>
+# or, with the bin on your PATH: maestro resume <pipelineId>
+```
+
+Pause is graceful: in-flight Claude steps are terminated, the per-pipeline **worktree
+is kept** (uncommitted agent work survives), and a **resume point** is persisted to the
+database — so resume **survives server restarts** (it rehydrates entirely from the DB).
+On resume, interrupted steps **re-attach their Claude session** via
+`claude --resume <session_id>`; if the session is gone, the step re-runs fresh and the
+fallback is noted in the run's audit log.
 
 ### `/maestro` skill (inside your own project)
 

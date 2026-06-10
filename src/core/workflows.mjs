@@ -354,13 +354,28 @@ export function buildStepperManifest(plan, registry) {
  * (node id = task.nodeId, label = task title). Feedback edges whose `to` was the
  * implementer node are retargeted to the first task node so the review->implement
  * loop wire still lands. Pure: returns a NEW manifest; the input is untouched. If no
- * implementer cell exists, the manifest is returned unchanged.
+ * implementer cell exists, the manifest is returned unchanged. IDEMPOTENT: when the
+ * manifest already carries the decomposed task cells (a resumed run re-enters the
+ * decomposed implement stage and re-applies this rewrite to the persisted, already-
+ * rewritten manifest), it is returned unchanged instead of duplicating the cells.
  * @param {object} manifest buildStepperManifest() output
  * @param {Array<{ordinal:number, tasks:Array<{id:string,title?:string,nodeId:string}>}>} phases
  * @returns {object} the rewritten manifest
  */
 export function rewriteStepperForDecomposition(manifest, phases) {
   const steps = Array.isArray(manifest?.steps) ? manifest.steps : [];
+  const phaseList = Array.isArray(phases) ? phases : [];
+
+  // Idempotency guard: the rewrite emits one node per task with id = task.nodeId
+  // (stamped `s_impl_p<ordinal>_t<n>` by _persistDecomposition). If any cell already
+  // holds one of those ids, this decomposition has been applied — return unchanged.
+  const taskIds = new Set(
+    phaseList.flatMap((ph) => (Array.isArray(ph.tasks) ? ph.tasks : []))
+      .map((t) => t.nodeId)
+      .filter(Boolean),
+  );
+  if (steps.some((cell) => (cell.nodes || []).some((n) => taskIds.has(n.id)))) return manifest;
+
   const implCellIdx = steps.findIndex(
     (cell) => cell.kind === 'agents' && cell.nodes.some((n) => n.key === 'implementer'),
   );
@@ -368,7 +383,6 @@ export function rewriteStepperForDecomposition(manifest, phases) {
 
   const implNode = steps[implCellIdx].nodes.find((n) => n.key === 'implementer');
   const implNodeId = implNode.id;
-  const phaseList = Array.isArray(phases) ? phases : [];
 
   const phaseCells = phaseList.map((ph) => ({
     kind: 'agents',

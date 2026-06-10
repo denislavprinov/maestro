@@ -1,7 +1,8 @@
 // test/subagent-migration-v3.test.mjs
 // Layer A (DB) — forward incremental migration v2 -> v3 adds sub_agents.ui_phase.
-// Seeds a REAL on-disk v2 DB (pipelines + sub_agents, user_version=2), opens it
-// through the production getDb(), and asserts the v3 ladder step ran.
+// Seeds a REAL on-disk v2 DB (pipelines + pipeline_steps + sub_agents,
+// user_version=2), opens it through the production getDb(), and asserts the v3
+// ladder step ran.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -38,6 +39,14 @@ const V1_PIPELINES = `
     total_active_ms INTEGER NOT NULL DEFAULT 0, prompt TEXT, branch TEXT,
     workspace_meta TEXT, stepper TEXT, tools TEXT
   );
+  CREATE TABLE pipeline_steps (
+    pipeline_id TEXT NOT NULL, key TEXT NOT NULL, node_id TEXT, phase TEXT,
+    step_index INTEGER, cycle INTEGER, status TEXT, started_at TEXT,
+    updated_at TEXT, active_ms INTEGER NOT NULL DEFAULT 0, running_since TEXT,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (pipeline_id, key),
+    FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+  );
 `;
 const V2_SUB_AGENTS = `
   CREATE TABLE sub_agents (
@@ -63,7 +72,7 @@ test('opening a user_version=2 DB forward-migrates to v3 (adds sub_agents.ui_pha
   seed.close();
 
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4, 'forward-migrated to v4');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5, 'forward-migrated to v5');
   const cols = db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name);
   assert.ok(cols.includes('ui_phase'), 'ui_phase column added by v2->v3 migration');
   assert.equal(

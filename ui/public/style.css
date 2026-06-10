@@ -133,6 +133,11 @@ body.view-history .main{padding-top:0;}
   font-family:inherit;font-weight:600;font-size:13px;cursor:pointer;transition:filter .15s;}
 .btn-stop:hover{filter:brightness(.97);}
 .btn-stop:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.btn-pause{display:inline-flex;align-items:center;gap:8px;background:var(--amber-bg);
+  color:var(--amber-ink);border:none;padding:11px 19px;border-radius:999px;
+  font-family:inherit;font-weight:600;font-size:13px;cursor:pointer;transition:filter .15s;}
+.btn-pause:hover{filter:brightness(.97);}
+.btn-pause:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* ---------- Views ---------- */
 .view{display:block;}
@@ -342,6 +347,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:7px 13px;border-radius:999px;}
 .chip.qcount{background:var(--amber-bg);color:var(--amber-ink);}
 .btn-stop.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
+.btn-pause.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
+.btn-pause.sm + .btn-stop.sm{margin-left:0;}
 
 /* expand to live log */
 .btn-expand{margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:var(--field);
@@ -427,6 +434,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .badge.running{background:var(--peach-bg);color:var(--peach-ink);}
 .badge.red,.badge.error,.badge.stopped{background:var(--red-bg);color:var(--red-ink);}
 .badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
+.badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 
 /* ---------- History cards (expandable) ---------- */
 .hist-card{padding:18px 22px;}

@@ -22,6 +22,7 @@ import {
   removeProject,
   normalizeProjectPath,
 } from '../core/projects.mjs';
+import { projectKey } from '../core/store.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -165,6 +166,7 @@ Subcommands:
   add [name] [--path <dir>]   Register a project. Defaults: name = basename(path), path = cwd.
   list                        List registered projects (tab-separated; missing dirs are flagged).
   remove <name>               Remove a registered project by name (case-insensitive).
+  resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -225,7 +227,14 @@ const LEVEL_COLOR = { info: 'reset', debug: 'gray', warn: 'yellow', error: 'red'
 // ── interactive prompts (readline) ───────────────────────────────────────────────
 
 function makeRl() {
-  return createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // In a real TTY, readline consumes Ctrl+C itself: with no rl 'SIGINT' listener it
+  // silently close()s and the process-level pause/stop ladder in attachAndDrive never
+  // sees the 1st Ctrl+C. Forward it so Ctrl+C — including during an open question
+  // prompt — routes to pause() (which rejects the pending question with the pause
+  // sentinel and unwinds to paused). Not unit-testable without a PTY; verified manually.
+  rl.on('SIGINT', () => process.emit('SIGINT'));
+  return rl;
 }
 
 function question(rl, q) {
@@ -294,6 +303,102 @@ async function askGate(rl, issues) {
     else if (raw === '2' || /^(another|approve)/i.test(raw)) decision = 'another';
   }
   return { decision };
+}
+
+// ── shared drive loop ────────────────────────────────────────────────────────────
+
+/**
+ * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
+ * orchestrator, then drive it. `start` launches run() or resume(). Returns the
+ * process exit code (0 for done/paused, 1 otherwise).
+ */
+async function attachAndDrive(orch, flags, start) {
+  const rl = flags.auto ? null : makeRl();
+  let answering = false; // serialize interactive prompts vs. log rendering
+
+  // ── event wiring ──────────────────────────────────────────────────────────────
+  orch.on('phase', ({ phase, cycle, status }) => {
+    out(`${statusMark(status)} ${c('bold', phaseLabel(phase, cycle))} ${c('gray', status)}`);
+  });
+
+  orch.on('log', ({ source, level, text }) => {
+    if (answering) return; // avoid interleaving with an open question prompt
+    const color = LEVEL_COLOR[level] || 'reset';
+    out(c('gray', `  [${source}] `) + c(color, text));
+  });
+
+  orch.on('artifact', ({ kind, path }) => {
+    out(c('gray', `  ↳ ${kind}: ${path}`));
+  });
+
+  orch.on('error', ({ message }) => {
+    process.stderr.write(c('red', `Error: ${message}`) + '\n');
+  });
+
+  orch.on('question', async ({ id, kind, questions, issues }) => {
+    if (flags.auto || !rl) return; // auto mode resolves internally
+    answering = true;
+    try {
+      if (kind === 'clarify') {
+        const payload = await askClarify(rl, questions || []);
+        orch.answer(id, payload);
+      } else if (kind === 'gate') {
+        const payload = await askGate(rl, issues || []);
+        orch.answer(id, payload);
+      }
+    } catch (err) {
+      process.stderr.write(`Failed to read answer: ${err?.message || err}\n`);
+    } finally {
+      answering = false;
+    }
+  });
+
+  // Ctrl+C: 1st -> graceful pause (falls back to stop when not pausable);
+  // 2nd -> stop; 3rd -> hard exit.
+  let sigints = 0;
+  const onSigint = () => {
+    sigints += 1;
+    if (sigints === 1) {
+      if (orch.pause()) {
+        out(c('yellow', '\nPausing… (Ctrl+C again to stop instead)'));
+        return;
+      }
+      out(c('yellow', '\nStopping…'));
+      orch.stop();
+      return;
+    }
+    if (sigints === 2) {
+      out(c('yellow', '\nStopping…'));
+      orch.stop();
+      return;
+    }
+    process.exit(130);
+  };
+  process.on('SIGINT', onSigint);
+
+  let result;
+  try {
+    result = await start();
+  } finally {
+    if (rl) rl.close();
+    process.removeListener('SIGINT', onSigint);
+  }
+
+  out('');
+  if (result?.status === 'done') {
+    out(c('green', c('bold', 'Pipeline complete.')));
+  } else if (result?.status === 'paused') {
+    out(c('yellow', 'Pipeline paused.'));
+    out(`Resume with: ${c('bold', `maestro resume ${orch.state.id}`)}`);
+  } else if (result?.status === 'stopped') {
+    out(c('yellow', 'Pipeline stopped.'));
+  } else {
+    out(c('red', `Pipeline ended with status: ${result?.status || 'unknown'}`));
+  }
+  if (result?.pipelineDir) {
+    out(`Pipeline directory: ${c('bold', result.pipelineDir)}`);
+  }
+  return result?.status === 'done' || result?.status === 'paused' ? 0 : 1;
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────────
@@ -395,9 +500,79 @@ async function cmdRemove(argv) {
   return 0;
 }
 
+/** `maestro resume <pipelineId>` — continue a paused pipeline from its resume point. */
+async function cmdResume(argv) {
+  const id = (argv.find((a) => !a.startsWith('--')) || '').trim();
+  if (!id) {
+    process.stderr.write('usage: maestro resume <pipelineId> [--mock] [--yes]\n');
+    return 1;
+  }
+  const mock = argv.includes('--mock');
+  const auto = argv.includes('--yes') || argv.includes('--non-interactive');
+  if (mock) process.env.MAESTRO_MOCK = '1';
+
+  const { readPipelineForResume } = await import('../core/artifacts.mjs');
+  const saved = readPipelineForResume(id);
+  if (!saved) {
+    process.stderr.write(`pipeline ${id} not found\n`);
+    return 1;
+  }
+  if (saved.row.status !== 'paused') {
+    process.stderr.write(`pipeline ${id} is "${saved.row.status}", not paused\n`);
+    return 1;
+  }
+  if (!saved.resumePoint) {
+    process.stderr.write(`pipeline ${id} has no resume point\n`);
+    return 1;
+  }
+
+  // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
+  // runs map project_key back through the registry (mirrors ui/server.mjs /api/resume),
+  // falling back to the current directory — the default run flow needs no registration,
+  // so the `maestro resume <id>` hint it prints must work for bare-cwd runs too.
+  let projectDir = null;
+  let workspace;
+  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+    const meta = JSON.parse(saved.row.workspace_meta);
+    projectDir = meta.projects?.[0]?.projectDir || null;
+    workspace = meta.workspaceId
+      ? {
+          id: meta.workspaceId,
+          key: saved.row.workspace_key,
+          name: meta.workspaceName,
+          description: meta.workspaceDescription || '',
+          projects: meta.projects || [],
+        }
+      : undefined;
+  } else {
+    for (const p of await listProjects()) {
+      if (projectKey(p.path) === saved.row.project_key) {
+        projectDir = p.path;
+        break;
+      }
+    }
+    if (!projectDir && projectKey(resolve(process.cwd())) === saved.row.project_key) {
+      projectDir = process.cwd();
+    }
+  }
+  if (!projectDir) {
+    process.stderr.write('project for this pipeline is not onboarded (maestro add)\n');
+    return 1;
+  }
+
+  const orch = createOrchestrator({
+    projectDir,
+    ...(workspace ? { workspace } : {}),
+    claude: { mock },
+    auto,
+    resume: saved,
+  });
+  return attachAndDrive(orch, { auto }, () => orch.resume());
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume']);
 
 async function main() {
   const sub = process.argv[2];
@@ -406,6 +581,7 @@ async function main() {
     if (sub === 'add') return cmdAdd(rest);
     if (sub === 'list') return cmdList();
     if (sub === 'remove') return cmdRemove(rest);
+    if (sub === 'resume') return cmdResume(rest);
   }
 
   const flags = parseArgs(process.argv.slice(2));
@@ -458,79 +634,10 @@ async function main() {
     auto: flags.auto,
   });
 
-  const rl = flags.auto ? null : makeRl();
-  let answering = false; // serialize interactive prompts vs. log rendering
-
-  // ── event wiring ──────────────────────────────────────────────────────────────
-  orch.on('phase', ({ phase, cycle, status }) => {
-    out(`${statusMark(status)} ${c('bold', phaseLabel(phase, cycle))} ${c('gray', status)}`);
-  });
-
-  orch.on('log', ({ source, level, text }) => {
-    if (answering) return; // avoid interleaving with an open question prompt
-    const color = LEVEL_COLOR[level] || 'reset';
-    out(c('gray', `  [${source}] `) + c(color, text));
-  });
-
-  orch.on('artifact', ({ kind, path }) => {
-    out(c('gray', `  ↳ ${kind}: ${path}`));
-  });
-
-  orch.on('error', ({ message }) => {
-    process.stderr.write(c('red', `Error: ${message}`) + '\n');
-  });
-
-  orch.on('question', async ({ id, kind, questions, issues }) => {
-    if (flags.auto || !rl) return; // auto mode resolves internally
-    answering = true;
-    try {
-      if (kind === 'clarify') {
-        const payload = await askClarify(rl, questions || []);
-        orch.answer(id, payload);
-      } else if (kind === 'gate') {
-        const payload = await askGate(rl, issues || []);
-        orch.answer(id, payload);
-      }
-    } catch (err) {
-      process.stderr.write(`Failed to read answer: ${err?.message || err}\n`);
-    } finally {
-      answering = false;
-    }
-  });
-
   out(c('bold', `orchestrator — project: ${projectDir}`));
   if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));
 
-  // Allow Ctrl-C to stop the run gracefully (stops the orchestrator first).
-  let stopping = false;
-  const onSigint = () => {
-    if (stopping) process.exit(130);
-    stopping = true;
-    out(c('yellow', '\nStopping…'));
-    orch.stop();
-  };
-  process.on('SIGINT', onSigint);
-
-  let result;
-  try {
-    result = await orch.run();
-  } finally {
-    if (rl) rl.close();
-    process.removeListener('SIGINT', onSigint);
-  }
-
-  out('');
-  if (result?.status === 'done') {
-    out(c('green', c('bold', 'Pipeline complete.')));
-  } else if (result?.status === 'stopped') {
-    out(c('yellow', 'Pipeline stopped.'));
-  } else {
-    out(c('red', `Pipeline ended with status: ${result?.status || 'unknown'}`));
-  }
-  if (result?.pipelineDir) {
-    out(`Pipeline directory: ${c('bold', result.pipelineDir)}`);
-  }
-  return result?.status === 'done' ? 0 : 1;
+  return attachAndDrive(orch, flags, () => orch.run());
 }
 
 main()

@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -249,6 +249,7 @@ CREATE TABLE pipelines (
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
   stepper         TEXT,  -- JSON: buildStepperManifest() snapshot
   tools           TEXT   -- JSON: detectTools()/resolved tool descriptor
+  -- resume_point TEXT (added v5): JSON dispatch position of a paused run (NULL otherwise)
 );
 CREATE INDEX idx_pipelines_project_started   ON pipelines (project_key, started_at);
 CREATE INDEX idx_pipelines_workspace_started ON pipelines (workspace_key, started_at);
@@ -270,6 +271,7 @@ CREATE TABLE pipeline_steps (
   active_ms     INTEGER NOT NULL DEFAULT 0,
   running_since TEXT,
   cost_usd      REAL NOT NULL DEFAULT 0,
+  -- session_id TEXT (added v5): Claude Code session id from the stream-json init event
   PRIMARY KEY (pipeline_id, key),
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
@@ -412,6 +414,17 @@ CREATE INDEX idx_pipeline_tasks_pipeline ON pipeline_tasks (pipeline_id);
 `;
 
 /**
+ * Incremental v4 -> v5 migration (Pause/Resume feature). resume_point holds the
+ * serialized dispatch position of a paused run (null otherwise); session_id is the
+ * Claude Code session captured from the stream-json init event, recorded eagerly so
+ * even a crashed run leaves a resumable trail.
+ */
+const SCHEMA_V5 = `
+ALTER TABLE pipelines ADD COLUMN resume_point TEXT;
+ALTER TABLE pipeline_steps ADD COLUMN session_id TEXT;
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -441,6 +454,7 @@ export function migrate(db) {
     if (current < 2) db.exec(SCHEMA_V2);
     if (current < 3) db.exec(SCHEMA_V3);
     if (current < 4) db.exec(SCHEMA_V4);
+    if (current < 5) db.exec(SCHEMA_V5);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

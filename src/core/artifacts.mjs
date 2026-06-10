@@ -909,16 +909,17 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare(`
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
-        total_active_ms, prompt, branch, workspace_meta, stepper, tools)
+        total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
-        @prompt,@branch,@workspace_meta,@stepper,@tools)
+        @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
         total_active_ms=excluded.total_active_ms, branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
+        resume_point=excluded.resume_point,
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
@@ -926,8 +927,8 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       ins.run(
@@ -937,6 +938,7 @@ export async function writeState(pipelineDir, stateObj) {
         Number.isFinite(st.activeMs) ? st.activeMs : 0,
         st.runningSince == null ? null : String(st.runningSince),
         Number.isFinite(st.costUsd) ? st.costUsd : 0,
+        st.sessionId ?? null,
       );
     }
   });
@@ -950,8 +952,10 @@ export async function writeState(pipelineDir, stateObj) {
  */
 export const INTERRUPTED_STATUS = 'interrupted';
 
-// The non-terminal statuses a run can be frozen at by a crash.
-const RECONCILE_NON_TERMINAL = ['created', 'starting', 'running'];
+// The non-terminal statuses a run can be frozen at by a crash. 'pausing' is the
+// graceful-shutdown window — a crash there is an interruption. 'paused' is NOT
+// here: it is intentional and indefinite, never swept.
+const RECONCILE_NON_TERMINAL = ['created', 'starting', 'running', 'pausing'];
 
 /**
  * Staleness window (ms). A non-terminal row older than this AND not live is dead.
@@ -969,7 +973,7 @@ function staleRunMs() {
 }
 
 /**
- * Flip stale non-terminal pipeline rows (created/starting/running) to INTERRUPTED.
+ * Flip stale non-terminal pipeline rows (created/starting/running/pausing) to INTERRUPTED.
  * A row is stale when ALL hold:
  *   - status is non-terminal,
  *   - COALESCE(updated_at, started_at) is older than `staleMs` (a NULL coalesce is
@@ -1020,6 +1024,25 @@ export function reconcileStaleRunning({ staleMs = staleRunMs(), liveIds = [], no
 }
 
 /**
+ * Load everything resume needs for one pipeline: the raw pipelines row, the parsed
+ * resume_point, and the saved steps (camelCase via rowToState, sessionId included).
+ * Returns null when the id is unknown. Pure read — no status checks here (callers
+ * guard on row.status).
+ */
+export function readPipelineForResume(pipelineId) {
+  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(pipelineId);
+  if (!row) return null;
+  let resumePoint = null;
+  try {
+    resumePoint = row.resume_point ? JSON.parse(row.resume_point) : null;
+  } catch {
+    resumePoint = null;
+  }
+  const state = rowToState(row);
+  return { row, resumePoint, steps: state?.steps || [] };
+}
+
+/**
  * Map a live state object to the named params of the pipelines UPSERT. JSON columns
  * are stringified here; the workspace superset collapses into workspace_meta.
  *
@@ -1063,6 +1086,7 @@ function toPipelineRow(o) {
     workspace_meta: workspaceMeta,
     stepper: s(o.stepper),
     tools: s(o.tools),
+    resume_point: o.resumePoint == null ? null : s(o.resumePoint),
   };
 }
 
@@ -1305,6 +1329,7 @@ function stepRowToStep(r) {
     activeMs: r.active_ms ?? 0,
     runningSince: r.running_since == null ? null : Number(r.running_since),
     costUsd: r.cost_usd ?? 0,
+    sessionId: r.session_id ?? undefined,
   };
   if (r.node_id != null) step.nodeId = r.node_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
@@ -1341,7 +1366,7 @@ function rowToState(row) {
     tools: j(row.tools, null),
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd
+             active_ms, running_since, cost_usd, session_id
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
