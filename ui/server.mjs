@@ -1462,11 +1462,11 @@ app.post('/api/workflows', async (req, res) => {
   if (!tpl.name) return badRequest(res, 'name is required');
   try {
     const registry = loadAgentRegistry(AGENTS_DIR);
-    const { ok, errors } = validateWorkflow(tpl, registry);
-    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors });
+    const { ok, errors, warnings } = validateWorkflow(tpl, registry);
+    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors, warnings });
     // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
     const workflow = await writeWorkflow(tpl); // CONV-1: await
-    res.status(201).json({ workflow });
+    res.status(201).json({ workflow, warnings });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

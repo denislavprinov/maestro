@@ -1106,7 +1106,7 @@ async function saveWorkflow({ name, steps, feedbacks }) {
   });
   const data = await safeJson(res);
   if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
-  return data.workflow;
+  return { workflow: data.workflow, warnings: Array.isArray(data.warnings) ? data.warnings : [] };
 }
 
 async function deleteWorkflow(id) {
@@ -1484,12 +1484,17 @@ async function composerSave() {
   if (!name) return;
   const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
   const saveBtn = document.getElementById('composer-save');
-  let saved;
+  let saved, warnings;
   try {
-    saved = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks });
+    ({ workflow: saved, warnings } = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks }));
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
     return;
+  }
+  // Soft validator warnings (reachability/governance): the save succeeded, but
+  // tell the user the topology is questionable. Toast the first, count the rest.
+  if (warnings && warnings.length) {
+    composerToast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''));
   }
   await composerLoadSaved();
   // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
