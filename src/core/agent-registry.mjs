@@ -42,14 +42,18 @@ const DEFAULT_SPEC = {
   workspaceReviewer:    { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer'] },
 };
 
-/** Array of known channel ids from raw input; warns on (and drops) unknown ids (m1). */
+/** Channel ids: built-ins or any well-formed CUSTOM id (open vocabulary, m1-v2).
+ *  Only a malformed id is warned on and dropped — a typo of a built-in becomes a
+ *  custom channel and is surfaced by the validator's reachability warning instead. */
+const CUSTOM_CHANNEL_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 function channelList(raw, key, field) {
   if (!Array.isArray(raw)) return undefined;
   const out = [];
   for (const s of raw) {
     const id = String(s || '').trim();
-    if (CHANNEL_IDS.has(id)) out.push(id);
-    else if (id) console.warn(`[agent-registry] ${key}.${field}: unknown channel id "${id}" ignored`);
+    if (!id) continue;
+    if (CHANNEL_IDS.has(id) || CUSTOM_CHANNEL_ID_RE.test(id)) out.push(id);
+    else console.warn(`[agent-registry] ${key}.${field}: malformed channel id "${id}" ignored`);
   }
   return out;
 }
@@ -76,6 +80,59 @@ const LEGACY_LABELS = {
   implementer: 'Implement',
   reviewer: 'Review',
 };
+
+const CHANNEL_DEF_KINDS = new Set(['md', 'json']);
+
+/** Normalize a sidecar's channelDefs: well-formed custom ids only, kind md|json
+ *  (default md), filename a plain basename (default <id>.<ext>); built-in channel
+ *  ids cannot be redefined. */
+function normalizeChannelDefs(raw, key) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const d of raw) {
+    if (!d || typeof d !== 'object') continue;
+    const id = typeof d.id === 'string' ? d.id.trim() : '';
+    if (!CUSTOM_CHANNEL_ID_RE.test(id)) {
+      if (id) console.warn(`[agent-registry] ${key}.channelDefs: bad channel id "${id}" ignored`);
+      continue;
+    }
+    if (CHANNEL_IDS.has(id)) {
+      console.warn(`[agent-registry] ${key}.channelDefs: "${id}" is a built-in channel and cannot be redefined`);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const kind = CHANNEL_DEF_KINDS.has(d.kind) ? d.kind : 'md';
+    const fnRaw = typeof d.filename === 'string' ? d.filename.trim() : '';
+    // basename only: a def must never escape the pipeline dir
+    const filename = fnRaw && !/[\\/]/.test(fnRaw) && !fnRaw.includes('..') ? fnRaw : `${id}.${kind}`;
+    out.push({ id, kind, filename });
+  }
+  return out;
+}
+
+/**
+ * Registry-level channel definition collection: merge every agent's channelDefs
+ * into { [channelId]: {id, kind, filename} }. Registry order (sorted by .order)
+ * makes "first definition wins" deterministic; conflicts warn.
+ * @param {Record<string, object>} registry
+ */
+export function collectChannelDefs(registry) {
+  const defs = {};
+  for (const m of Object.values(registry || {})) {
+    for (const d of m.channelDefs || []) {
+      if (defs[d.id]) {
+        if (defs[d.id].kind !== d.kind || defs[d.id].filename !== d.filename) {
+          console.warn(`[agent-registry] channel "${d.id}" redefined by "${m.key}"; first definition wins`);
+        }
+        continue;
+      }
+      defs[d.id] = { ...d };
+    }
+  }
+  return defs;
+}
 
 /** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable. */
 function normalizeMeta(raw) {
@@ -115,6 +172,12 @@ function normalizeMeta(raw) {
     produces,
     connectsTo,
     order,
+    // ── schema v2 (all optional; absent => safe defaults; origin/agentPath are
+    //    stamped by scanLayer as COMPUTED fields, never read from the sidecar) ──
+    uiPhase: typeof raw.uiPhase === 'string' && raw.uiPhase.trim() ? raw.uiPhase.trim() : null,
+    promptHints: typeof raw.promptHints === 'string' ? raw.promptHints : '',
+    version: typeof raw.version === 'string' || typeof raw.version === 'number' ? String(raw.version) : '1',
+    channelDefs: normalizeChannelDefs(raw.channelDefs, key),
   };
 }
 
