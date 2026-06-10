@@ -226,6 +226,22 @@ export function buildSystemPrompt(toolInstruction, agentBody, role, workspace) {
   return parts.filter(Boolean).join('\n\n');
 }
 
+/**
+ * Resolve the agent .md body for a runner: the node's own resolved `agentPrompt`
+ * (stamped by resolveWorkflow from its meta.agentFile — built-in OR user layer)
+ * wins; the orchestrator's bulk-loaded ctx.agentPrompts[key] is the fallback (the
+ * clarify pre-step and direct-unit ctxs have no node); FALLBACK_PROMPTS[role]
+ * backstops inside buildSystemPrompt. Single resolution path for EVERY runner —
+ * this is what fixes the decomposer's empty system prompt (agentPrompts never
+ * carried a `decomposer` key and FALLBACK_PROMPTS has no `decomposer` role).
+ * Exported for testing.
+ */
+export function resolveAgentBody(ctx, key) {
+  const nodeBody = typeof ctx?.node?.agentPrompt === 'string' ? ctx.node.agentPrompt.trim() : '';
+  if (nodeBody) return ctx.node.agentPrompt;
+  return ctx?.agentPrompts?.[key];
+}
+
 /** Render the MOCK marker block appended to every task prompt. */
 function mockMarkers(fields) {
   const lines = [];
@@ -372,7 +388,7 @@ export async function runClarify(ctx, opts = {}) {
   const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
   const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
   const role = 'clarify';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.clarify, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'clarify'), role, ctx.workspace);
   const prompt = buildClarifyPrompt(ctx, { round, priorAnswers });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
@@ -401,7 +417,7 @@ export async function runClarify(ctx, opts = {}) {
 export async function runPlannerPlan(ctx, opts) {
   const { answers = [], planFilePath, baseName, reviewPath } = opts || {};
   const role = 'planner-plan';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planner, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'planner'), role, ctx.workspace);
   const replanBlock = reviewPath
     ? '\n## Revise to address the review\n\n' +
       'A reviewer found issues with the previous plan. Re-plan from scratch (cold start) and ' +
@@ -438,7 +454,7 @@ export async function runPlannerPlan(ctx, opts) {
 export async function runRefiner(ctx, opts) {
   const { inPlanPath, outPlanPath, cycle, reviewJsonPath } = opts || {};
   const role = 'refiner';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.refiner, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'refiner'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Refine the plan (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -478,7 +494,7 @@ export async function runDecomposer(ctx, opts) {
   const { planPath, decompositionPath } = opts || {};
   const role = 'decomposer';
   const tasksDir = join(dirname(decompositionPath), 'tasks');
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.decomposer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'decomposer'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, 'Decompose the plan into vertical-slice tasks') +
     '\n## What to do\n\n' +
@@ -586,7 +602,7 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
 export async function runImplementer(ctx, opts) {
   const { planPath, reviewPath, taskPath, siblings, mode = 'implement' } = opts || {};
   const role = 'implementer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.implementer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'implementer'), role, ctx.workspace);
 
   const body = implementerBody({ mode, planPath, reviewPath, taskPath, siblings });
 
@@ -615,7 +631,7 @@ export async function runImplementer(ctx, opts) {
 export async function runReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'reviewer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.reviewer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'reviewer'), role, ctx.workspace);
   // Prefer diffing against the recorded checkpoint commit. New files are made
   // visible via the orchestrator's intent-to-add staging after each implement
   // pass, so `git diff <ref>` and `git status` both show greenfield work.
@@ -663,7 +679,7 @@ export async function runReviewer(ctx, opts) {
 export async function runPlanReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'plan-review';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.planReviewer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'planReviewer'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Review the plan (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -707,7 +723,7 @@ export async function runWorkspaceReviewer(ctx, opts) {
   const role = 'workspace-reviewer';
   // The body is the contract (C10: no FALLBACK_PROMPTS entry); the system prompt
   // ALSO carries the `## Workspace Context` block via ctx.workspace.
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.workspaceReviewer, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceReviewer'), role, ctx.workspace);
   const prompt =
     taskHeader(ctx, `Review the workspace implementation (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -757,7 +773,7 @@ export async function runWorkspaceScan(ctx, opts = {}) {
   const outPath = opts.outPath || joinPipeline(ctx.pipelineDir, 'workspace-description.md');
   // The scanner IS the source of the workspace description, so it does NOT receive
   // an injected workspace block (4th arg undefined). The body is the contract (C10).
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, ctx.agentPrompts?.workspaceScanner, role, undefined);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined);
 
   const memberLines = projects.map((p) =>
     `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): investigate \`${p.scanDir || p.projectDir}\`` +
@@ -822,7 +838,7 @@ export async function runManualTestsChecklist(ctx, opts) {
   const role = 'manual-tests-checklist';
   const systemPrompt = buildSystemPrompt(
     ctx.toolInstruction,
-    ctx.agentPrompts?.manualTestsChecklist,
+    resolveAgentBody(ctx, 'manualTestsChecklist'),
     role,
     ctx.workspace,
   );
@@ -856,7 +872,7 @@ export async function runManualWebUiTesting(ctx, opts) {
   const role = 'manual-web-ui-testing';
   const systemPrompt = buildSystemPrompt(
     ctx.toolInstruction,
-    ctx.agentPrompts?.manualWebUiTesting,
+    resolveAgentBody(ctx, 'manualWebUiTesting'),
     role,
     ctx.workspace,
   );

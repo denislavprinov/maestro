@@ -58,20 +58,6 @@ import {
  */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
-const AGENT_FILES = {
-  clarify: 'maestro-clarify.md',
-  planner: 'maestro-planner.md',
-  refiner: 'maestro-plan-refiner.md',
-  implementer: 'maestro-implementer.md',
-  reviewer: 'maestro-code-reviewer.md',
-  planReviewer: 'maestro-plan-reviewer.md',
-  // Workspace review synthesizer: its body is the contract (no FALLBACK_PROMPTS
-  // entry, C10), so it must load into agentPrompts for a real workspace run. The
-  // off-pipeline scanner is NOT here (it is driven by the M5 scan engine, not the
-  // dispatcher, which supplies agentPrompts.workspaceScanner itself).
-  workspaceReviewer: 'maestro-workspace-reviewer.md',
-};
-
 /**
  * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
  * The orchestrator forces `node.fanOut=true` on these when isWorkspace, unlocking
@@ -331,7 +317,7 @@ class Orchestrator extends EventEmitter {
       // projectDir (NOT the pipeline dir, which doesn't exist yet), so this is safe
       // here. pipelineDir is null in this first event; it is persisted + re-emitted
       // after createPipeline below.
-      const registry = await loadAgentRegistry();
+      const registry = loadAgentRegistry(this.agentsDir);
       this.registry = registry; // ▲ v3: expose for run-start workflow validation (D4)
       // [C5/M4] On a workspace run, resolveWorkflow substitutes the review node's key
       // reviewer -> workspaceReviewer (the fan-out synthesizer). Single-project runs
@@ -618,7 +604,7 @@ class Orchestrator extends EventEmitter {
       }
 
       // ── prompts/registry (cheap, local) ──
-      this.registry = await loadAgentRegistry();
+      this.registry = loadAgentRegistry(this.agentsDir);
       this.agentPrompts = await this._loadAgentPrompts();
 
       this.state.resumePoint = null; // consumed; cleared on the next persist
@@ -2131,16 +2117,20 @@ class Orchestrator extends EventEmitter {
 
   // ── agent prompt loading ───────────────────────────────────────────────────
 
+  /** Bulk-load every registry agent's .md body keyed by agent key (fallback layer
+   *  for runners whose ctx has no node, e.g. the clarify pre-step; dispatched nodes
+   *  prefer node.agentPrompt via phases.resolveAgentBody). Registry-driven: built-in
+   *  AND user agents load from their own layer via meta.agentPath. */
   async _loadAgentPrompts() {
     const prompts = {};
-    for (const [role, file] of Object.entries(AGENT_FILES)) {
-      const p = join(this.agentsDir, file);
+    const registry = this.registry || loadAgentRegistry(this.agentsDir);
+    for (const meta of Object.values(registry)) {
+      if (!meta.agentPath) { prompts[meta.key] = ''; continue; }
       try {
-        prompts[role] = await readFile(p, 'utf8');
+        prompts[meta.key] = await readFile(meta.agentPath, 'utf8');
       } catch {
-        // Missing agent file => empty system prompt body (fails safe).
-        prompts[role] = '';
-        this._log('orchestrator', 'warn', `Agent prompt missing: ${rel(this.projectDir, p)}`);
+        prompts[meta.key] = ''; // missing agent file => empty body (fails safe)
+        this._log('orchestrator', 'warn', `Agent prompt missing: ${rel(this.projectDir, meta.agentPath)}`);
       }
     }
     return prompts;
