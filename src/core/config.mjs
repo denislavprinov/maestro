@@ -17,16 +17,24 @@ import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 
 /**
- * The agent steps, in pipeline order — now DERIVED from the agent registry
- * (agents/*.meta.json) rather than hardcoded, so adding an agent needs no edit
- * here. The original four roles keep their legacy short labels via
- * registryToSteps's LEGACY_LABELS, so this stays byte-identical for them while
- * also surfacing the two new agents. Drives the UI + orchestrator + per-step
- * config keys (STEP_KEYS, sanitizeSteps, resolveStepModels all read this).
+ * Recompute the agent step list FRESH from the layered registry (repo agents/ +
+ * ~/.maestro/agents). Use this instead of AGENT_STEPS anywhere a user-added agent
+ * must appear without a process restart (the registry re-scans per call).
+ * @returns {Array<{key:string,label:string,fanOut:boolean}>}
  */
-export const AGENT_STEPS = registryToSteps(loadAgentRegistry());
+export function agentSteps() {
+  return registryToSteps(loadAgentRegistry());
+}
 
-const STEP_KEYS = new Set(AGENT_STEPS.map((s) => s.key));
+/**
+ * Boot-time snapshot of agentSteps(), kept for import-compat (UI boot payloads,
+ * tests). PREFER agentSteps(): this constant goes stale when a user agent is
+ * added/removed at runtime.
+ */
+export const AGENT_STEPS = agentSteps();
+
+/** Live key set (recomputed per call so runtime-added user agents validate). */
+const stepKeys = () => new Set(agentSteps().map((s) => s.key));
 
 /** All effort levels the UI can offer (ordering is not a ranking). */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
@@ -70,8 +78,9 @@ function defaultConfig() {
 /** Keep only known step keys carrying a non-empty model/effort and/or a fanOut boolean. */
 function sanitizeSteps(steps) {
   const out = {};
+  const keys = stepKeys();
   for (const [k, v] of Object.entries(steps || {})) {
-    if (!STEP_KEYS.has(k) || !v || typeof v !== 'object') continue;
+    if (!keys.has(k) || !v || typeof v !== 'object') continue;
     const model = typeof v.model === 'string' ? v.model.trim() : '';
     const effort = typeof v.effort === 'string' ? v.effort.trim() : '';
     const fanOut = typeof v.fanOut === 'boolean' ? v.fanOut : undefined;
@@ -159,7 +168,7 @@ export async function listModels(projectDir) {
 export async function resolveStepModels(projectDir, fallbackModel) {
   const cfg = readRaw(projectDir);
   const out = {};
-  for (const { key } of AGENT_STEPS) {
+  for (const { key } of agentSteps()) {
     const sel = cfg.steps[key] || {};
     out[key] = { model: sel.model || fallbackModel || undefined, effort: sel.effort || undefined };
   }
@@ -193,7 +202,7 @@ function writeLegacy(key, cfg) {
  * @returns {Promise<{steps:object, customModels:Array}>}
  */
 export async function setStep(projectDir, step, selection = {}) {
-  if (!STEP_KEYS.has(step)) throw new Error(`unknown step "${step}"`);
+  if (!stepKeys().has(step)) throw new Error(`unknown step "${step}"`);
   const model = typeof selection.model === 'string' ? selection.model.trim() : '';
   const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
 
