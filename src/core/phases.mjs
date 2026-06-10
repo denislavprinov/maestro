@@ -920,8 +920,8 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
   for (const [c, h] of Object.entries(outputs || {})) {
     if (!h) continue;
     if (h.kind === 'review') {
-      if (h.mdPath) outLines.push(`- Write the ${c} review markdown to: ${h.mdPath}`);
-      if (h.jsonPath) outLines.push(`- Write the ${c} review JSON to: ${h.jsonPath}`);
+      if (h.mdPath) outLines.push(`- Write the ${c} markdown (human-readable review) to: ${h.mdPath}`);
+      if (h.jsonPath) outLines.push(`- Write the ${c} JSON (machine-readable verdict) to: ${h.jsonPath}`);
     } else if (h.path) {
       outLines.push(`- Write ${c} to: ${h.path}`);
     }
@@ -943,7 +943,11 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
 export async function runGenericProducer(ctx) {
   const key = ctx.node?.key || 'agent';
   const role = `generic:${key}`; // no FALLBACK entry: the .md body is the contract
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, key), role, ctx.workspace);
+  const body = resolveAgentBody(ctx, key);
+  if (!String(body || '').trim()) {
+    console.warn(`[phases] generic producer "${key}": no agent .md body resolved — running with an empty system prompt`);
+  }
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
   const outputs = ctx.outputs || {};
   const primary = Object.values(outputs).find((h) => h && h.path)?.path;
   const hints = (ctx.node?.promptHints || '').trim();
@@ -972,12 +976,20 @@ export async function runGenericProducer(ctx) {
 export async function runGenericVerifier(ctx) {
   const key = ctx.node?.key || 'agent';
   const role = `generic:${key}`;
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, key), role, ctx.workspace);
+  const body = resolveAgentBody(ctx, key);
+  if (!String(body || '').trim()) {
+    console.warn(`[phases] generic verifier "${key}": no agent .md body resolved — running with an empty system prompt`);
+  }
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
   const cycle = Number(ctx.cycle) > 0 ? Number(ctx.cycle) : 1;
   const { review: reviewOut, ...otherOutputs } = ctx.outputs || {};
   const reviewMdPath = reviewOut?.mdPath ?? joinPipeline(ctx.pipelineDir, `${key}-review-cycle${cycle}.md`);
   const reviewJsonPath = reviewOut?.jsonPath ?? joinPipeline(ctx.pipelineDir, `${key}-review-cycle${cycle}.json`);
   const hints = (ctx.node?.promptHints || '').trim();
+  // Route the (possibly fallback-pathed) review handle through the IO block so the
+  // Outputs section never renders the "(none — report as final message)" placeholder
+  // in contradiction with the review-write instructions that follow.
+  const ioOutputs = { ...otherOutputs, review: { kind: 'review', mdPath: reviewMdPath, jsonPath: reviewJsonPath } };
   const prompt =
     taskHeader(ctx, `Verify: ${key} (cycle ${cycle})`) +
     '\n## What to do\n\n' +
@@ -985,9 +997,7 @@ export async function runGenericVerifier(ctx) {
     'then write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
     (hints ? hints + '\n\n' : '') +
     fanOutDirective(ctxFanOut(ctx)) +
-    genericIoBlock(ctx.inputs, otherOutputs) +
-    `Write the review markdown to: ${reviewMdPath}\n` +
-    `Write the review JSON to: ${reviewJsonPath}\n\n` +
+    genericIoBlock(ctx.inputs, ioOutputs) +
     'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
     '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
     'pipeline.\n\n' +
