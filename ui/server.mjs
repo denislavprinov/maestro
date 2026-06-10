@@ -26,7 +26,7 @@ import { listProjects, addProject, removeProject, normalizeProjectPath } from '.
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, AGENT_STEPS, EFFORTS,
+  PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
 } from '../src/core/config.mjs';
 import {
@@ -44,6 +44,8 @@ import {
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
+import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
+import { CHANNEL_IDS } from '../src/core/channels.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -1282,7 +1284,7 @@ app.get('/api/config', async (req, res) => {
   // project-less response carries only the predefined Opus/Sonnet/Haiku set.
   if (raw == null || raw === '') {
     const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
-    return res.json({ config: { steps: {}, customModels: [] }, models, steps: AGENT_STEPS, efforts: EFFORTS });
+    return res.json({ config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS });
   }
   const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
@@ -1292,7 +1294,7 @@ app.get('/api/config', async (req, res) => {
     // activeWorkflowId. It is a superset of readConfig, so the client keeps using
     // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
     const [config, models] = await Promise.all([readRunConfig(projectDir), listModels(projectDir)]);
-    res.json({ config, models, steps: AGENT_STEPS, efforts: EFFORTS });
+    res.json({ config, models, steps: agentSteps(), efforts: EFFORTS });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1441,21 +1443,71 @@ app.delete('/api/workflows/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/agents -> the agent registry for the Composer palette. Scanned from
-// agents/*.meta.json by src/core/agent-registry.mjs and returned as an array in
-// palette render order (.order ascending). The client builds draggable pills
-// (colored dot + displayName + icon) from this.
+// /api/agents* -> agent registry + user-agent CRUD, delegated to
+// src/core/agent-store.mjs (layered builtin + ~/.maestro/agents user pairs).
+// GET returns palette render order (.order ascending) with origin stamped; the
+// client builds draggable pills (colored dot + displayName + icon) from this.
 // ---------------------------------------------------------------------------
-app.get('/api/agents', (_req, res) => {
+app.get('/api/agents', async (req, res) => {
   try {
-    const registry = loadAgentRegistry(AGENTS_DIR); // { [key]: AgentMeta }, sorted by .order
-    // §6.6: scope:'workspace-only' agents are EXCLUDED from the single-project
-    // Composer palette (the scanner is non-composable in either palette; the
-    // workspace reviewer is selected only by the workspace-default workflow).
-    const agents = Object.values(registry).filter((m) => m.scope !== 'workspace-only');
-    res.json({ agents });
+    const all = await listAgents(); // merged builtin+user, origin stamped, .order ascending
+    // §6.6: workspace-only agents stay out of the Composer palette by default;
+    // the Agents management view passes ?all=1 to see them too.
+    const agents = isTruthy(req.query.all) ? all : all.filter((m) => m.scope !== 'workspace-only');
+    res.json({ agents, channels: CHANNEL_IDS });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Map agent-store err.code -> HTTP (mirrors workspaceErrorStatus).
+function agentErrorStatus(code) {
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'BAD_REQUEST') return 400;
+  if (code === 'BUILTIN' || code === 'DUPLICATE' || code === 'REFERENCED') return 409;
+  return 500;
+}
+
+app.get('/api/agents/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!AGENT_KEY_RE.test(key)) return res.status(404).json({ error: 'agent not found' });
+  try {
+    const data = await readAgent(key);
+    if (!data) return res.status(404).json({ error: 'agent not found' });
+    res.json(data); // { meta (incl. origin), markdown }
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/agents', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const created = await createAgent({ meta: body.meta, markdown: body.markdown });
+    res.status(201).json(created);
+  } catch (err) {
+    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.put('/api/agents/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!AGENT_KEY_RE.test(key)) return res.status(404).json({ error: 'agent not found' });
+  const body = req.body || {};
+  try {
+    res.json(await updateAgent(key, { meta: body.meta, markdown: body.markdown }));
+  } catch (err) {
+    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/agents/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!AGENT_KEY_RE.test(key)) return res.status(404).json({ error: 'agent not found' });
+  try {
+    res.json(await deleteAgent(key));
+  } catch (err) {
+    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
