@@ -227,7 +227,14 @@ const LEVEL_COLOR = { info: 'reset', debug: 'gray', warn: 'yellow', error: 'red'
 // ── interactive prompts (readline) ───────────────────────────────────────────────
 
 function makeRl() {
-  return createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // In a real TTY, readline consumes Ctrl+C itself: with no rl 'SIGINT' listener it
+  // silently close()s and the process-level pause/stop ladder in attachAndDrive never
+  // sees the 1st Ctrl+C. Forward it so Ctrl+C — including during an open question
+  // prompt — routes to pause() (which rejects the pending question with the pause
+  // sentinel and unwinds to paused). Not unit-testable without a PTY; verified manually.
+  rl.on('SIGINT', () => process.emit('SIGINT'));
+  return rl;
 }
 
 function question(rl, q) {
@@ -520,7 +527,9 @@ async function cmdResume(argv) {
   }
 
   // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
-  // runs map project_key back through the registry (mirrors ui/server.mjs /api/resume).
+  // runs map project_key back through the registry (mirrors ui/server.mjs /api/resume),
+  // falling back to the current directory — the default run flow needs no registration,
+  // so the `maestro resume <id>` hint it prints must work for bare-cwd runs too.
   let projectDir = null;
   let workspace;
   if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
@@ -541,6 +550,9 @@ async function cmdResume(argv) {
         projectDir = p.path;
         break;
       }
+    }
+    if (!projectDir && projectKey(resolve(process.cwd())) === saved.row.project_key) {
+      projectDir = process.cwd();
     }
   }
   if (!projectDir) {
