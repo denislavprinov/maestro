@@ -19,6 +19,8 @@ const state = {
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
+  agentsList: [], // GET /api/agents?all=1 list for the Agents management view
+  channelIds: [], // known channel ids from /api/agents (drives the agent editor)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   historyFilter: '', // active projectKey filter for History; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
@@ -137,6 +139,11 @@ const el = {
   settingsSave: $('#settingsSave'),
   settingsReset: $('#settingsReset'),
   settingsMsg: $('#settingsMsg'),
+
+  // Agents management view
+  agentsList: $('#agents-list'),
+  agentsMsg: $('#agents-msg'),
+  agentCreateBtn: $('#agent-create-btn'),
 };
 
 // ---------------------------------------------------------------------------
@@ -3586,6 +3593,150 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// ---- Agents management view -------------------------------------------------
+
+async function loadAgentsList() {
+  try {
+    const res = await fetch('/api/agents?all=1');
+    const data = await safeJson(res);
+    state.agentsList = res.ok && Array.isArray(data.agents) ? data.agents : [];
+    if (res.ok && Array.isArray(data.channels)) state.channelIds = data.channels;
+  } catch { state.agentsList = []; }
+  return state.agentsList;
+}
+
+async function loadAgentsView() {
+  await loadAgentsList();
+  renderAgentsList();
+}
+
+function setAgentsMsg(text, kind) {
+  if (!el.agentsMsg) return;
+  el.agentsMsg.textContent = text || '';
+  el.agentsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function agentChip(text, cls) {
+  const s = document.createElement('span');
+  s.className = 'agent-chip ' + cls;
+  s.textContent = text;
+  return s;
+}
+
+function buildAgentCard(a) {
+  const tpl = $('#agent-card-tpl');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  node.dataset.agentKey = a.key || '';
+  node.querySelector('.agent-name').textContent = a.displayName || a.key;
+  node.querySelector('.agent-origin').textContent = a.origin || 'builtin';
+  node.querySelector('.agent-origin').classList.add(a.origin === 'user' ? 'origin-user' : 'origin-builtin');
+  node.querySelector('.agent-sub').textContent = `${a.key} · ${a.runnerType || 'producer'} — ${a.description || ''}`;
+  const chips = node.querySelector('.agent-chips');
+  (Array.isArray(a.consumes) ? a.consumes : []).forEach((c) => chips.appendChild(agentChip(c, 'cons')));
+  (Array.isArray(a.produces) ? a.produces : []).forEach((c) => chips.appendChild(agentChip(c, 'prod')));
+  const isUser = a.origin === 'user';
+  node.querySelector('.agent-edit').hidden = !isUser;
+  node.querySelector('.agent-delete').hidden = !isUser;
+  node.querySelector('.agent-duplicate').hidden = isUser;
+  return node;
+}
+
+function renderAgentsList() {
+  const host = el.agentsList;
+  if (!host) return;
+  host.innerHTML = '';
+  if (!state.agentsList.length) {
+    host.appendChild(histEmpty('No agents found — is the server running?'));
+    return;
+  }
+  const groups = [
+    ['Built-in agents', state.agentsList.filter((a) => a.origin !== 'user')],
+    ['Your agents', state.agentsList.filter((a) => a.origin === 'user')],
+  ];
+  for (const [label, list] of groups) {
+    if (!list.length) continue;
+    const h = document.createElement('div');
+    h.className = 'agents-group-label';
+    h.textContent = label;
+    host.appendChild(h);
+    for (const a of list) host.appendChild(buildAgentCard(a));
+  }
+}
+
+function toggleAgentDetail(card) {
+  const head = card.querySelector('.agent-head');
+  const detail = card.querySelector('.agent-detail');
+  const open = head.getAttribute('aria-expanded') === 'true';
+  head.setAttribute('aria-expanded', String(!open));
+  detail.hidden = open;
+  if (!open && !detail.dataset.loaded) {
+    detail.dataset.loaded = '1';
+    fetchAgentFull(card.dataset.agentKey).then((data) => {
+      const pre = card.querySelector('.agent-md-view');
+      if (pre) pre.textContent = (data && data.markdown) || '(no markdown body)';
+    });
+  }
+}
+
+async function fetchAgentFull(key) {
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(key)}`);
+    const data = await safeJson(res);
+    return res.ok ? data : null;
+  } catch { return null; }
+}
+
+async function deleteAgentCard(card, a) {
+  if (!window.confirm(`Delete agent "${a.displayName || a.key}"?\n\nThis removes its markdown + metadata pair. This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(a.key)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    state.agentsList = state.agentsList.filter((x) => x.key !== a.key);
+    setAgentsMsg('Agent deleted.', 'ok');
+    renderAgentsList();
+  } catch (err) { setAgentsMsg(err.message, 'err'); }
+}
+
+async function duplicateAgentCard(a) {
+  const full = await fetchAgentFull(a.key);
+  if (!full) { setAgentsMsg('Could not load the agent to duplicate.', 'err'); return; }
+  const { key, origin, agentFile, ...rest } = full.meta || {};
+  const meta = { ...rest, displayName: `${full.meta.displayName || a.key} (copy)` };
+  try {
+    const res = await fetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meta, markdown: full.markdown }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setAgentsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    setAgentsMsg(`Duplicated as "${data.meta.key}".`, 'ok');
+    await loadAgentsView();
+  } catch (err) { setAgentsMsg(err.message, 'err'); }
+}
+
+// Stub: Task 4 replaces this with the real agent editor entry point.
+function openAgentEdit() {}
+
+if (el.agentsList) {
+  el.agentsList.addEventListener('click', (e) => {
+    const card = e.target.closest && e.target.closest('.agent-card');
+    if (!card) return;
+    const a = state.agentsList.find((x) => x.key === card.dataset.agentKey);
+    if (e.target.closest('.agent-delete')) { e.stopPropagation(); if (a) deleteAgentCard(card, a); return; }
+    if (e.target.closest('.agent-duplicate')) { e.stopPropagation(); if (a) duplicateAgentCard(a); return; }
+    if (e.target.closest('.agent-edit')) { e.stopPropagation(); if (a) openAgentEdit(card, a); return; }
+    if (e.target.closest('.agent-head')) toggleAgentDetail(card);
+  });
+}
+if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { location.hash = 'agent-create'; });
+
+// Test hook (mirrors window.__ws).
+if (typeof window !== 'undefined') {
+  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard };
+}
+
 // ---------------------------------------------------------------------------
 // Start a run
 // ---------------------------------------------------------------------------
@@ -5166,7 +5317,7 @@ const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'settings'];
 
 function showView(name) {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -5186,6 +5337,7 @@ function showView(name) {
   if (name === 'history') loadHistoryView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
+  if (name === 'agents') loadAgentsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
 }

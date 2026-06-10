@@ -60,8 +60,8 @@ test('beginRun is positional with an opts 4th arg (C2), single legacy call site 
   assert.match(js, /beginRun\(data\.runId, projectDir, title, target === 'workspace' \? \{ workspaceId, workspaceName \} : \{\}\)/);
 });
 
-test('VIEW_NAMES is the 7-entry array with composer preserved (C1)', () => {
-  assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'settings'\];/);
+test('VIEW_NAMES is the 9-entry array with composer preserved (C1)', () => {
+  assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'settings'\];/);
 });
 
 test('composer-core is imported INSIDE app.js via ES6 import (C7), not a separate script tag', () => {
