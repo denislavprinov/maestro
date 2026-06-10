@@ -44,7 +44,9 @@ const DEFAULT_SPEC = {
 
 /** Channel ids: built-ins or any well-formed CUSTOM id (open vocabulary, m1-v2).
  *  Only a malformed id is warned on and dropped — a typo of a built-in becomes a
- *  custom channel and is surfaced by the validator's reachability warning instead. */
+ *  custom channel. Consumed ids are surfaced by the validator's reachability
+ *  warning; a typo'd pre-seeded id in `produces` has no warning net — the
+ *  artifact simply lands on the typo'd channel. */
 const CUSTOM_CHANNEL_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 function channelList(raw, key, field) {
   if (!Array.isArray(raw)) return undefined;
@@ -106,7 +108,11 @@ function normalizeChannelDefs(raw, key) {
     const kind = CHANNEL_DEF_KINDS.has(d.kind) ? d.kind : 'md';
     const fnRaw = typeof d.filename === 'string' ? d.filename.trim() : '';
     // basename only: a def must never escape the pipeline dir
-    const filename = fnRaw && !/[\\/]/.test(fnRaw) && !fnRaw.includes('..') ? fnRaw : `${id}.${kind}`;
+    const pathSafe = fnRaw && !/[\\/]/.test(fnRaw) && !fnRaw.includes('..');
+    if (fnRaw && !pathSafe) {
+      console.warn(`[agent-registry] ${key}.channelDefs: filename "${fnRaw}" is not a plain basename; using "${id}.${kind}"`);
+    }
+    const filename = pathSafe ? fnRaw : `${id}.${kind}`;
     out.push({ id, kind, filename });
   }
   return out;
@@ -122,7 +128,7 @@ export function collectChannelDefs(registry) {
   const defs = {};
   for (const m of Object.values(registry || {})) {
     for (const d of m.channelDefs || []) {
-      if (defs[d.id]) {
+      if (Object.hasOwn(defs, d.id)) {
         if (defs[d.id].kind !== d.kind || defs[d.id].filename !== d.filename) {
           console.warn(`[agent-registry] channel "${d.id}" redefined by "${m.key}"; first definition wins`);
         }
