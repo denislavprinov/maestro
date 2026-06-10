@@ -4,7 +4,7 @@
 // threading (allocate mints <pipelineDir>/api-spec.md), generic publish, the
 // meta uiPhase fallback, the custom verifier's own review basenames, and the
 // generic feedback-loop rewind (blocked cycle 1 -> -cycle2 suffixed artifacts).
-import { test, beforeEach, after } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,7 @@ import { writeWorkflow, resolveWorkflow } from '../src/core/workflows.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
+const prevHome = process.env.MAESTRO_HOME;
 let home, proj;
 beforeEach(async () => {
   _resetForTests();
@@ -46,9 +47,10 @@ beforeEach(async () => {
     consumes: ['spec'], produces: ['review'], optionalConsumes: [], connectsTo: '*',
   }));
 });
-after(async () => {
+afterEach(async () => {
   _resetForTests();
-  delete process.env.MAESTRO_HOME;
+  if (prevHome === undefined) delete process.env.MAESTRO_HOME;
+  else process.env.MAESTRO_HOME = prevHome;
   for (const d of [home, proj]) if (d) await rm(d, { recursive: true, force: true });
 });
 
