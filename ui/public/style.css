@@ -889,3 +889,5 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .agent-origin.origin-user { background:#EAE6F8; }
 .agents-group-label { font-size:12px; font-weight:700; opacity:.65; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.06em; }
 .agent-actions { display:flex; gap:8px; }
+.chip-select { display:flex; flex-wrap:wrap; gap:8px; }
+.chip-select label { display:inline-flex; gap:6px; align-items:center; font-size:12.5px; border:1px solid var(--line); border-radius:999px; padding:4px 10px; cursor:pointer; }

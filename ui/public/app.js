@@ -3718,8 +3718,102 @@ async function duplicateAgentCard(a) {
   } catch (err) { setAgentsMsg(err.message, 'err'); }
 }
 
-// Stub: Task 4 replaces this with the real agent editor entry point.
-function openAgentEdit() {}
+// ---- Shared agent metadata form (used by the card editor AND wizard Step 3) ---
+
+// One checkbox per option into host; values bound via .checked (never innerHTML).
+function buildChipChecks(host, options, selected) {
+  host.innerHTML = '';
+  const sel = new Set(Array.isArray(selected) ? selected : []);
+  for (const opt of options) {
+    const row = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = opt;
+    cb.checked = sel.has(opt);
+    const txt = document.createElement('span');
+    txt.textContent = opt;
+    row.append(cb, txt);
+    host.appendChild(row);
+  }
+}
+const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
+
+// Fill every .agent-f-* field under `root` from meta (+ optional markdown).
+function agentFormFill(root, meta, markdown) {
+  const channels = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+  const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
+  root.querySelector('.agent-f-name').value = meta.displayName || '';
+  root.querySelector('.agent-f-desc').value = meta.description || '';
+  root.querySelector('.agent-f-color').value = meta.color || 'amber';
+  root.querySelector('.agent-f-runner').value = meta.runnerType || 'producer';
+  buildChipChecks(root.querySelector('.agent-f-consumes'), channels, meta.consumes);
+  buildChipChecks(root.querySelector('.agent-f-optional'), channels, meta.optionalConsumes);
+  buildChipChecks(root.querySelector('.agent-f-produces'), channels, meta.produces);
+  const any = meta.connectsTo === '*' || meta.connectsTo === undefined;
+  root.querySelector('.agent-f-connect-any').checked = any;
+  buildChipChecks(root.querySelector('.agent-f-connects'), agentKeys, any ? [] : meta.connectsTo);
+  root.querySelector('.agent-f-connects').hidden = any;
+  root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
+  root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
+  root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
+  if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
+}
+
+// Read the form back into { meta, markdown }.
+function agentFormRead(root) {
+  const any = root.querySelector('.agent-f-connect-any').checked;
+  return {
+    meta: {
+      displayName: root.querySelector('.agent-f-name').value.trim(),
+      description: root.querySelector('.agent-f-desc').value.trim(),
+      color: root.querySelector('.agent-f-color').value,
+      runnerType: root.querySelector('.agent-f-runner').value,
+      consumes: chipValues(root.querySelector('.agent-f-consumes')),
+      optionalConsumes: chipValues(root.querySelector('.agent-f-optional')),
+      produces: chipValues(root.querySelector('.agent-f-produces')),
+      connectsTo: any ? '*' : chipValues(root.querySelector('.agent-f-connects')),
+      order: Number(root.querySelector('.agent-f-order').value),
+      fanOut: root.querySelector('.agent-f-fanout').checked,
+      loopSource: root.querySelector('.agent-f-loopsource').checked,
+    },
+    markdown: root.querySelector('.agent-f-md').value,
+  };
+}
+
+async function openAgentEdit(card, a) {
+  const detail = card.querySelector('.agent-detail');
+  const head = card.querySelector('.agent-head');
+  if (detail.hidden) { detail.hidden = false; head.setAttribute('aria-expanded', 'true'); }
+  const full = await fetchAgentFull(a.key);
+  if (!full) { setAgentsMsg('Could not load the agent.', 'err'); return; }
+  const pane = card.querySelector('.agent-edit-pane');
+  agentFormFill(pane, full.meta, full.markdown);
+  pane.hidden = false;
+  const anyCb = pane.querySelector('.agent-f-connect-any');
+  anyCb.onchange = () => { pane.querySelector('.agent-f-connects').hidden = anyCb.checked; };
+  pane.querySelector('.agent-edit-cancel').onclick = () => { pane.hidden = true; };
+  pane.querySelector('.agent-edit-save').onclick = () => saveAgentEdit(card, a, pane);
+}
+
+async function saveAgentEdit(card, a, pane) {
+  const msg = pane.querySelector('.agent-edit-msg');
+  msg.textContent = '';
+  msg.className = 'agent-edit-msg form-msg';
+  const body = agentFormRead(pane);
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(a.key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { msg.textContent = data.error || `HTTP ${res.status}`; msg.className = 'agent-edit-msg form-msg err'; return; }
+    pane.hidden = true;
+    state.agents = {}; // invalidate the composer palette cache (getAgentsApi memoizes)
+    setAgentsMsg('Agent saved.', 'ok');
+    await loadAgentsView();
+  } catch (err) { msg.textContent = err.message; msg.className = 'agent-edit-msg form-msg err'; }
+}
 
 if (el.agentsList) {
   el.agentsList.addEventListener('click', (e) => {
@@ -3744,7 +3838,7 @@ if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { locat
 
 // Test hook (mirrors window.__ws).
 if (typeof window !== 'undefined') {
-  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard };
+  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard, agentFormFill, agentFormRead, openAgentEdit };
 }
 
 // ---------------------------------------------------------------------------
