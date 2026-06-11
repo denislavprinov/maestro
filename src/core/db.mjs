@@ -425,6 +425,37 @@ ALTER TABLE pipeline_steps ADD COLUMN session_id TEXT;
 `;
 
 /**
+ * One sentinel per migration step: an object that step (and only that step)
+ * creates. A db whose user_version claims >= SCHEMA_VERSION but is missing a
+ * sentinel was stamped by a DIVERGED checkout whose migration numbering
+ * collided with ours (two branches both claiming the same version with
+ * different DDL). Without this check such a db fast-paths migrate() and then
+ * fails on the first INSERT with a cryptic "no such column" — silently, since
+ * run errors only surface as transient WS events.
+ */
+const SCHEMA_SENTINELS = [
+  { version: 1, sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pipelines'", what: 'table "pipelines"' },
+  { version: 2, sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sub_agents'", what: 'table "sub_agents"' },
+  { version: 3, sql: "SELECT 1 FROM pragma_table_info('sub_agents') WHERE name='ui_phase'", what: 'column "sub_agents.ui_phase"' },
+  { version: 4, sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pipeline_tasks'", what: 'table "pipeline_tasks"' },
+  { version: 5, sql: "SELECT 1 FROM pragma_table_info('pipelines') WHERE name='resume_point'", what: 'column "pipelines.resume_point"' },
+];
+
+/** Throw when a db claiming to be migrated is missing a sentinel object. */
+function assertSchemaSentinels(db, claimedVersion) {
+  for (const s of SCHEMA_SENTINELS) {
+    if (!db.prepare(s.sql).get()) {
+      throw new Error(
+        `maestro.db is stamped user_version=${claimedVersion} but ${s.what} (created by the v${s.version} ` +
+        `migration) is missing — the file was likely created by a different maestro checkout whose ` +
+        `migration numbering diverged from this one. Stop all maestro servers, back up and delete ` +
+        `maestro.db (and its -wal/-shm siblings), then restart.`
+      );
+    }
+  }
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -439,8 +470,14 @@ ALTER TABLE pipeline_steps ADD COLUMN session_id TEXT;
  * @param {DatabaseSync} db
  */
 export function migrate(db) {
-  // Fast path: an already-migrated DB needs no lock (the common re-open case).
-  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) return;
+  // Fast path: an already-migrated DB needs no lock (the common re-open case) —
+  // but only after proving the claimed version is OUR schema, not a diverged
+  // checkout's (see SCHEMA_SENTINELS).
+  const claimed = db.prepare('PRAGMA user_version').get().user_version;
+  if (claimed >= SCHEMA_VERSION) {
+    assertSchemaSentinels(db, claimed);
+    return;
+  }
 
   // First launch may have a competing migrator. BEGIN IMMEDIATE takes the write lock
   // up front (a deferred BEGIN would not lock until the first write, letting two
