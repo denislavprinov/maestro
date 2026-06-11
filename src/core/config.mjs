@@ -52,9 +52,11 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
  * The `[1m]` suffix selects the 1M-token long-context variant. Opus 4.6–4.8 and
  * Sonnet 4.6 1M ids were verified to resolve via `claude --model`; Haiku 4.5 1M
  * is intentionally omitted — the CLI rejects it ("long context beta is not yet
- * available for this subscription").
+ * available for this subscription"). Fable 5 needs no `[1m]` suffix: its context
+ * window is 1M by default (verified to resolve via `claude --model`).
  */
 export const PREDEFINED_MODELS = [
+  { id: 'claude-fable-5',         label: 'Fable 5 (1M)',    efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-7',        label: 'Opus 4.7',        efforts: ['medium', 'high', 'xhigh', 'max'] },
