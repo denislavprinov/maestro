@@ -24,6 +24,8 @@ import {
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
+import { pickFolderNative } from '../src/core/folder-dialog.mjs';
+import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
@@ -1075,6 +1077,29 @@ app.delete('/api/projects', async (req, res) => {
   try {
     res.json({ projects: await removeProject(name) });
   } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Filesystem browsing for the add-project folder selector. Hybrid picker:
+// POST /api/fs/pick-folder opens the native OS dialog (the server runs on the
+// user's machine); when it reports `unsupported` the UI falls back to an
+// in-app modal fed by GET /api/fs/dirs. Localhost-only like every route here
+// (global isLocalRequest middleware).
+app.post('/api/fs/pick-folder', async (_req, res) => {
+  try {
+    res.json(await pickFolderNative());
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/fs/dirs', async (req, res) => {
+  try {
+    res.json(await listFolders(typeof req.query.path === 'string' ? req.query.path : ''));
+  } catch (err) {
+    if (err && err.code === 'BAD_REQUEST') return badRequest(res, err.message);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });

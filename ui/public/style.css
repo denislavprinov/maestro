@@ -206,6 +206,9 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* add-project path row (input + Browse) */
+.add-project .path-row{display:flex;gap:9px;align-items:center;}
+.add-project .path-row input{flex:1 1 auto;min-width:0;}
 
 /* segmented toggle */
 .seg{display:inline-flex;background:var(--field);border-radius:12px;padding:4px;gap:4px;}
@@ -510,6 +513,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .viewer-modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;
   padding:24px;background:rgba(25,25,27,.42);}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
+/* folder browser modal (native-dialog fallback). Must come AFTER the
+   .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
+   on specificity, so source order is what lets these declarations win. */
+.folder-modal .card{width:min(560px,100%);max-height:80vh;display:flex;flex-direction:column;overflow:hidden;}
+.folder-toolbar{display:flex;gap:9px;align-items:center;margin-top:10px;}
+.folder-current{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--ink-2);}
+.folder-list{list-style:none;margin:10px 0;padding:0;flex:1 1 auto;overflow:auto;min-height:120px;
+  border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
+.folder-list .folder-item{display:block;width:100%;text-align:left;padding:7px 12px;border:0;
+  background:transparent;font-family:inherit;font-size:13px;color:var(--ink);cursor:pointer;}
+.folder-list .folder-item:hover{background:var(--line-2);}
+.folder-empty{padding:10px 12px;}
 .topnav{display:none;}
 @media (max-width:1080px){
   .topnav{display:flex;gap:6px;margin-bottom:20px;background:var(--panel);

@@ -23,3 +23,12 @@ test('app.js loads and uses the project registry', () => {
   assert.ok(appjs.includes('selectedProjectPath'), 'missing selectedProjectPath helper');
   assert.ok(appjs.includes('loadProjects'), 'missing loadProjects');
 });
+
+test('the add-project folder selector exists in markup and is wired', () => {
+  assert.ok(html.includes('id="newProjectBrowse"'), 'missing #newProjectBrowse button');
+  assert.ok(html.includes('id="folder-browser"'), 'missing #folder-browser modal');
+  assert.ok(html.includes('id="folderList"'), 'missing #folderList');
+  assert.ok(html.includes('id="folderSelect"'), 'missing #folderSelect button');
+  assert.ok(appjs.includes("fetch('/api/fs/pick-folder'"), 'app.js does not call the native picker');
+  assert.ok(appjs.includes('/api/fs/dirs'), 'app.js does not call the directory listing');
+});
