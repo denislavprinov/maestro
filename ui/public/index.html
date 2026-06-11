@@ -115,7 +115,10 @@
 
                   <div id="add-project" class="add-project hidden">
                     <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
-                    <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                    <div class="path-row">
+                      <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                      <button type="button" id="newProjectBrowse" class="btn btn-ghost btn-mini" title="Pick the project folder">Browse&hellip;</button>
+                    </div>
                     <div class="add-project-actions">
                       <button type="button" id="addProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
                       <button type="button" id="addProjectSave" class="btn btn-primary btn-mini">Save</button>
@@ -775,6 +778,26 @@
           <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
         </div>
         <pre id="viewer" class="viewer"></pre>
+      </div>
+    </div>
+
+    <!-- ===== Folder browser (fallback when no native dialog) ===== -->
+    <div id="folder-browser" class="viewer-modal folder-modal hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2>Select a folder</h2>
+          <button type="button" id="folderBrowserClose" class="btn btn-mini">Close</button>
+        </div>
+        <div class="folder-toolbar">
+          <button type="button" id="folderUp" class="btn btn-ghost btn-mini" title="Parent folder">&#8593; Up</button>
+          <button type="button" id="folderHome" class="btn btn-ghost btn-mini" title="Home folder">Home</button>
+          <code id="folderCurrent" class="folder-current"></code>
+        </div>
+        <ul id="folderList" class="folder-list"></ul>
+        <div class="add-project-actions">
+          <button type="button" id="folderSelect" class="btn btn-primary btn-mini">Select this folder</button>
+        </div>
+        <small class="hint" id="folderMsg"></small>
       </div>
     </div>
 

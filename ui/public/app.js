@@ -70,6 +70,15 @@ const el = {
   addProjectSave: $('#addProjectSave'),
   addProjectCancel: $('#addProjectCancel'),
   addProjectMsg: $('#addProjectMsg'),
+  newProjectBrowse: $('#newProjectBrowse'),
+  folderBrowser: $('#folder-browser'),
+  folderBrowserClose: $('#folderBrowserClose'),
+  folderUp: $('#folderUp'),
+  folderHome: $('#folderHome'),
+  folderCurrent: $('#folderCurrent'),
+  folderList: $('#folderList'),
+  folderSelect: $('#folderSelect'),
+  folderMsg: $('#folderMsg'),
   title: $('#title'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
@@ -2986,6 +2995,111 @@ el.addProjectSave.addEventListener('click', async () => {
   }
 });
 
+// --- Folder selector (Browse…): native OS dialog, in-app modal fallback ----
+let folderState = { path: '', parent: null, home: '' };
+
+el.newProjectBrowse.addEventListener('click', async () => {
+  el.newProjectBrowse.disabled = true;
+  setAddMsg('');
+  try {
+    const res = await fetch('/api/fs/pick-folder', { method: 'POST' });
+    const data = await safeJson(res);
+    if (res.ok && data.status === 'picked' && data.path) applyPickedFolder(data.path);
+    else if (res.ok && data.status === 'canceled') { /* user dismissed the dialog */ }
+    else if (res.ok && data.status === 'busy') setAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
+    else await openFolderBrowser(el.newProjectPath.value.trim()); // unsupported / error -> in-app fallback
+  } catch {
+    await openFolderBrowser(el.newProjectPath.value.trim());
+  } finally {
+    el.newProjectBrowse.disabled = false;
+  }
+});
+
+// Fill the path field; prefill an EMPTY name with the folder's basename.
+function applyPickedFolder(path) {
+  el.newProjectPath.value = path;
+  if (!el.newProjectName.value.trim()) {
+    const base = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    if (base) el.newProjectName.value = base;
+  }
+}
+
+async function openFolderBrowser(seedPath) {
+  el.folderBrowser.classList.remove('hidden');
+  // A stale or mistyped seed path from the text field 400s; fall back to home.
+  // Only the SEED gets this retry — navigation failures keep the current
+  // listing (loadFolders shows the error) instead of yanking the user home.
+  if (!(await loadFolders(seedPath)) && seedPath) await loadFolders('');
+}
+
+function closeFolderBrowser() {
+  el.folderBrowser.classList.add('hidden');
+}
+
+/** Load a listing into the modal. Returns true on success. */
+async function loadFolders(path) {
+  setFolderMsg('');
+  try {
+    const res = await fetch(`/api/fs/dirs?path=${encodeURIComponent(path || '')}`);
+    const data = await safeJson(res);
+    if (!res.ok) {
+      setFolderMsg(data.error || `HTTP ${res.status}`, 'err');
+      return false;
+    }
+    folderState = data;
+    renderFolders(data);
+    return true;
+  } catch (e) {
+    setFolderMsg(e.message, 'err');
+    return false;
+  }
+}
+
+function renderFolders(data) {
+  el.folderCurrent.textContent = data.path;
+  el.folderCurrent.title = data.path;
+  el.folderUp.disabled = !data.parent;
+  el.folderList.textContent = '';
+  if (!data.dirs.length) {
+    const li = document.createElement('li');
+    li.className = 'folder-empty hint';
+    li.textContent = 'No subfolders.';
+    el.folderList.appendChild(li);
+    return;
+  }
+  for (const d of data.dirs) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'folder-item';
+    btn.textContent = d.name;
+    btn.addEventListener('click', () => loadFolders(d.path));
+    li.appendChild(btn);
+    el.folderList.appendChild(li);
+  }
+}
+
+function setFolderMsg(text, kind) {
+  el.folderMsg.textContent = text || '';
+  el.folderMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+el.folderUp.addEventListener('click', () => { if (folderState.parent) loadFolders(folderState.parent); });
+el.folderHome.addEventListener('click', () => loadFolders(''));
+el.folderSelect.addEventListener('click', () => {
+  if (folderState.path) applyPickedFolder(folderState.path);
+  closeFolderBrowser();
+});
+el.folderBrowserClose.addEventListener('click', closeFolderBrowser);
+// Backdrop click (the overlay itself, not the inner card) and Escape close it,
+// matching the viewer modal's behavior.
+el.folderBrowser.addEventListener('click', (e) => {
+  if (e.target === el.folderBrowser) closeFolderBrowser();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !el.folderBrowser.classList.contains('hidden')) closeFolderBrowser();
+});
+
 el.projectDelete.addEventListener('click', async () => {
   const name = selectedProjectName();
   if (!name) return;
@@ -3588,6 +3702,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (currentView() !== 'workspace-create') return;
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return; // modal owns Escape
+  if (el.folderBrowser && !el.folderBrowser.classList.contains('hidden')) return; // modal owns Escape
   if (el.wizClose) el.wizClose.click();
 });
 
