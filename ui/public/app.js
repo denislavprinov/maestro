@@ -5899,10 +5899,10 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify, st
         `<span class="dot" style="background:${SUBS_DOT_COLOR[gstat]}"></span>` +
         `<b>${escapeHtml(labelOf(nodeId))}</b>` +
         `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat]}</span>` +
+        graphifyCountPillHtml(graphifyByGroup[nodeId]) +    // MAIN-agent badge: inline in the header, next to status
         (empty ? '' : `<span class="subs-n">${list.length} sub-agents</span>`) +
       '</div>' +
-      skillPillsHtml(skillsByGroup[nodeId]) +              // MAIN-agent pills, own row under the header
-      graphifyCountPillHtml(graphifyByGroup[nodeId]);      // MAIN-agent graphify-use badge
+      skillPillsHtml(skillsByGroup[nodeId]);                // MAIN-agent skill pills keep their own row under the header
     if (empty) {
       const note = document.createElement('div');
       note.className = 'subs-empty';
@@ -5918,9 +5918,9 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify, st
           `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
           `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
           agentTypePillHtml(s && s.subagentType) +          // raw subagent_type, inline next to the name
+          graphifyCountPillHtml(s && s.graphifyCount) +     // graphify badge: inline, right after the type pill
           `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>` +
-          skillPillsHtml(s && s.skills) +                   // per-sub-agent pills, wrap to their own row
-          graphifyCountPillHtml(s && s.graphifyCount);      // per-sub-agent graphify-use badge
+          skillPillsHtml(s && s.skills);                    // per-sub-agent skill pills keep their own wrapped row
         ul.appendChild(li);
       }
       step.appendChild(ul);

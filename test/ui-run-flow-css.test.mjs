@@ -227,6 +227,17 @@ test('skill pills: .subs-skills flex-wraps; row pills take their own full line; 
   assert.match(ruleBody('.skill-pill'), /border-radius:\s*999px/, 'pills are rounded like the house style');
 });
 
+test('graphify pill is inline & content-sized (no full-row / own-line override)', () => {
+  // base pill stays inline-block, content-sized
+  assert.match(ruleBody('.graphify-pill'), /display:\s*inline-block/, 'base pill is inline-block');
+  // the per-row full-width override is gone -> pill no longer eats a whole row
+  assert.doesNotMatch(css, /\.subs-tree li \.graphify-pill\s*\{[^}]*flex:\s*0 0 100%/,
+    'row graphify pill must not be forced to a full row');
+  // the own-line header override (direct child of .subs-step) is gone -> pill is inline in the header
+  assert.doesNotMatch(css, /\.subs-step\s*>\s*\.graphify-pill/,
+    'header graphify pill must not be a block child of .subs-step');
+});
+
 test('Agents dropdown: .subs-empty placeholder is muted', () => {
   const body = ruleBody('.subs-empty');
   assert.ok(body, '.subs-empty rule missing');

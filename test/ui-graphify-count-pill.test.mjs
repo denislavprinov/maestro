@@ -63,17 +63,44 @@ test('renderSubsTree renders a per-sub-agent graphify badge (present only when c
   assert.equal(rows[2].querySelector('.graphify-pill'), null, 'absent count -> no badge');
 });
 
-test('renderSubsTree renders the MAIN-agent graphify badge in the group header', async () => {
+test('per-sub-agent graphify badge is inline: after the type pill, before the status', async () => {
+  const { window } = await bootLive();
+  const { renderSubsTree } = window.__np;
+  const panel = window.document.createElement('div');
+  const byNode = { 'n1|1': [
+    { id: 'a1', label: 'inv A', status: 'finished', subagentType: 'Explore', graphifyCount: 3 },
+  ] };
+  renderSubsTree(panel, byNode, () => 'Plan', {}, {});
+
+  const li = panel.querySelector('.subs-tree li');
+  const kids = Array.from(li.children);
+  const idx = (sel) => kids.findIndex((el) => el.matches(sel));
+  assert.ok(idx('.agent-type-pill') >= 0, 'type pill present');
+  assert.ok(idx('.graphify-pill') >= 0, 'graphify badge present');
+  assert.ok(idx('.st') >= 0, 'status pill present');
+  assert.ok(idx('.agent-type-pill') < idx('.graphify-pill'), 'graphify sits right after the type pill');
+  assert.ok(idx('.graphify-pill') < idx('.st'), 'graphify sits before the status pill (not its own trailing row)');
+});
+
+test('renderSubsTree renders the MAIN-agent graphify badge INLINE in the group header', async () => {
   const { window } = await bootLive();
   const { renderSubsTree } = window.__np;
   const panel = window.document.createElement('div');
   const byNode = { 'n1|1': [{ id: 'a1', label: 'inv', status: 'finished' }] };
   renderSubsTree(panel, byNode, () => 'Plan', {}, { 'n1|1': 4 });
 
-  const header = panel.querySelector('.subs-step-head');
-  // the header's graphify badge sits alongside the MAIN-agent skill pills row
-  assert.equal(panel.querySelector('.subs-step .graphify-pill').textContent, 'graphify ×4');
-  assert.ok(header, 'group header rendered');
+  const head = panel.querySelector('.subs-step-head');
+  assert.ok(head, 'group header rendered');
+  // The badge must be a CHILD of the header (inline), not a stray block under .subs-step.
+  const pill = head.querySelector('.graphify-pill');
+  assert.ok(pill, 'graphify badge is inline inside the header');
+  assert.equal(pill.textContent, 'graphify ×4');
+  // It sits AFTER the status pill and BEFORE the right-pinned "N sub-agents" count.
+  const kids = Array.from(head.children);
+  const idx = (sel) => kids.findIndex((el) => el.matches(sel));
+  assert.ok(idx('.subs-stat') >= 0 && idx('.graphify-pill') >= 0, 'status + badge both in header');
+  assert.ok(idx('.subs-stat') < idx('.graphify-pill'), 'badge follows the status pill');
+  assert.ok(idx('.graphify-pill') < idx('.subs-n'), 'badge sits before the right-pinned count');
 });
 
 test('onSubagent merges graphifyCount onto the run record', async () => {

@@ -896,11 +896,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    reads as agent metadata, distinct from the skill (blue) / MCP (green) pills. */
 .subs-tree li .agent-type-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--violet-bg);color:var(--violet-ink);}
 /* graphify-use count badge (amber) — how many times an agent / sub-agent invoked the
-   graphify CLI. Rendered in the group header (MAIN agent) and per sub-agent row, beside
-   the skill pills; amber keeps it distinct from skill (blue) / MCP (green) / type (violet). */
+   graphify CLI. Rendered INLINE: in the phase/node header next to the status, and on a
+   sub-agent row right after the violet type pill. inline-block + parent flex `gap` size
+   it to its text; amber keeps it distinct from skill (blue) / MCP (green) / type (violet). */
 .graphify-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--amber-bg);color:var(--amber-ink);}
-.subs-step > .graphify-pill{margin-top:8px;}
-.subs-tree li .graphify-pill{flex:0 0 100%;margin-top:6px;}
 
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */
 .run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
