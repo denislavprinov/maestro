@@ -164,9 +164,7 @@ wss.on('connection', (ws, req) => {
   send(ws, { type: 'hello', runs: summarizeRuns() });
 
   if (id && runs.has(id)) {
-    const entry = runs.get(id);
-    for (const ev of entry.events) send(ws, ev);
-    sendStateSnapshot(ws, entry);
+    replayEntry(ws, runs.get(id));
   }
 
   ws.on('close', () => sockets.delete(ws));
@@ -183,9 +181,7 @@ wss.on('connection', (ws, req) => {
     }
     const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId) : null;
     if (subId && runs.has(subId)) {
-      const entry = runs.get(subId);
-      for (const ev of entry.events) send(ws, ev);
-      sendStateSnapshot(ws, entry);
+      replayEntry(ws, runs.get(subId));
     }
   });
 });
@@ -216,6 +212,24 @@ function sendStateSnapshot(ws, entry) {
   }
 }
 
+// Replay a run/scan/gen entry's buffered events to a (re)connecting socket, then
+// push a current state snapshot. A buffered `question` event lingers in the ring
+// buffer forever, but is replayed ONLY while it is still the active pending
+// question (entry.pendingQuestion, the single source of truth that also seeds
+// hello). Once answered — or superseded by a newer question — replaying it would
+// resurrect a clarify/gate card on refresh: a zombie that paints a false "paused"
+// state over an already-running pipeline and routes its answer to a no-longer-
+// pending id ("answer() ignored"). So a question whose id no longer matches the
+// active pending question is skipped on replay; every other event passes through.
+function replayEntry(ws, entry) {
+  const pendingId = (entry.pendingQuestion && entry.pendingQuestion.id) || null;
+  for (const ev of entry.events) {
+    if (ev.type === 'question' && ev.id !== pendingId) continue;
+    send(ws, ev);
+  }
+  sendStateSnapshot(ws, entry);
+}
+
 /** Broadcast an already-tagged event object to every open socket. */
 function broadcast(obj) {
   const text = JSON.stringify(obj);
@@ -228,6 +242,32 @@ function broadcast(obj) {
       }
     }
   }
+}
+
+// Append a tagged event to an entry's ring buffer (runId LAST so the runs-Map key
+// always wins over any id the orchestrator stamped). Shared by the live wire
+// (record) and out-of-band resolutions (resolvePending) so both honor MAX_BUFFER.
+function bufferEvent(entry, event) {
+  const tagged = { ...event, runId: entry.id };
+  entry.events.push(tagged);
+  if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
+  return tagged;
+}
+
+// Clear an entry's active pending question and tell EVERY connected client to drop
+// its clarify/gate card — not just the tab that answered. A second tab's post-answer
+// `phase` event is gated on its own _answering flag, so without this broadcast it
+// keeps showing a stale card (and a false "paused" stepper) until the run ends.
+// Buffered (so a later reconnect replays the resolution) AND broadcast live. The
+// single chokepoint for clearing entry.pendingQuestion: answer, stop, pause, done,
+// error all route here. Idempotent + id-aware: a no-op when nothing is pending, or
+// when `id` is given and does not match the active question (a stale/dup ack).
+function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
+  const pq = entry && entry.pendingQuestion;
+  if (!pq || (id && pq.id !== id)) return false;
+  entry.pendingQuestion = null;
+  broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  return true;
 }
 
 function summarizeRuns() {
@@ -269,13 +309,11 @@ function wireRun(entry) {
   const { id, orch } = entry;
 
   const record = (event) => {
-    // runId LAST so the runs-Map key always wins. The orchestrator's `subagent`
-    // delta historically carried its own runId (state.id = pipeline SHORT id, NOT
-    // this UUID); tagging the UUID last stops the client spawning a phantom run.
-    // Mirrors wireScan's identical `{ ...event, scanId }` contract below.
-    const tagged = { ...event, runId: id };
-    entry.events.push(tagged);
-    if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
+    // bufferEvent tags runId LAST so the runs-Map key always wins. The
+    // orchestrator's `subagent` delta historically carried its own runId
+    // (state.id = pipeline SHORT id, NOT this UUID); tagging the UUID last stops
+    // the client spawning a phantom run.
+    const tagged = bufferEvent(entry, event);
     broadcast(tagged);
     return tagged;
   };
@@ -289,11 +327,11 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
-        entry.pendingQuestion = null;
+        resolvePending(entry, { reason: entry.status });
       }
       if (name === 'error') {
         entry.status = 'error';
-        entry.pendingQuestion = null;
+        resolvePending(entry, { reason: 'error' });
       }
       if (name === 'phase') {
         entry.status = 'running';
@@ -672,7 +710,7 @@ app.post('/api/answer', (req, res) => {
   const entry = runs.get(runId);
   try {
     entry.orch.answer(id, payload);
-    if (entry.pendingQuestion && entry.pendingQuestion.id === id) entry.pendingQuestion = null;
+    resolvePending(entry, { id, reason: 'answered' });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -690,7 +728,7 @@ app.post('/api/stop', (req, res) => {
   try {
     entry.orch.stop();
     entry.status = 'stopped';
-    entry.pendingQuestion = null;
+    resolvePending(entry, { reason: 'stopped' });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -710,6 +748,7 @@ app.post('/api/pause', (req, res) => {
     const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
     if (!ok) return badRequest(res, 'cannot pause in the current state');
     entry.status = 'pausing';
+    resolvePending(entry, { reason: 'paused' });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
