@@ -125,7 +125,7 @@ Phases, in order, driven by the deterministic orchestrator state machine:
    commit if none); record a checkpoint ref so the reviewer can diff against it.
 3. **plan (planner)** — single clarify round then plan.
    - **clarify:** planner asks one round of conceptual questions whenever it would otherwise
-     assume. Each question has exactly **3 options + a free-text field**. Persist the Q&A.
+     assume. Each question has **2–4 options + a free-text field** (up to 8 per round). Persist the Q&A.
    - **plan:** planner writes the plan markdown (must include code snippets) and appends
      a `## Clarifications (Q&A)` section with what was asked and answered.
 4. **refine loop (plan-refiner)** — `cycle++`; refiner reviews the latest plan
@@ -157,9 +157,9 @@ JSON contracts + validators shared by agents and orchestrator.
 - `SEVERITIES = ["critical","major","minor","suggestion"]`
   - The canonical, ordered severity list. Index order = descending severity.
 
-- `readClarify(pipelineDir) -> { questions: [ { id, question, options: [s,s,s], allowFreeText:true } ] } | { questions: [] }`
+- `readClarify(pipelineDir) -> { questions: [ { id, question, options: [ ... 2–4 strings ], allowFreeText:true } ] } | { questions: [] }`
   - Reads `clarify.json` from `pipelineDir`. **Missing file => `{ questions: [] }`.**
-  - Each question: `id` (string), `question` (string), `options` (array of exactly 3
+  - Each question: `id` (string), `question` (string), `options` (array of **2–4**
     strings), `allowFreeText` (boolean, `true`).
 
 - `writeClarifyAnswers(pipelineDir, answers) -> void`
@@ -338,7 +338,7 @@ Spawn Claude headless, stream events, AbortSignal kill, MOCK mode.
   `MOCK_ROLE: planner-clarify` and `MOCK_OUT: <path>`). Mock must be deterministic.
 
   Role behaviors (markers, parsed from prompt/systemPrompt):
-  - `planner-clarify` => write `clarify.json` with **ONE** sample question (3 options +
+  - `planner-clarify` => write `clarify.json` with **two** sample questions (2 and 4 options +
     `allowFreeText:true`).
   - `planner-plan` => write the plan markdown file at the path given in the prompt,
     including a code snippet and a `## Clarifications (Q&A)` section.
@@ -511,7 +511,7 @@ Subcommands:
   registry, falling back to the cwd when the project is not onboarded.
 
 Behavior: subscribes to core events; renders phases + streams logs to the terminal; on
-a `question` event uses `readline` to show 3 options + free-text (clarify) or the two
+a `question` event uses `readline` to show its 2–4 options + free-text (clarify) or the two
 gate choices + issue list, then calls `answer()`. On `done`, prints the pipeline dir.
 `Ctrl+C` ladder: the 1st gracefully **pauses** (prints the `maestro resume <id>` hint;
 falls back to stop when not pausable), the 2nd stops, the 3rd hard-exits (130).
@@ -586,12 +586,12 @@ column.
 ```
 clarify(
   pipeline_id  TEXT PRIMARY KEY  REFERENCES pipelines(id) ON DELETE CASCADE,
-  questions    TEXT  -- (JSON) { questions: [ { id, question, options:[s,s,s], allowFreeText:true } ] }
+  questions    TEXT  -- (JSON) { questions: [ { id, question, options:[2..4 strings], allowFreeText:true } ] }
   answers      TEXT  -- (JSON) { answers:   [ { id, question, choice } ] }
 )
 ```
-- `questions` JSON payload shape is unchanged from the old `clarify.json`: `options` MUST
-  contain exactly 3 strings and `allowFreeText` MUST be `true`.
+- `questions` JSON payload shape: `options` MUST
+  contain **2–4** strings and `allowFreeText` MUST be `true`.
 - **No row, or `questions` NULL, means "no open questions"** => `{ "questions": [] }` (the
   former "missing file" semantics).
 - `answers` JSON is the old `clarify-answers.json` body; `choice` is the chosen option text

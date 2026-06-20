@@ -19,7 +19,7 @@ node <MAESTRO_REPO>/src/cli/maestro.mjs --project "$PWD" --prompt "<args>"
 
 - `--project "$PWD"` — operate inside the user's current project (the orchestrator does all file writes here).
 - `--prompt "<args>"` — everything the user typed after `/maestro`. Quote it.
-- The CLI streams phase changes and live agent logs to the terminal. When the planner needs a decision it shows 3 options plus a free-text field; when a refine/review loop hits its cap it shows the open critical/major issues and asks whether to continue or approve another cycle. Answer interactively.
+- The CLI streams phase changes and live agent logs to the terminal. When the clarify step needs a decision it shows each question's 2–4 options plus a free-text field; when a refine/review loop hits its cap it shows the open critical/major issues and asks whether to continue or approve another cycle. Answer interactively.
 - On completion it prints the pipeline directory under `ai-artifacts/pipelines/`.
 
 Useful flags (pass through when the user asks):

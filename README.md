@@ -21,7 +21,7 @@ A deterministic state machine then runs the agents of the selected workflow in s
 clears quality gates:
 
 1. **Planner** writes an initial plan (with code snippets) and, instead of *assuming*
-   anything, asks you conceptual questions — each with **3 options plus a free-text
+   anything, asks you conceptual questions — each with **2–4 options plus a free-text
    field**. The Q&A is appended to the plan so reviewers see it.
 2. **Plan Refiner** reviews the plan (including its code snippets), writes a refined
    `-v2`, `-v3`, ... and re-runs until only minor/suggestion issues remain (or you
@@ -96,7 +96,7 @@ Then open the printed URL (default `http://localhost:4317`). The UI lets you:
   with optional extra files;
 - watch a **steps tracker** (preflight / plan / refine #N / implement / review #N /
   done);
-- answer **clarify questions** (3 options + free text) and **loop gates** ("Don't have
+- answer **clarify questions** (2–4 options + free text) and **loop gates** ("Don't have
   another cycle and continue" / "I approve another cycle", with the open critical/major
   issues shown);
 - follow a **live streaming log**;
@@ -168,7 +168,7 @@ Set `MAESTRO_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 
 | Agent | File | Role |
 | --- | --- | --- |
-| Planner | `agents/maestro-planner.md` | Initial plan with code snippets; asks conceptual questions (3 options + free text) instead of assuming; appends Q&A to the plan. |
+| Planner | `agents/maestro-planner.md` | Initial plan with code snippets; asks conceptual questions (2–4 options + free text) instead of assuming; appends Q&A to the plan. |
 | Plan Refiner | `agents/maestro-plan-refiner.md` | Reviews + refines the plan (and its code snippets); writes `-vN`; emits a severity-tagged review per cycle. |
 | Plan Review | `agents/maestro-plan-reviewer.md` | Reviews the plan (without rewriting it); writes review markdown + JSON; on blocking issues bounces back to the planner for a cold re-plan. |
 | Implementer | `agents/maestro-implementer.md` | Follows the latest plan with no deviation; TDD red-green-refactor; also runs in "fix" mode against a review. |

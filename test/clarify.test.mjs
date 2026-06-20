@@ -99,16 +99,34 @@ test('clarify runs exactly one round (no clarify phase past cycle 1)', async () 
 
 import { normalizeClarify } from '../src/core/protocol.mjs';
 
-test('normalizeClarify caps questions at MAX_CLARIFY_QUESTIONS (4)', () => {
+test('normalizeClarify caps questions at MAX_CLARIFY_QUESTIONS (8)', () => {
   const many = {
-    questions: Array.from({ length: 9 }, (_, i) => ({
+    questions: Array.from({ length: 12 }, (_, i) => ({
       id: `q${i}`,
       question: `Question ${i}?`,
       options: ['a', 'b', 'c'],
     })),
   };
   const out = normalizeClarify(many);
-  assert.equal(out.questions.length, 4);
+  assert.equal(out.questions.length, 8);
+});
+
+test('normalizeClarify allows 2–4 options and never pads', () => {
+  const out = normalizeClarify({
+    questions: [
+      { id: 'binary', question: 'A or B?', options: ['A', 'B'] },                 // 2 kept
+      { id: 'triple', question: 'Three?', options: ['x', 'y', 'z'] },             // 3 kept
+      { id: 'quad',   question: 'Four?',  options: ['1', '2', '3', '4'] },        // 4 kept
+      { id: 'over',   question: 'Five?',  options: ['1', '2', '3', '4', '5'] },   // capped to 4
+      { id: 'blanks', question: 'Blanks?', options: ['real', '', '  ', 'b'] },    // blanks dropped
+    ],
+  });
+  assert.deepEqual(out.questions[0].options, ['A', 'B']);
+  assert.deepEqual(out.questions[1].options, ['x', 'y', 'z']);
+  assert.deepEqual(out.questions[2].options, ['1', '2', '3', '4']);
+  assert.deepEqual(out.questions[3].options, ['1', '2', '3', '4']);
+  assert.deepEqual(out.questions[4].options, ['real', 'b']);
+  assert.ok(out.questions.every((q) => q.allowFreeText === true)); // still forced true
 });
 
 import { spawnSync } from 'node:child_process';

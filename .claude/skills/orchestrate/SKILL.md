@@ -53,14 +53,18 @@ cannot set it per subagent.
 ## Step 1 — Clarify (single round)
 
 1. Spawn the **maestro-planner** subagent in CLARIFY mode. Task prompt must include:
-   `MODE: clarify`, the pipeline dir, the graph instruction, and the user's task.
-   Instruct it to write `<pipelineDir>/clarify.json` (the existing contract: at most
-   4 questions, each with exactly 3 options, `allowFreeText: true`).
-2. Read `<pipelineDir>/clarify.json`. If `questions` is empty, skip to Step 2 (there
-   is no re-ask loop — single round only).
-3. Otherwise present the questions with **AskUserQuestion** — one question per
-   `clarify.json` entry (cap 4), its 3 options as the choices; the tool's automatic
-   "Other" field is the free-text path. Write the answers to
+   `MODE: clarify`, the pipeline dir, the graph instruction, and the user's task. Instruct it to
+   write `<pipelineDir>/clarify.json` (the contract: **up to 8** questions, each with **2–4**
+   options, `allowFreeText: true`; empty `questions` array when nothing is materially open).
+2. Read `<pipelineDir>/clarify.json`. If `questions` is empty, skip to Step 2 (single round only —
+   there is no re-ask loop).
+3. Otherwise present the questions with **AskUserQuestion**. That tool accepts at most **4
+   questions per call** and **2–4 options per question**, so **batch** the (up to 8) questions into
+   groups of ≤4 and make one call per group. Each `clarify.json` entry maps to one question, its
+   options to the choices; the tool's automatic "Other" field is the free-text path. (If an entry
+   has fewer than 2 options, AskUserQuestion cannot take it verbatim — add one synthetic choice
+   "Something else (type your own)" so the call has the required 2 options; the "Other" field still
+   captures free text.) Collect every answer and write them to
    `<pipelineDir>/clarify-answers.json` as `{ "answers": [ { "id", "question", "choice" } ] }`.
 
 ## Step 2 — Plan
