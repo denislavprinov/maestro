@@ -34,8 +34,6 @@ import {
 import { runWorkspaceScan } from './phases.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 
-// Hard cap on the delivered description (mirrors the run-time injection cap, §5.5).
-const DESC_CAP = 2000;
 // The scanning agent's name in the prompt-role/registry sense (drives the .md body
 // it loads; the MOCK_ROLE marker differs — workspace-scan — and is set inside
 // runWorkspaceScan, C3). The off-pipeline scanner body is NOT loaded by the
@@ -161,7 +159,7 @@ class WorkspaceScan extends EventEmitter {
 
       // ── PHASE 3: synthesize ──────────────────────────────────────────────────
       this._setPhase('synthesize', 'synthesizing the interconnection description…');
-      const description = this._capDescription(raw);
+      const description = String(raw || '').trim();          // full text, no cap (was this._capDescription(raw))
       if (!description) throw new Error('the scan produced an empty description');
 
       this.status = 'done';
@@ -381,22 +379,6 @@ class WorkspaceScan extends EventEmitter {
   }
 
   // ── small utilities ───────────────────────────────────────────────────────────
-
-  // Code-point-aware truncation (mirrors artifacts.mjs#freezeDescription): accumulate
-  // whole code points until the next would push past DESC_CAP-1 code units, reserving
-  // one unit for the ellipsis — so it never leaves a lone surrogate before the '…'.
-  // The result is never longer than DESC_CAP code units.
-  _capDescription(raw) {
-    const desc = String(raw || '').trim();
-    if (desc.length <= DESC_CAP) return desc;
-    const budget = DESC_CAP - 1;
-    let out = '';
-    for (const cp of desc) {            // iterates by code point, never mid-pair
-      if (out.length + cp.length > budget) break;
-      out += cp;
-    }
-    return out + '…';
-  }
 
   async _loadScannerBody() {
     if (!this.agentsDir) return '';

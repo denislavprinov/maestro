@@ -141,16 +141,19 @@ test('run() (mock): scan-progress.message CHANGES across events (never a static 
   assert.ok(messages.some((m) => /investigat/i.test(m)), `an investigating message; saw ${messages.join(' | ')}`);
 });
 
-test('run() (mock): description hard-truncated to <=2000 chars with an ellipsis', async () => {
+test('run() (mock): the delivered description is NOT truncated (no cap, no ellipsis)', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
-  // A very long name balloons the templated description past the 2000-char cap.
+  // A very long name balloons the templated description well past the old 2000-char cap.
+  // (The mock scanner templates `name` verbatim into `# Workspace: <name>`, so the 4000-char
+  // run appears contiguously — this is the same mechanism the old test used to exceed 2000.)
   const longName = 'X'.repeat(4000);
   const { events } = await runScan({ projectPaths: [a, b], name: longName });
   const d = events.find((e) => e.type === 'scan-done');
   assert.ok(d, 'scan-done emitted');
-  assert.ok(d.description.length <= 2000, `description capped at 2000, got ${d.description.length}`);
-  assert.ok(d.description.endsWith('…'), 'truncated text ends with an ellipsis');
+  assert.ok(d.description.length > 2000, `full description delivered, got ${d.description.length}`);
+  assert.ok(!d.description.endsWith('…'), 'no truncation ellipsis');
+  assert.ok(d.description.includes(longName), 'the full ballooned content is present verbatim');
 });
 
 test('run() (mock): leaves the scratch dir removed in finally (no tmp/scan leak)', async () => {

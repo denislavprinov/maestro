@@ -453,9 +453,6 @@ export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
   } catch { /* best-effort */ }
 }
 
-/** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
-const WORKSPACE_DESCRIPTION_CAP = 2000;
-
 /**
  * Convert an arbitrary string to a safe kebab-case slug.
  * - Lowercases, replaces non-alphanumerics with hyphens, collapses repeats,
@@ -638,28 +635,15 @@ function shortId() {
 }
 
 /**
- * Freeze a workspace description into a run: hard cap at WORKSPACE_DESCRIPTION_CAP
- * total chars (.length, i.e. UTF-16 code units), truncating with a trailing
- * ellipsis when over (the ellipsis counts toward the cap so the result is never
- * longer than the cap). Cap-on-freeze only — the editable registry copy in
- * workspaces.json is never truncated.
- *
- * Truncation is code-point aware: it accumulates whole code points until the next
- * one would push past CAP-1 code units, so it never splits a surrogate pair (a
- * naive s.slice(0, CAP-1) could leave a lone surrogate before the ellipsis).
+ * Freeze a workspace description into a run: take a VERBATIM snapshot of the text so
+ * later registry edits never retroactively alter a started run. No length cap — the
+ * description's size is bounded only by the workspace-scanner prompt. Non-strings
+ * become ''.
  * @param {string} text
  * @returns {string}
  */
 function freezeDescription(text) {
-  const s = typeof text === 'string' ? text : '';
-  if (s.length <= WORKSPACE_DESCRIPTION_CAP) return s;
-  const budget = WORKSPACE_DESCRIPTION_CAP - 1; // reserve one code unit for the ellipsis
-  let out = '';
-  for (const cp of s) {                          // iterates by code point, never mid-pair
-    if (out.length + cp.length > budget) break;
-    out += cp;
-  }
-  return out + '…';
+  return typeof text === 'string' ? text : '';
 }
 
 /**
@@ -681,7 +665,7 @@ function resolveAgainst(base, p) {
  * (target:'workspace', workspaceId/Key/Name, frozen workspaceDescription, sorted
  * projectKeys, projects[], empty checkpointRefs/branches), and a frozen
  * workspace-description.md snapshot is written into the pipeline dir. The frozen
- * description is hard-capped at 2000 chars (cap-on-freeze; the editable registry
+ * description is frozen verbatim (cap-on-freeze snapshot, no length cap; the editable registry
  * copy is untouched). `projectDir` is the PRIMARY member (projects[0] after sort).
  * Absent the workspace opts the single-project path is byte-identical.
  *
@@ -694,7 +678,7 @@ function resolveAgainst(base, p) {
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
  * @param {string} [opts.workspaceId]    == workspaceKey
  * @param {string} [opts.workspaceName]
- * @param {string} [opts.workspaceDescription]  frozen verbatim (capped at 2000)
+ * @param {string} [opts.workspaceDescription]  frozen verbatim (no cap)
  * @param {Array<{projectKey,projectDir,projectName}>} [opts.projects]  sorted members
  * @returns {Promise<{id:string, dir:string, promptText:string}>}
  */
@@ -782,7 +766,7 @@ export async function createPipeline(projectDir, opts = {}) {
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
-  // The description is FROZEN here (capped at 2000) so later registry edits never
+  // The description is FROZEN here verbatim (no cap) so later registry edits never
   // retroactively alter a started run; branches/checkpointRefs start empty and are
   // populated by the orchestrator at worktree/checkpoint setup.
   if (workspaceKey) {
