@@ -410,6 +410,7 @@ const MOCK_FANOUT_ROLES = new Set([
 async function emitMockSubAgents(role, onEvent, signal) {
   if (!MOCK_FANOUT_ROLES.has(role)) return;
   const labels = ['investigate area A', 'investigate area B'];
+  const types = ['general-purpose', 'Explore'];   // exercise both a built-in and a named type
   const ids = labels.map((_, i) => `mock_${role}_${i + 1}`);
 
   // (1) MAIN-agent skill use (no parent_tool_use_id) -> the step/group header gets a pill.
@@ -423,7 +424,7 @@ async function emitMockSubAgents(role, onEvent, signal) {
   safeEmit(onEvent, {
     type: 'assistant',
     raw: { type: 'assistant', message: { content: ids.map((id, i) => ({
-      type: 'tool_use', id, name: 'Agent', input: { description: labels[i], subagent_type: 'general-purpose' },
+      type: 'tool_use', id, name: 'Agent', input: { description: labels[i], subagent_type: types[i] },
     })) } },
   });
   await new Promise((r) => setTimeout(r, 0));

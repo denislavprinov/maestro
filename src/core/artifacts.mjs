@@ -254,7 +254,7 @@ export function readPipelineExtras(pipelineId) {
  * @param {string} pipelineId
  * @param {{id:string, label?:string, nodeId?:string, stepIndex?:number, cycle?:number,
  *          stepKey?:string, status?:string, startedAt?:string, finishedAt?:string,
- *          durationMs?:number, tokens?:number, costUsd?:number}} rec
+ *          durationMs?:number, tokens?:number, costUsd?:number, subagentType?:string}} rec
  */
 export function upsertSubAgent(pipelineId, rec) {
   if (!pipelineId || !rec || !rec.id) return;
@@ -262,9 +262,9 @@ export function upsertSubAgent(pipelineId, rec) {
     tx(() => {
       getDb().prepare(`
         INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
-          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills)
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type)
         VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
-          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills)
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills,@subagent_type)
         ON CONFLICT(pipeline_id, id) DO UPDATE SET
           status      = excluded.status,
           step_key    = COALESCE(excluded.step_key, step_key),
@@ -278,7 +278,8 @@ export function upsertSubAgent(pipelineId, rec) {
           tokens      = COALESCE(excluded.tokens, tokens),
           cost_usd    = COALESCE(excluded.cost_usd, cost_usd),
           ui_phase    = COALESCE(excluded.ui_phase, ui_phase),
-          skills      = COALESCE(excluded.skills, skills)
+          skills      = COALESCE(excluded.skills, skills),
+          subagent_type = COALESCE(excluded.subagent_type, subagent_type)
       `).run({
         pipeline_id: pipelineId,
         id: rec.id,
@@ -295,6 +296,7 @@ export function upsertSubAgent(pipelineId, rec) {
         cost_usd: Number.isFinite(rec.costUsd) ? rec.costUsd : null,
         ui_phase: rec.uiPhase ?? null,
         skills: s(rec.skills),   // s() = JSON.stringify or null; growing supersets overwrite via COALESCE
+        subagent_type: rec.subagentType ?? null,   // scalar TEXT: bound directly (no s() JSON wrap)
       });
     });
   } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
@@ -309,13 +311,14 @@ export function upsertSubAgent(pipelineId, rec) {
  * @param {string} pipelineId
  * @returns {Array<{id:string, label:string|null, nodeId:string|null, stepIndex:number|null,
  *   cycle:number|null, stepKey:string|null, status:string, startedAt:string|null,
- *   finishedAt:string|null, durationMs:number|null, tokens:number|null, costUsd:number|null}>}
+ *   finishedAt:string|null, durationMs:number|null, tokens:number|null, costUsd:number|null,
+ *   subagentType:string|null}>}
  */
 export function listSubAgents(pipelineId) {
   if (!pipelineId) return [];
   return getDb().prepare(`
     SELECT id, label, node_id, step_index, cycle, step_key, status,
-           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills
+           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type
     FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
   `).all(pipelineId).map((r) => ({
     id: r.id,
@@ -332,6 +335,7 @@ export function listSubAgents(pipelineId) {
     costUsd: r.cost_usd ?? null,
     uiPhase: r.ui_phase ?? null,
     skills: j(r.skills, []),     // NULL -> [] so the UI always has an array (no pills)
+    subagentType: r.subagent_type ?? null,   // scalar TEXT: mapped directly (no j() parse)
   }));
 }
 
