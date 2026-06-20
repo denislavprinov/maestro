@@ -997,6 +997,62 @@ function subsByNodeCycleArrays(subAgents) {
   return out;
 }
 
+// Set of manifest node ids that are real agents (cell kind 'agents') — EXCLUDES the
+// preflight/done bookends so they never appear as Agents-dropdown groups. Driven by
+// the run's stepper (manifestFor falls back to CLIENT_DEFAULT_STEPPER when absent).
+function agentNodeIdSet(stepper) {
+  const m = manifestFor(stepper);
+  const set = new Set();
+  m.steps.forEach((cell) => {
+    if (cell && cell.kind === 'agents') (cell.nodes || []).forEach((n) => set.add(n.id));
+  });
+  return set;
+}
+
+// Ordered {`${nodeId}|${cycle}`: Array<sub>} for the Agents dropdown: ONE group per
+// MAIN agent that RAN — derived from state.steps[] filtered to manifest 'agents' nodes,
+// in step order — each carrying its sub-agent rows (subsByNodeCycleArrays) or [] when it
+// spawned none. This is what makes the dropdown list every main agent (incl. graphify/
+// skill-only ones), not just spawners. Any sub-agent group with no matching step row is
+// appended last (defensive) so existing sub rows are never dropped.
+function subsGroupsForRender(subAgents, steps, stepper) {
+  const subsByKey = subsByNodeCycleArrays(subAgents);
+  const agentIds = agentNodeIdSet(stepper);
+  const out = {};
+  for (const st of Array.isArray(steps) ? steps : []) {
+    if (!st || st.nodeId == null || !agentIds.has(st.nodeId)) continue;
+    const key = `${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`;
+    if (!(key in out)) out[key] = subsByKey[key] || [];
+  }
+  for (const key of Object.keys(subsByKey)) {
+    if (!(key in out)) out[key] = subsByKey[key];
+  }
+  return out;
+}
+
+// Main-agent step status -> group header status ('run' | 'done' | 'stop'). A step written by
+// _nodeStep (src/core/orchestrator.mjs:1738) carries 'start' | 'done' | 'error' | 'stopped' |
+// 'paused'. Map 'done' -> done, the halts 'stopped'/'error' -> stop, and treat 'start' and the
+// transient 'paused' as in-flight 'run'.
+function stepGroupStatus(status) {
+  if (status === 'done') return 'done';
+  if (status === 'stopped' || status === 'error') return 'stop';
+  return 'run'; // 'start' (running) and 'paused' both read as in-flight
+}
+
+// {`${nodeId}|${cycle}`: 'run'|'done'|'stop'} for MAIN-agent steps (filtered to 'agents'
+// nodes). Used to colour a group header when that agent spawned NO sub-agents (an empty
+// group has no rows for subGroupStatus to roll up).
+function stepStatusByKey(steps, stepper) {
+  const agentIds = agentNodeIdSet(stepper);
+  const out = {};
+  for (const st of Array.isArray(steps) ? steps : []) {
+    if (!st || st.nodeId == null || !agentIds.has(st.nodeId)) continue;
+    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = stepGroupStatus(st.status);
+  }
+  return out;
+}
+
 // {`${nodeId}|${cycle}`: string[]} of MAIN-agent skills, from state.steps[]. Keys
 // by the SAME nodeId|cycle composite as subsByNodeCycleArrays (cycle ?? 0) so
 // renderSubsTree looks up a group's header skills by its group key. NOTE: this is
@@ -1042,7 +1098,21 @@ function cyclesPerNode(subAgents) {
 // nodeId, then by uiPhase (id-agnostic fallback when the real stepper is absent),
 // then the raw id. Appends "· cycle N" only when that node spans >1 cycle (so
 // single-cycle steps like Plan render exactly as before).
-function cycleAwareLabel(stepper, subAgents) {
+// Map<nodeId, Set<cycle>> from composite `nodeId|cycle` keys (the rendered group set).
+function cyclesFromKeys(keys) {
+  const m = new Map();
+  for (const key of Array.isArray(keys) ? keys : []) {
+    const i = String(key).indexOf(CYCLE_KEY_SEP);
+    const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
+    const cycle = i >= 0 ? (Number(String(key).slice(i + 1)) || 0) : 0;
+    let set = m.get(nodeId);
+    if (!set) { set = new Set(); m.set(nodeId, set); }
+    set.add(cycle);
+  }
+  return m;
+}
+
+function cycleAwareLabel(stepper, subAgents, groupKeys) {
   const byId = nodeLabelLookup(stepper);              // nodeId -> label (raw id fallback)
   const m = manifestFor(stepper);
   const phaseToLabel = {};                            // uiPhase -> label
@@ -1051,7 +1121,12 @@ function cycleAwareLabel(stepper, subAgents) {
   for (const s of Array.isArray(subAgents) ? subAgents : []) {
     if (s && s.nodeId != null && s.uiPhase != null) idToPhase[s.nodeId] = s.uiPhase;
   }
-  const multi = cyclesPerNode(subAgents);
+  // Cycle-suffix multiplicity over the RENDERED group set when provided (so a node shown
+  // across >1 cycle gets "· cycle N" even on cycles that spawned no sub-agents); falls
+  // back to sub-agent-derived cycles for legacy 2-arg callers.
+  const multi = Array.isArray(groupKeys) && groupKeys.length
+    ? cyclesFromKeys(groupKeys)
+    : cyclesPerNode(subAgents);
   return (key) => {
     const i = String(key).indexOf(CYCLE_KEY_SEP);
     const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
@@ -1860,6 +1935,9 @@ if (typeof window !== 'undefined') {
     subsByNode,
     subsByNodeArrays,
     subsByNodeCycleArrays,
+    subsGroupsForRender,
+    agentNodeIdSet,
+    stepStatusByKey,
     cyclesPerNode,
     cycleAwareLabel,
     subAgentsOf,
@@ -5286,7 +5364,15 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents), stepSkillsFromSteps(data.state.steps), stepGraphifyFromSteps(data.state.steps));
+    if (histSubsBar) {
+      const groups = subsGroupsForRender(data.state.subAgents, data.state.steps, data.state.stepper);
+      paintSubsBar(
+        histSubsBar, groups,
+        cycleAwareLabel(data.state.stepper, data.state.subAgents, Object.keys(groups)),
+        stepSkillsFromSteps(data.state.steps), stepGraphifyFromSteps(data.state.steps),
+        stepStatusByKey(data.state.steps, data.state.stepper),
+      );
+    }
     // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
     paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
@@ -5683,11 +5769,12 @@ function subsPillText(byNode) {
 // Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
 // [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
 // handler is bound once (dataset guard), the count/text repaint every call.
-function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify) {
+function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify, statusByKey) {
   if (!barEl) return;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
-  const total = Object.values(groups).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
-  if (total === 0) { barEl.hidden = true; return; }
+  // Show whenever at least one main agent ran (>=1 group), not just when sub-agents
+  // exist — so graphify/skill-only agents are visible. Hidden only when nothing ran.
+  if (Object.keys(groups).length === 0) { barEl.hidden = true; return; }
   barEl.hidden = false;
 
   const btn = barEl.querySelector('.btn-subs');
@@ -5701,6 +5788,7 @@ function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify) {
   barEl._subsLabelOf = labelFn;
   barEl._subsStepSkills = stepSkills && typeof stepSkills === 'object' ? stepSkills : {};
   barEl._subsStepGraphify = stepGraphify && typeof stepGraphify === 'object' ? stepGraphify : {};
+  barEl._subsStatusByKey = statusByKey && typeof statusByKey === 'object' ? statusByKey : {};
 
   const { text, active } = subsPillText(groups);
   if (count) {
@@ -5710,7 +5798,7 @@ function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify) {
 
   // Re-render an already-open panel in place so live spawns/finishes reflect immediately.
   if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
-    renderSubsTree(panel, groups, labelFn, barEl._subsStepSkills, barEl._subsStepGraphify);
+    renderSubsTree(panel, groups, labelFn, barEl._subsStepSkills, barEl._subsStepGraphify, barEl._subsStatusByKey);
   }
 
   if (btn && btn.dataset.bound !== '1') {
@@ -5720,7 +5808,7 @@ function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf, barEl._subsStepSkills || {}, barEl._subsStepGraphify || {});
+        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf, barEl._subsStepSkills || {}, barEl._subsStepGraphify || {}, barEl._subsStatusByKey || {});
       }
     });
   }
@@ -5785,12 +5873,13 @@ function graphifyCountPillHtml(n) {
   return `<span class="graphify-pill">graphify ×${c}</span>`;
 }
 
-function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify) {
+function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify, statusByKey) {
   if (!panelEl) return;
   const labelOf = typeof nodeLabel === 'function' ? nodeLabel : (id) => id;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
   const skillsByGroup = stepSkills && typeof stepSkills === 'object' ? stepSkills : {};
   const graphifyByGroup = stepGraphify && typeof stepGraphify === 'object' ? stepGraphify : {};
+  const statusOf = statusByKey && typeof statusByKey === 'object' ? statusByKey : {};
   panelEl.innerHTML =
     '<div class="subs-legend">' +
       '<span class="lk"><span class="sq on"></span>active</span>' +
@@ -5799,8 +5888,10 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify) {
 
   for (const nodeId of Object.keys(groups)) {            // nodeId === the "nodeId|cycle" group key
     const list = Array.isArray(groups[nodeId]) ? groups[nodeId] : [];
-    if (list.length === 0) continue;
-    const gstat = subGroupStatus(list);
+    const empty = list.length === 0;
+    // Non-empty: roll up from the sub rows (unchanged). Empty: take the MAIN agent's own
+    // step status so a running-but-sub-less agent shows 'running', a finished one 'done'.
+    const gstat = empty ? (statusOf[nodeId] || 'done') : subGroupStatus(list);
     const step = document.createElement('div');
     step.className = 'subs-step';
     step.innerHTML =
@@ -5808,25 +5899,32 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify) {
         `<span class="dot" style="background:${SUBS_DOT_COLOR[gstat]}"></span>` +
         `<b>${escapeHtml(labelOf(nodeId))}</b>` +
         `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat]}</span>` +
-        `<span class="subs-n">${list.length} sub-agents</span>` +
+        (empty ? '' : `<span class="subs-n">${list.length} sub-agents</span>`) +
       '</div>' +
       skillPillsHtml(skillsByGroup[nodeId]) +              // MAIN-agent pills, own row under the header
       graphifyCountPillHtml(graphifyByGroup[nodeId]);      // MAIN-agent graphify-use badge
-    const ul = document.createElement('ul');
-    ul.className = 'subs-tree';
-    for (const s of list) {
-      const rstat = subRowStatus(s && s.status);
-      const li = document.createElement('li');
-      li.innerHTML =
-        `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
-        `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
-        agentTypePillHtml(s && s.subagentType) +          // raw subagent_type, inline next to the name
-        `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>` +
-        skillPillsHtml(s && s.skills) +                   // per-sub-agent pills, wrap to their own row
-        graphifyCountPillHtml(s && s.graphifyCount);      // per-sub-agent graphify-use badge
-      ul.appendChild(li);
+    if (empty) {
+      const note = document.createElement('div');
+      note.className = 'subs-empty';
+      note.textContent = 'No sub-agents spawned';
+      step.appendChild(note);
+    } else {
+      const ul = document.createElement('ul');
+      ul.className = 'subs-tree';
+      for (const s of list) {
+        const rstat = subRowStatus(s && s.status);
+        const li = document.createElement('li');
+        li.innerHTML =
+          `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
+          `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
+          agentTypePillHtml(s && s.subagentType) +          // raw subagent_type, inline next to the name
+          `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>` +
+          skillPillsHtml(s && s.skills) +                   // per-sub-agent pills, wrap to their own row
+          graphifyCountPillHtml(s && s.graphifyCount);      // per-sub-agent graphify-use badge
+        ul.appendChild(li);
+      }
+      step.appendChild(ul);
     }
-    step.appendChild(ul);
     panelEl.appendChild(step);
   }
 }
@@ -5919,7 +6017,15 @@ function paintRunCard(r) {
   // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
   // would never show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents), r.stepSkills || {}, r.stepGraphify || {});
+  if (subsBar) {
+    const groups = subsGroupsForRender(r.subAgents, r.steps, r.stepper);
+    paintSubsBar(
+      subsBar, groups,
+      cycleAwareLabel(r.stepper, r.subAgents, Object.keys(groups)),
+      r.stepSkills || {}, r.stepGraphify || {},
+      stepStatusByKey(r.steps, r.stepper),
+    );
+  }
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
