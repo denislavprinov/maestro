@@ -495,12 +495,16 @@ test('expanded history card renders clarify Q&A but not reviews', async () => {
 
   const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
 
-  // Clarify: question text + chosen answer both present (read-only, no inputs).
-  const clarify = detail.querySelector('.hist-clarify');
-  assert.ok(clarify, 'clarify section rendered');
-  assert.match(clarify.textContent, /Postgres or SQLite\?/);
-  assert.match(clarify.textContent, /sqlite/);
-  assert.equal(clarify.querySelectorAll('input,button').length, 0, 'clarify is read-only in History');
+  // Clarify is now a dropdown bar under Sub-agents; open it to read the Q&A.
+  const clarifyBar = detail.querySelector('.clarify-bar');
+  assert.ok(clarifyBar && !clarifyBar.hidden, 'clarify dropdown rendered');
+  clarifyBar.querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  const panel = clarifyBar.querySelector('.clarify-panel');
+  assert.match(panel.textContent, /Postgres or SQLite\?/);
+  assert.match(panel.textContent, /sqlite/);
+  // Read-only: the panel content carries no form controls (the disclosure toggle
+  // lives on the bar, not in the panel).
+  assert.equal(panel.querySelectorAll('input,button,select,textarea').length, 0, 'clarify is read-only in History');
 
   // Reviews must NOT render in History anymore, even though the payload carries them.
   assert.equal(detail.querySelector('.hist-reviews'), null, 'reviews section is not rendered');
@@ -551,5 +555,10 @@ test('history detail clarify/review section is not duplicated on a cached re-exp
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // re-expand (cached, no refetch)
   await new Promise((r) => setTimeout(r, 0));
   const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
-  assert.equal(detail.querySelectorAll('.hist-clarify').length, 1, 'exactly one clarify section after re-expand');
+  const clarifyBars = detail.querySelectorAll('.clarify-bar');
+  assert.equal(clarifyBars.length, 1, 'exactly one clarify bar after re-expand');
+  // Open the dropdown: the question renders exactly once (renderClarifyPanel resets
+  // the panel each open, so a cached re-expand never duplicates the Q&A).
+  clarifyBars[0].querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  assert.equal(clarifyBars[0].querySelectorAll('.clarify-panel .qblock').length, 1, 'question rendered once, not duplicated');
 });

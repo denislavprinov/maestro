@@ -4,7 +4,7 @@
 // singleton reset so getDb() reopens against it (mirrors 01-db-foundation.md).
 import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/arti
 import { ensureArtifactDirs, writeState, appendAudit, createPipeline } from '../src/core/artifacts.mjs';
 import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
 import { writeReview, readReviewRow, readPipelineExtras, readPipelineByKey, writeClarify } from '../src/core/artifacts.mjs';
+import { readRunLogText } from '../src/core/artifacts.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -428,4 +429,27 @@ test('readPipelineByKey attaches clarify + reviews to the detail response', asyn
   assert.equal(data.reviews.length, 1);                // NEW
   assert.equal(data.reviews[0].summary, 'ok');
   assert.deepEqual(data.clarify, { questions: [], answers: [] }); // NEW
+});
+
+// ── Task 3 — readRunLogText + artifacts in the detail payload ───────────────────
+test('readRunLogText returns the NDJSON for a run, null when absent/unknown', async () => {
+  // seed a pipeline row + its run dir, write a live-log.ndjson, then read it back by key+id
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-rlr-proj-'));
+  const { id, dir } = await createPipeline(projectDir, { prompt: 'demo' });
+  recordArtifact(id, 'live-log', 'live-log.ndjson');
+  await writeFile(join(dir, 'live-log.ndjson'), '{"source":"planner","level":"info","text":"hi","ts":"t"}\n', 'utf8');
+
+  const key = projectKey(projectDir);
+  const text = await readRunLogText(key, id);
+  assert.ok(text && text.includes('"text":"hi"'), 'returns the persisted NDJSON');
+  assert.equal(await readRunLogText(key, 'deadbeef'), null, 'unknown id -> null');
+});
+
+test('readPipelineByKey surfaces the artifacts index (so History can show the Live-logs dropdown)', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-rlr2-proj-'));
+  const { id } = await createPipeline(projectDir, { prompt: 'demo' });
+  recordArtifact(id, 'live-log', 'live-log.ndjson');
+  const data = await readPipelineByKey(projectKey(projectDir), id);
+  assert.ok(Array.isArray(data.artifacts), 'artifacts array present');
+  assert.ok(data.artifacts.some((a) => a.kind === 'live-log'), 'live-log artifact listed');
 });

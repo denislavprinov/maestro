@@ -168,9 +168,9 @@ test('reduced-motion disables the fan square pulse', () => {
 });
 
 test('Sub-agents pill: rounded button, sb-count blue default + grey variant, chev rotate', () => {
-  const bar = ruleBody('.subs-bar');
-  assert.ok(bar, '.subs-bar rule missing');
-  assert.match(bar, /margin-top:\s*14px/);
+  // .subs-bar shares its margin/hidden rules with the History clarify/logs bars
+  // (grouped selector), so match the grouped rule rather than a standalone one.
+  assert.match(css, /\.subs-bar[^{]*\{[^}]*margin-top:\s*14px/, '.subs-bar margin rule missing');
   const btn = ruleBody('.btn-subs');
   assert.ok(btn, '.btn-subs rule missing');
   assert.match(btn, /border-radius:\s*999px/, 'pill is fully rounded');

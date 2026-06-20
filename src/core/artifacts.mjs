@@ -16,6 +16,7 @@ import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath 
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { RUN_LOG_FILE } from './run-log.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -1458,7 +1459,37 @@ export async function readPipeline(projectDir, id) {
 export async function readPipelineByKey(key, id) {
   const row = lookupPipelineRow(key, id);
   if (!row) return null;
-  return { state: rowToState(row), auditMarkdown: buildAuditMarkdown(row), ...readPipelineExtras(row.id) };
+  return {
+    state: rowToState(row),
+    auditMarkdown: buildAuditMarkdown(row),
+    artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
+    ...readPipelineExtras(row.id),
+  };
+}
+
+/**
+ * Read a run's persisted live-log NDJSON as text, by store key + id. Resolves the
+ * on-disk run dir via runDirIndex (a Map<id, absolute run dir>), the same readdir
+ * index listPipelines/listAllPipelines use. Workspace runs pass key
+ * "workspaces/<workspaceKey>". Returns null when the run or file is unknown (so the
+ * API maps it to a 404). Best-effort: any FS error -> null.
+ * @param {string} key  project store key, or "workspaces/<workspaceKey>"
+ * @param {string} id
+ * @returns {Promise<string|null>}
+ */
+export async function readRunLogText(key, id) {
+  const row = lookupPipelineRow(key, id);
+  if (!row) return null;
+  const isWs = typeof key === 'string' && key.startsWith('workspaces/');
+  const storeRoot = isWs ? workspaceStorePath(key.slice('workspaces/'.length)) : projectStorePath(key);
+  const pipelinesDir = join(storeRoot, 'pipelines');
+  const dirById = await runDirIndex(pipelinesDir);
+  const runDir = dirById.get(row.id) || join(pipelinesDir, row.id);
+  try {
+    return await readFile(join(runDir, RUN_LOG_FILE), 'utf8');
+  } catch {
+    return null; // no log file (older run / never bound)
+  }
 }
 
 /**
