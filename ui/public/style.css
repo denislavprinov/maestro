@@ -917,10 +917,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ===== Agents view ===== */
 .agent-card .agent-head { display:flex; align-items:center; gap:14px; cursor:pointer; }
 .agent-card .agent-h-meta { flex:1; min-width:0; }
-.agent-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.agent-io { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.agent-io-row { display:flex; align-items:flex-start; gap:8px; }
+.agent-io-label { flex:0 0 auto; min-width:52px; font-size:11px; font-weight:700;
+  text-transform:uppercase; letter-spacing:.04em; opacity:.6; line-height:20px; }
+.agent-chips { display:flex; flex-wrap:wrap; gap:6px; flex:1 1 auto; }
 .agent-chip { font-size:11px; padding:2px 8px; border:1px solid var(--line); border-radius:999px; }
 .agent-chip.prod { background:#E2F3DF; }
 .agent-chip.cons { background:#DEEFF7; }
+.agent-io-none { font-size:11px; opacity:.45; line-height:20px; }
+
+/* (2) space between the header pills and the expanded markdown body */
+.agent-detail { margin-top:14px; }
 .agent-origin.origin-user { background:#EAE6F8; }
 .agents-group-label { font-size:12px; font-weight:700; opacity:.65; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.06em; }
 .agent-actions { display:flex; gap:8px; }
