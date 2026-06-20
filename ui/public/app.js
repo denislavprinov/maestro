@@ -1092,7 +1092,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
@@ -1852,6 +1852,7 @@ if (typeof window !== 'undefined') {
     subGroupStatus,
     renderSubsTree,
     skillPillsHtml,
+    agentTypePillHtml,
     onStepSkills,
     stepSkillsFromSteps,
     nodeLabelLookup,
@@ -5651,6 +5652,14 @@ function skillPillsHtml(skills) {
   return `<div class="subs-skills">${pills}</div>`;
 }
 
+// Single neutral pill showing a sub-agent's raw subagent_type (e.g. 'general-purpose',
+// 'Explore', 'maestro-planner'); '' when absent so untyped rows render no pill.
+function agentTypePillHtml(type) {
+  const t = type == null ? '' : String(type).trim();
+  if (!t) return '';
+  return `<span class="agent-type-pill">${escapeHtml(t)}</span>`;
+}
+
 function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills) {
   if (!panelEl) return;
   const labelOf = typeof nodeLabel === 'function' ? nodeLabel : (id) => id;
@@ -5684,6 +5693,7 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills) {
       li.innerHTML =
         `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
         `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
+        agentTypePillHtml(s && s.subagentType) +          // raw subagent_type, inline next to the name
         `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>` +
         skillPillsHtml(s && s.skills);                    // per-sub-agent pills, wrap to their own row
       ul.appendChild(li);

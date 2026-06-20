@@ -1891,6 +1891,7 @@ class Orchestrator extends EventEmitter {
         status: 'running',
         startedAt: new Date().toISOString(),
         finishedAt: null,
+        subagentType: c.input?.subagent_type ?? null,
       };
       this.state.subAgents.push(rec);
       this._upsertSubAgent(rec);
@@ -1982,6 +1983,7 @@ class Orchestrator extends EventEmitter {
       ...(rec.tokens != null ? { tokens: rec.tokens } : {}),
       ...(rec.costUsd != null ? { costUsd: rec.costUsd } : {}),
       ...(Array.isArray(rec.skills) ? { skills: rec.skills } : {}),
+      ...(rec.subagentType != null ? { subagentType: rec.subagentType } : {}),
       ts: new Date().toISOString(),
     });
   }

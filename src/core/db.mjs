@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -438,6 +438,16 @@ ALTER TABLE pipeline_steps ADD COLUMN skills TEXT;
 `;
 
 /**
+ * Incremental v6 -> v7 migration (Sub-agent type pill). Adds a nullable
+ * `subagent_type` column to sub_agents holding the raw Task/Agent subagent_type
+ * (e.g. 'general-purpose', 'Explore', 'maestro-planner'). Legacy rows stay NULL
+ * and render with no type pill — exactly like the v6 skills column.
+ */
+const SCHEMA_V7 = `
+ALTER TABLE sub_agents ADD COLUMN subagent_type TEXT;
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -469,6 +479,7 @@ export function migrate(db) {
     if (current < 4) db.exec(SCHEMA_V4);
     if (current < 5) db.exec(SCHEMA_V5);
     if (current < 6) db.exec(SCHEMA_V6);
+    if (current < 7) db.exec(SCHEMA_V7);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

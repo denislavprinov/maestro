@@ -888,6 +888,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .skill-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;}
 .skill-pill.is-skill{background:var(--blue-bg);color:var(--blue-ink);}
 .skill-pill.is-mcp{background:var(--green-bg);color:var(--green-ink);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--green-ink) 18%, transparent);}
+/* Sub-agent type pill — the raw Task/Agent subagent_type, inline next to the row
+   name (cf. skill pills). Uses the shared violet token (defined :root, l.24) so it
+   reads as agent metadata, distinct from the skill (blue) / MCP (green) pills. */
+.subs-tree li .agent-type-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--violet-bg);color:var(--violet-ink);}
 
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */
 .run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
