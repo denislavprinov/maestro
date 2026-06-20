@@ -76,7 +76,7 @@ const FANOUT_ELIGIBLE = new Set([
  * Build the synthetic implementer node for one decomposed task. Pure (exported for
  * tests). `siblings` carries the OTHER tasks of the same phase so the implementer
  * prompt can warn about the shared working tree (see implementerBody).
- * @param {{model?:string,effort?:string,tools?:string[]}} implNode the original implementer node
+ * @param {{model?:string,effort?:string,tools?:string[],fanOut?:boolean}} implNode the original implementer node
  * @param {{id:string,nodeId:string,title?:string,file?:string}} task
  * @param {Array<{id:string,title?:string,file?:string}>} phaseTasks all tasks of the task's phase
  * @param {string} pipelineDir
@@ -91,6 +91,7 @@ export function decomposedTaskNode(implNode, task, phaseTasks, pipelineDir) {
     model: implNode.model,
     effort: implNode.effort,
     tools: implNode.tools,
+    fanOut: implNode.fanOut, // inherit so each per-task implementer fans out when the run does
     taskPath: join(pipelineDir, task.file || ''),
     siblings: (Array.isArray(phaseTasks) ? phaseTasks : [])
       .filter((t) => t && t !== task)

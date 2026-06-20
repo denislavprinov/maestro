@@ -616,6 +616,7 @@ export async function runImplementer(ctx, opts) {
     '\n## What to do\n\n' +
     body +
     '\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
     workspaceFanOutDirective('task', ctx.workspace) +
     'Work inside the project directory (your cwd). Commit nothing; just edit files and tests.\n\n' +
     mockMarkers({ MOCK_ROLE: role, MOCK_IN: taskPath || planPath, MOCK_OUT: reviewPath });
