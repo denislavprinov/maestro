@@ -7,6 +7,7 @@
   "agentFile": "maestro-implementer.md",
   "runnerType": "producer",
   "loopSource": false,
+  "fanOut": true,
   "produces": ["code"],
   "consumes": ["plan","review"],
   "optionalConsumes": ["review"],

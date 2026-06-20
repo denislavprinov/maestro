@@ -81,12 +81,18 @@ export function fanOutDirective(fanOut) {
   return (
     '## Fan-out ENABLED — parallelize your research\n\n' +
     'The Task/Agent tool is in your tool list this run. For any non-trivial task that spans more ' +
-    'than one file or area, DISPATCH parallel read-only research sub-agents NOW — use the Task tool ' +
-    'with `subagent_type: "general-purpose"` (or `"Explore"` for pure code search), one per distinct ' +
+    'than one file or area, DISPATCH parallel read-only research sub-agents NOW — one per distinct ' +
     'area (e.g. UI vs. server vs. store vs. tests) — explore them concurrently, then synthesize their ' +
     'reports yourself. Do NOT investigate every area serially with Read/Grep when the work splits ' +
-    'into independent areas. Sub-agents are strictly READ-ONLY investigators: YOU write every ' +
-    'artifact. Skip fan-out only for a trivial, single-file change.\n\n'
+    'into independent areas.\n\n' +
+    'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
+    'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
+    'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).\n\n' +
+    'Skills are available too: this project\'s and your personal skills (`.claude/skills`, ' +
+    '`~/.claude/skills`) can be invoked via the Skill tool — by you AND by the sub-agents you spawn — ' +
+    'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
+    'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
+    'trivial, single-file change.\n\n'
   );
 }
 

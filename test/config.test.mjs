@@ -97,12 +97,13 @@ test('resolveStepModels with no global model leaves model undefined (today\'s be
   assert.deepEqual(r.implementer, { model: undefined, effort: undefined });
 });
 
-test('registry surfaces fanOut: planner true (default ON), others false', () => {
+test('registry surfaces fanOut: every agent role defaults ON, decomposer OFF', () => {
   const reg = loadAgentRegistry();
   assert.equal(reg.planner.fanOut, true, 'planner defaults to fan-out ON');
-  assert.equal(reg.refiner.fanOut, false);
-  assert.equal(reg.implementer.fanOut, false);
-  assert.equal(reg.reviewer.fanOut, false);
+  assert.equal(reg.refiner.fanOut, true);
+  assert.equal(reg.implementer.fanOut, true);
+  assert.equal(reg.reviewer.fanOut, true);
+  assert.equal(reg.decomposer.fanOut, false, 'the splitter stays serial');
 });
 
 test('registryToSteps / AGENT_STEPS carry the per-agent fanOut default', () => {
@@ -110,7 +111,7 @@ test('registryToSteps / AGENT_STEPS carry the per-agent fanOut default', () => {
   const planner = steps.find((s) => s.key === 'planner');
   const refiner = steps.find((s) => s.key === 'refiner');
   assert.equal(planner.fanOut, true);
-  assert.equal(refiner.fanOut, false);
+  assert.equal(refiner.fanOut, true);
   // AGENT_STEPS (config.mjs) is derived from registryToSteps, so it carries it too.
   assert.equal(AGENT_STEPS.find((s) => s.key === 'planner').fanOut, true);
 });

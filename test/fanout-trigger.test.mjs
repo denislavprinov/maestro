@@ -33,6 +33,8 @@ test('fanOutDirective: returns the directive when on, empty string when off', ()
   assert.match(d, /Fan-out ENABLED/);
   assert.match(d, /general-purpose/);
   assert.match(d, /READ-ONLY/);
+  assert.match(d, /\.claude\/agents/); // project/personal agents are usable as subagent_type
+  assert.match(d, /Skill tool/);       // skills available to the agent AND its sub-agents
 });
 
 test('buildClarifyPrompt includes the directive only when the ctx has fan-out', () => {

@@ -461,7 +461,7 @@ test('resolveWorkflow stamps fanOut from the sidecar default for wf_default', as
   const plan = await resolveWorkflow(p, 'wf_default', reg);
   const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
   assert.equal(byKey('planner').fanOut, true, 'planner default ON');
-  assert.equal(byKey('implementer').fanOut, false, 'implementer default OFF');
+  assert.equal(byKey('implementer').fanOut, true, 'implementer default ON');
 });
 
 test('a per-node fanOut override beats the sidecar default (wf_default)', async () => {
