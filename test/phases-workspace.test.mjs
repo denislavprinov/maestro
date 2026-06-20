@@ -32,24 +32,25 @@ test('workspaceContextBlock: emits the heading, the description, and the member 
   assert.match(b, /Member projects: iam, ui\./);
 });
 
-test('workspaceContextBlock: caps at 2000 chars with an ellipsis', () => {
-  const long = 'x'.repeat(5000);
+test('workspaceContextBlock: injects the FULL description, no cap, no ellipsis', () => {
+  const long = '# Workspace: Big\n\n' + 'x'.repeat(5000);
   const b = workspaceContextBlock({ description: long, projects: [] });
-  // The description portion is truncated to 2000 incl. the ellipsis.
-  assert.ok(b.includes('…'), 'ellipsis appended when truncated');
-  assert.ok(!b.includes('x'.repeat(2001)), 'description portion does not exceed the cap');
+  assert.ok(b.includes('x'.repeat(5000)), 'full description present verbatim');
+  assert.ok(!b.includes('…'), 'no truncation ellipsis');
 });
 
-test('workspaceContextBlock: MAESTRO_WS_DESC_CAP overrides the cap', () => {
-  const prev = process.env.MAESTRO_WS_DESC_CAP;
-  try {
-    process.env.MAESTRO_WS_DESC_CAP = '10';
-    const b = workspaceContextBlock({ description: 'abcdefghijklmnop', projects: [] });
-    assert.match(b, /abcdefghi…/, 'capped to 10 incl. ellipsis');
-  } finally {
-    if (prev === undefined) delete process.env.MAESTRO_WS_DESC_CAP;
-    else process.env.MAESTRO_WS_DESC_CAP = prev;
-  }
+test('workspaceContextBlock: reads the real channel shape (workspaceDescription key)', () => {
+  // Mirrors orchestrator.mjs#_workspaceChannel: the bus channel uses `workspaceDescription`,
+  // NOT `description`. This is the production shape that buildSystemPrompt receives.
+  const ws = {
+    kind: 'metadata',
+    workspaceDescription: '# Workspace: Real\n\nServices share a REST contract.',
+    projects: [{ projectName: 'iam' }, { projectName: 'ui' }],
+  };
+  const b = workspaceContextBlock(ws);
+  assert.match(b, /## Workspace Context/);
+  assert.match(b, /share a REST contract/);
+  assert.match(b, /Member projects: iam, ui\./);
 });
 
 // ── buildSystemPrompt 4th arg ────────────────────────────────────────────────
