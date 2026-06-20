@@ -18,14 +18,15 @@ beforeEach(async () => {
 });
 after(async () => { _resetForTests(); delete process.env.MAESTRO_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
 
-// Minimal v6 seed: pipelines + sub_agents(+skills), stamped user_version=6.
-// (Only sub_agents is touched by the v6->v7 migration, so the minimal seed is
-//  sufficient — migrate() runs ONLY `if (current < 7)` from a v6-stamped DB.
-//  sub_agents MUST already carry the v6 `skills` column so the v7 ALTER is the
-//  only delta, exactly mirroring how subagent-migration-v6's V5_SEED carries ui_phase.)
+// Minimal v6 seed: pipelines + sub_agents(+skills) + pipeline_steps(+skills),
+// stamped user_version=6. migrate() runs the v7 step (subagent_type on sub_agents)
+// AND the v8 step (graphify_count on BOTH agent tables) from this v6-stamped DB, so
+// the seed must carry pipeline_steps too — a real v6 DB has it (from v1, +skills at
+// v6). Both tables carry their full v6 columns so the later ALTERs are the only delta.
 const V6_SEED = `
 CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_key TEXT);
 CREATE TABLE sub_agents (pipeline_id TEXT, id TEXT, skills TEXT, PRIMARY KEY (pipeline_id,id));
+CREATE TABLE pipeline_steps (pipeline_id TEXT, key TEXT, skills TEXT, PRIMARY KEY (pipeline_id,key));
 INSERT INTO pipelines (id, project_key) VALUES ('p1','proj');
 `;
 
@@ -38,7 +39,7 @@ test('opening a user_version=6 DB forward-migrates to v7 (adds subagent_type to 
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 7, 'forward-migrated to v7');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8, 'forward-migrated to v8');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('subagent_type'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');
 });

@@ -1833,6 +1833,11 @@ class Orchestrator extends EventEmitter {
     // text/tool log branches below (it runs BEFORE the `if (text) return`), so a
     // mixed text+tool_use turn is still caught.
     this._recordSkills(e.raw, subId, attr);
+    // Count graphify CLI invocations (Bash only) per agent / sub-agent. Bash-only
+    // by design: the graphify skill runs the CLI itself, so counting the Skill tool
+    // too would double-count; the bash invocation is the ground truth and also
+    // catches direct CLI use with no skill.
+    this._recordGraphify(e.raw, subId, attr);
 
     // Display source: parent role for main events; "role ▸ label" for sub-agent
     // events. `sub` drives the indented/dimmed web styling.
@@ -1960,6 +1965,39 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Count graphify CLI invocations (Bash only) in one agent event and add them to
+   * the running total. Routes exactly like _recordSkills: a MAIN-agent turn
+   * (subId == null) accrues onto its pipeline step (by stepKey) and emits a
+   * `stepgraphify` delta; a sub-agent turn accrues onto the spawned record and
+   * emits a `subagent` update. No-op when the event invoked graphify zero times or
+   * there is nothing to attribute to (clarify pre-step; child seen before spawn).
+   */
+  _recordGraphify(raw, subId, attr) {
+    const n = countGraphifyBashCalls(raw);
+    if (!n) return;
+    if (subId == null) {
+      const key = attr?.stepKey;
+      const step = key ? this.state.steps.find((s) => s.key === key) : null;
+      if (!step) return;
+      step.graphifyCount = (step.graphifyCount ?? 0) + n;
+      this._emit('stepgraphify', {
+        stepKey: step.key,
+        nodeId: step.nodeId ?? null,
+        cycle: step.cycle ?? null,
+        graphifyCount: step.graphifyCount,
+        ts: new Date().toISOString(),
+      });
+      this._persist().catch(() => {}); // mirrors _recordSkills: survives a reload
+    } else {
+      const rec = this.state.subAgents.find((s) => s.id === subId);
+      if (!rec) return;
+      rec.graphifyCount = (rec.graphifyCount ?? 0) + n;
+      this._upsertSubAgent(rec);
+      this._subAgentTransition('update', rec);
+    }
+  }
+
   /** Best-effort mirror of a sub-agent record to the sub_agents table. Guarded
    *  exactly like _persist/_artifact: no pipeline → in-memory only (unit ctx). */
   _upsertSubAgent(rec) {
@@ -1985,6 +2023,7 @@ class Orchestrator extends EventEmitter {
       ...(rec.costUsd != null ? { costUsd: rec.costUsd } : {}),
       ...(Array.isArray(rec.skills) ? { skills: rec.skills } : {}),
       ...(rec.subagentType != null ? { subagentType: rec.subagentType } : {}),
+      ...(rec.graphifyCount != null ? { graphifyCount: rec.graphifyCount } : {}),
       ts: new Date().toISOString(),
     });
   }
@@ -2604,6 +2643,33 @@ function extractSkillLabels(raw) {
     if (label && !seen.has(label)) { seen.add(label); out.push(label); }
   }
   return out;
+}
+
+// ── graphify CLI-invocation counter ──────────────────────────────────────────
+// Counts how many times a Bash command INVOKES the `graphify` CLI, as opposed to
+// merely mentioning the word (reading graphify-out/, grepping for "graphify", rm
+// graphify-out). Match `graphify` only at a COMMAND position: string start, after a
+// shell separator (; | & && || newline or subshell `(`), or after leading VAR=val
+// env assignments — optionally path-prefixed (~/.local/bin/graphify) — and followed
+// by whitespace or end-of-string, so `graphify-out` (next char `-`) never matches.
+// Known gaps (rare; documented, not counted): `npx graphify`, `python -m graphify`,
+// `sh -c "graphify …"` — graphify there is an argument, not the command word.
+const GRAPHIFY_CMD_RE = /(?:^|[;&|\n(]|&&|\|\|)\s*(?:\w+=\S+\s+)*(?:[^\s;&|()]*\/)?graphify(?=\s|$)/g;
+
+/** How many graphify CLI invocations the Bash tool_use blocks of ONE stream-json
+ *  envelope contain (0 when none / not a tool turn). Pure + module-scoped. */
+function countGraphifyBashCalls(raw) {
+  const content = raw?.message?.content;
+  if (!Array.isArray(content)) return 0;
+  let n = 0;
+  for (const c of content) {
+    if (c?.type !== 'tool_use' || c.name !== 'Bash') continue;
+    const cmd = c.input?.command;
+    if (typeof cmd !== 'string') continue;
+    const m = cmd.match(GRAPHIFY_CMD_RE);
+    if (m) n += m.length;
+  }
+  return n;
 }
 
 /** Union `incoming` into `existing` (order-preserving, deduped, capped). Returns

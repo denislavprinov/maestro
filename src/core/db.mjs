@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -448,6 +448,18 @@ ALTER TABLE sub_agents ADD COLUMN subagent_type TEXT;
 `;
 
 /**
+ * Incremental v7 -> v8 migration (graphify-usage counter). Adds a nullable INTEGER
+ * `graphify_count` to BOTH agent tables — pipeline_steps (per MAIN agent) and
+ * sub_agents (per sub-agent) — holding how many times that agent invoked the
+ * graphify CLI via Bash. Legacy rows stay NULL and render no count, exactly like
+ * the v6 skills / v7 subagent_type columns.
+ */
+const SCHEMA_V8 = `
+ALTER TABLE sub_agents ADD COLUMN graphify_count INTEGER;
+ALTER TABLE pipeline_steps ADD COLUMN graphify_count INTEGER;
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -480,6 +492,7 @@ export function migrate(db) {
     if (current < 5) db.exec(SCHEMA_V5);
     if (current < 6) db.exec(SCHEMA_V6);
     if (current < 7) db.exec(SCHEMA_V7);
+    if (current < 8) db.exec(SCHEMA_V8);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

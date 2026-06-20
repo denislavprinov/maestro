@@ -283,7 +283,7 @@ function handleServerMessage(msg) {
   // MATERIALIZE a run: each only attaches to one this tab already knows. (A
   // resolution for an unknown run is meaningless, and auto-creating a card would
   // resurrect the phantom.)
-  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
+  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
@@ -310,6 +310,9 @@ function handleServerMessage(msg) {
       break;
     case 'stepskills':
       onStepSkills(r, msg);
+      break;
+    case 'stepgraphify':
+      onStepGraphify(r, msg);
       break;
     case 'done':
       onDone(r, msg);
@@ -750,6 +753,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     logLines: [],
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
+    stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     el: null,
     _finished: false,
   };
@@ -1007,6 +1011,18 @@ function stepSkillsFromSteps(steps) {
   return out;
 }
 
+// {`${nodeId}|${cycle}`: number} of MAIN-agent graphify-use counts, from state.steps[].
+// Same composite keying as stepSkillsFromSteps so renderSubsTree looks up a group's
+// header badge by its group key. Steps with no graphify use are omitted (no badge).
+function stepGraphifyFromSteps(steps) {
+  const out = {};
+  for (const st of Array.isArray(steps) ? steps : []) {
+    if (!st || st.nodeId == null || !(st.graphifyCount > 0)) continue;
+    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = st.graphifyCount;
+  }
+  return out;
+}
+
 // Map<nodeId, Set<cycle>> — distinct cycles each node spawned sub-agents in.
 // Drives whether a group header gets a "· cycle N" suffix. Record-driven: the
 // suffix appears when a node actually has sub-agents across >1 cycle, independent
@@ -1067,6 +1083,7 @@ function onState(r, msg) {
     r.steps = msg.steps;
     r.costByNode = costByNode(msg.steps);
     r.stepSkills = stepSkillsFromSteps(msg.steps);
+    r.stepGraphify = stepGraphifyFromSteps(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
   // Sub-agents: the state snapshot is authoritative (covers late-join/replay and
@@ -1092,7 +1109,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType', 'graphifyCount']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
@@ -1110,6 +1127,16 @@ function onStepSkills(r, msg) {
   if (!msg || msg.nodeId == null) return;
   if (!r.stepSkills) r.stepSkills = {};
   r.stepSkills[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Array.isArray(msg.skills) ? msg.skills : [];
+  paintRunCard(r);
+}
+
+// Per-step MAIN-agent graphify-count delta, keyed by the same nodeId|cycle composite
+// the dropdown groups by. The delta carries the cumulative running total, so a plain
+// replace is correct; the `state` snapshot stays authoritative (rebuilds the map).
+function onStepGraphify(r, msg) {
+  if (!msg || msg.nodeId == null) return;
+  if (!r.stepGraphify) r.stepGraphify = {};
+  r.stepGraphify[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Number(msg.graphifyCount) || 0;
   paintRunCard(r);
 }
 
@@ -1853,8 +1880,11 @@ if (typeof window !== 'undefined') {
     renderSubsTree,
     skillPillsHtml,
     agentTypePillHtml,
+    graphifyCountPillHtml,
     onStepSkills,
+    onStepGraphify,
     stepSkillsFromSteps,
+    stepGraphifyFromSteps,
     nodeLabelLookup,
     historyBadge,
     statusPill,
@@ -5234,7 +5264,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents), stepSkillsFromSteps(data.state.steps));
+    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents), stepSkillsFromSteps(data.state.steps), stepGraphifyFromSteps(data.state.steps));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -5568,7 +5598,7 @@ function subsPillText(byNode) {
 // Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
 // [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
 // handler is bound once (dataset guard), the count/text repaint every call.
-function paintSubsBar(barEl, byNode, labelOf, stepSkills) {
+function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify) {
   if (!barEl) return;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
   const total = Object.values(groups).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
@@ -5585,6 +5615,7 @@ function paintSubsBar(barEl, byNode, labelOf, stepSkills) {
   barEl._subsGroups = groups;
   barEl._subsLabelOf = labelFn;
   barEl._subsStepSkills = stepSkills && typeof stepSkills === 'object' ? stepSkills : {};
+  barEl._subsStepGraphify = stepGraphify && typeof stepGraphify === 'object' ? stepGraphify : {};
 
   const { text, active } = subsPillText(groups);
   if (count) {
@@ -5594,7 +5625,7 @@ function paintSubsBar(barEl, byNode, labelOf, stepSkills) {
 
   // Re-render an already-open panel in place so live spawns/finishes reflect immediately.
   if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
-    renderSubsTree(panel, groups, labelFn, barEl._subsStepSkills);
+    renderSubsTree(panel, groups, labelFn, barEl._subsStepSkills, barEl._subsStepGraphify);
   }
 
   if (btn && btn.dataset.bound !== '1') {
@@ -5604,7 +5635,7 @@ function paintSubsBar(barEl, byNode, labelOf, stepSkills) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf, barEl._subsStepSkills || {});
+        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf, barEl._subsStepSkills || {}, barEl._subsStepGraphify || {});
       }
     });
   }
@@ -5660,11 +5691,21 @@ function agentTypePillHtml(type) {
   return `<span class="agent-type-pill">${escapeHtml(t)}</span>`;
 }
 
-function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills) {
+// Neutral count badge for how many times an agent / sub-agent invoked the graphify
+// CLI; '' when the count is absent or 0 so only real users render a badge. The count
+// is a number (not user text), so no escaping is needed.
+function graphifyCountPillHtml(n) {
+  const c = Number(n);
+  if (!Number.isFinite(c) || c <= 0) return '';
+  return `<span class="graphify-pill">graphify ×${c}</span>`;
+}
+
+function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify) {
   if (!panelEl) return;
   const labelOf = typeof nodeLabel === 'function' ? nodeLabel : (id) => id;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
   const skillsByGroup = stepSkills && typeof stepSkills === 'object' ? stepSkills : {};
+  const graphifyByGroup = stepGraphify && typeof stepGraphify === 'object' ? stepGraphify : {};
   panelEl.innerHTML =
     '<div class="subs-legend">' +
       '<span class="lk"><span class="sq on"></span>active</span>' +
@@ -5684,7 +5725,8 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills) {
         `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat]}</span>` +
         `<span class="subs-n">${list.length} sub-agents</span>` +
       '</div>' +
-      skillPillsHtml(skillsByGroup[nodeId]);              // MAIN-agent pills, own row under the header
+      skillPillsHtml(skillsByGroup[nodeId]) +              // MAIN-agent pills, own row under the header
+      graphifyCountPillHtml(graphifyByGroup[nodeId]);      // MAIN-agent graphify-use badge
     const ul = document.createElement('ul');
     ul.className = 'subs-tree';
     for (const s of list) {
@@ -5695,7 +5737,8 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills) {
         `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
         agentTypePillHtml(s && s.subagentType) +          // raw subagent_type, inline next to the name
         `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>` +
-        skillPillsHtml(s && s.skills);                    // per-sub-agent pills, wrap to their own row
+        skillPillsHtml(s && s.skills) +                   // per-sub-agent pills, wrap to their own row
+        graphifyCountPillHtml(s && s.graphifyCount);      // per-sub-agent graphify-use badge
       ul.appendChild(li);
     }
     step.appendChild(ul);
@@ -5791,7 +5834,7 @@ function paintRunCard(r) {
   // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
   // would never show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents), r.stepSkills || {});
+  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents), r.stepSkills || {}, r.stepGraphify || {});
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');
