@@ -226,3 +226,9 @@ test('skill pills: .subs-skills flex-wraps; row pills take their own full line; 
   assert.match(ruleBody('.subs-tree li .subs-skills'), /flex:\s*0 0 100%/, 'row pill container takes a full row');
   assert.match(ruleBody('.skill-pill'), /border-radius:\s*999px/, 'pills are rounded like the house style');
 });
+
+test('Agents dropdown: .subs-empty placeholder is muted', () => {
+  const body = ruleBody('.subs-empty');
+  assert.ok(body, '.subs-empty rule missing');
+  assert.match(body, /color:\s*var\(--ink-3\)/, 'placeholder uses the muted ink token');
+});
