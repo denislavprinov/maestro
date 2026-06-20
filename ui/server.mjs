@@ -1074,6 +1074,48 @@ app.post('/api/pr', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/pr/mergeable -> re-read mergeability for a pipeline's PR head so the
+// History UI can refresh the "merge: checking…" pill after GitHub finishes its
+// async computation. Read-only + best-effort: no push, no create — just
+// `gh pr view`. Missing `id` is the ONLY hard error (400, like /api/pr); every
+// other failure (gh missing, unresolvable pipeline, bad key, thrown error)
+// resolves to UNKNOWN (200) so the client simply hides the pill.
+// body: { id, projectKey? , projectDir? }
+// ---------------------------------------------------------------------------
+app.post('/api/pr/mergeable', async (req, res) => {
+  const body = req.body || {};
+  const id = typeof body.id === 'string' ? body.id.trim() : '';
+  if (!id) return badRequest(res, 'id is required');
+  if (!(await hasGh())) return res.json({ ok: true, mergeable: 'UNKNOWN' });
+
+  try {
+    // Resolve the pipeline state (by store key, else by project dir) — mirrors /api/pr.
+    let state = null;
+    if (typeof body.projectKey === 'string' && body.projectKey.trim()) {
+      if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(body.projectKey)) {
+        return res.json({ ok: true, mergeable: 'UNKNOWN' });
+      }
+      const data = await readPipelineByKey(body.projectKey, id);
+      state = data && data.state;
+    } else {
+      const projectDir = resolveProjectDir(body.projectDir);
+      if (!projectDir) return badRequest(res, 'projectDir or projectKey is required');
+      const data = await readPipeline(projectDir, id);
+      state = data && data.state;
+    }
+
+    const repoDir = state && state.projectDir;
+    const feature = state && state.branch && state.branch.feature;
+    if (!repoDir || !feature) return res.json({ ok: true, mergeable: 'UNKNOWN' });
+
+    const mergeable = await prMergeable({ projectDir: repoDir, head: feature });
+    res.json({ ok: true, mergeable });
+  } catch {
+    res.json({ ok: true, mergeable: 'UNKNOWN' });   // best-effort: never error the refresh
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/install  -> copy agents + skill into <projectDir>/.claude
 // body: { projectDir }
 // ---------------------------------------------------------------------------

@@ -131,3 +131,43 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   const row = j.pipelines.find((p) => p.id === rpId);
   assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
 });
+
+test('POST /api/pr/mergeable re-reads mergeability via gh pr view (no push/create)', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view')
+      return Promise.resolve({ ok: true, stdout: 'CONFLICTING\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+  const r = await fetch(`${base}/api/pr/mergeable`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectKey: betaKey, id: betaId }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).mergeable, 'CONFLICTING');
+  assert.ok(seen.some((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'view'), 'mergeability was re-read');
+  assert.ok(!seen.some((c) => c[0] === 'git' && c[1] === 'push'), 'no push on a re-check');
+  assert.ok(!seen.some((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'create'), 'no PR create on a re-check');
+});
+
+test('POST /api/pr/mergeable -> UNKNOWN (best-effort) when gh is unavailable', async () => {
+  gitInfo.setRunner((cmd) => Promise.resolve(
+    cmd === 'gh' ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
+                 : { ok: true, stdout: '', stderr: '', code: 0 }));
+  const r = await fetch(`${base}/api/pr/mergeable`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectKey: betaKey, id: betaId }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).mergeable, 'UNKNOWN');
+});
+
+test('POST /api/pr/mergeable requires id -> 400 (the one hard error)', async () => {
+  const r = await fetch(`${base}/api/pr/mergeable`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectKey: betaKey }),   // no id
+  });
+  assert.equal(r.status, 400);
+});
