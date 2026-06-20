@@ -21,6 +21,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
+  readRunLogText,
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
@@ -960,6 +961,22 @@ app.get('/api/history/:key/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/history/:key/:id/log  -> the run's persisted live-log NDJSON (text)
+// ---------------------------------------------------------------------------
+app.get('/api/history/:key/:id/log', async (req, res) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(req.params.key)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    const text = await readRunLogText(req.params.key, req.params.id);
+    if (text == null) return res.status(404).json({ error: 'no log' });
+    res.type('application/x-ndjson').send(text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/runs/:id?projectKey=...  (or ?projectDir=...)
 // Remove a FINISHED pipeline and everything tied to it: its store folder, its
 // shared plan/review markdown, and its local branch + worktree. The remote
@@ -1354,6 +1371,19 @@ app.get('/api/workspaces/:id/runs/:runId', async (req, res) => {
     const data = await readWorkspacePipeline(id, req.params.runId);
     if (!data) return res.status(404).json({ error: 'pipeline not found' });
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/workspaces/:id/runs/:runId/log', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    const text = await readRunLogText(`workspaces/${req.params.id}`, req.params.runId);
+    if (text == null) return res.status(404).json({ error: 'no log' });
+    res.type('application/x-ndjson').send(text);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

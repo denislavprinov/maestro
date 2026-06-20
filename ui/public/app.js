@@ -1872,7 +1872,6 @@ if (typeof window !== 'undefined') {
     loopCounts,
     paintRunGraph,
     histNodeCycle,
-    renderHistClarifyReviews,
     subFanHtml,
     subsPillText,
     paintSubsBar,
@@ -5253,6 +5252,18 @@ function historyDetailUrl(projectDir, id, record) {
   return `/api/runs/${encodeURIComponent(id)}?projectDir=${encodeURIComponent(projectDir)}`;
 }
 
+function historyLogUrl(id, record) {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}/log`;
+  }
+  // History cards always carry projectKey; the Live-logs bar only renders when a
+  // `live-log` artifact is present in the (already-fetched) detail payload, which
+  // implies a valid project/workspace key path. No /api/runs/:id/log fallback exists.
+  const key = record && record.projectKey ? record.projectKey : '';
+  return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/log`;
+}
+
 async function loadHistDetail(projectDir, id, detail, record) {
   try {
     const url = historyDetailUrl(projectDir, id, record);
@@ -5276,7 +5287,10 @@ async function loadHistDetail(projectDir, id, detail, record) {
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
     if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents), stepSkillsFromSteps(data.state.steps), stepGraphifyFromSteps(data.state.steps));
-    renderHistClarifyReviews(detail, data.clarify);
+    // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
+    paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
+    const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
+    paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
       const totalEl = card && card.querySelector('.hist-total');
@@ -5308,28 +5322,40 @@ async function loadHistDetail(projectDir, id, detail, record) {
 // section is removed first (a cached re-expand must never stack duplicates). Shape comes
 // straight from readPipelineExtras:
 // clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]}.
-function renderHistClarifyReviews(detail, clarify) {
-  if (!detail) return;
-  detail.querySelectorAll('.hist-clarify').forEach((n) => n.remove());
-  const anchor = detail.querySelector('.hist-actions'); // insert section before Delete
-
+// Paint the Clarify dropdown from saved Q&A (read-only). Hidden when empty.
+function paintClarifyBar(barEl, clarify) {
+  if (!barEl) return;
   const questions = Array.isArray(clarify && clarify.questions) ? clarify.questions : [];
   const answers = Array.isArray(clarify && clarify.answers) ? clarify.answers : [];
-  if (questions.length || answers.length) {
-    detail.insertBefore(buildHistClarify(questions, answers), anchor);
+  if (!questions.length && !answers.length) { barEl.hidden = true; return; }
+  barEl.hidden = false;
+  barEl._clarify = { questions, answers };
+
+  const btn = barEl.querySelector('.btn-subs');
+  const panel = barEl.querySelector('.clarify-panel');
+  const count = barEl.querySelector('.sb-count');
+  if (count) { count.textContent = String(questions.length); count.classList.remove('grey'); }
+
+  if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
+    renderClarifyPanel(panel, questions, answers); // re-render an already-open panel
+  }
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (panel) {
+        panel.hidden = open;
+        if (!open) renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers);
+      }
+    });
   }
 }
 
-// Build the read-only clarify section: each question with its chosen answer.
-function buildHistClarify(questions, answers) {
-  const byId = new Map(answers.map((a) => [a.id, a]));
-  const sec = document.createElement('section');
-  sec.className = 'hist-clarify hist-section';
-  const title = document.createElement('div');
-  title.className = 'hist-section-title';
-  title.textContent = 'Clarifying questions';
-  sec.appendChild(title);
-
+// Render each question with its chosen answer into the clarify panel (idempotent).
+function renderClarifyPanel(panelEl, questions, answers) {
+  panelEl.innerHTML = '';
+  const byId = new Map((answers || []).map((a) => [a.id, a]));
   questions.forEach((q, i) => {
     const block = document.createElement('div');
     block.className = 'qblock';
@@ -5341,16 +5367,64 @@ function buildHistClarify(questions, answers) {
     qtext.appendChild(qn);
     qtext.appendChild(document.createTextNode(typeof q.question === 'string' ? q.question : ''));
     block.appendChild(qtext);
-
     const ans = byId.get(q.id);
     const aLine = document.createElement('div');
     aLine.className = 'hist-answer';
     const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
     aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
     block.appendChild(aLine);
-    sec.appendChild(block);
+    panelEl.appendChild(block);
   });
-  return sec;
+}
+
+// Paint the Live-logs dropdown. Hidden unless a 'live-log' artifact exists. The
+// NDJSON is lazy-loaded on first open (uncapped, can be large) and cached.
+function paintLiveLogsBar(barEl, logUrl, hasLog) {
+  if (!barEl) return;
+  if (!hasLog) { barEl.hidden = true; return; }
+  barEl.hidden = false;
+  const btn = barEl.querySelector('.btn-subs');
+  const panel = barEl.querySelector('.logs-panel');
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (!panel) return;
+      panel.hidden = open;
+      if (!open && panel.dataset.loaded !== '1') {
+        panel.dataset.loaded = '1';
+        loadLiveLogs(panel, logUrl);
+      }
+    });
+  }
+}
+
+// Fetch the persisted NDJSON and render each line with the SAME buildLogLine() the
+// live panel uses, so persisted logs look identical to live ones.
+async function loadLiveLogs(panel, logUrl) {
+  const box = document.createElement('div');
+  box.className = 'log';
+  panel.innerHTML = '';
+  panel.appendChild(box);
+  try {
+    const res = await fetch(logUrl);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    let n = 0;
+    for (const raw of text.split('\n')) {
+      const t = raw.trim();
+      if (!t) continue;
+      let rec;
+      try { rec = JSON.parse(t); } catch { continue; } // skip a torn final line
+      box.appendChild(buildLogLine({ source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub }));
+      n++;
+    }
+    if (n === 0) box.textContent = '(no log lines)';
+  } catch (e) {
+    box.textContent = `Could not load logs: ${e.message}`;
+    panel.dataset.loaded = ''; // allow a retry on the next open
+  }
 }
 
 // Per-node max cycle from a saved run's steps[] (history's loop-count source).

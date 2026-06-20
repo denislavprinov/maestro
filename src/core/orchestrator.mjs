@@ -38,6 +38,7 @@ import {
   updatePhaseStatus,
 } from './artifacts.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
+import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
@@ -193,6 +194,7 @@ class Orchestrator extends EventEmitter {
     this.registry = null; // ▲ v3: set in run(); used by _dispatch's D4 validation
     this.extrasFiles = []; // attached files copied into <pipeline>/extras (set in _dispatch)
     this.pipeline = null; // { id, dir, promptText }
+    this.logWriter = createRunLogWriter(); // buffered NDJSON persistence of the `log` stream
     this.baseName = null;
     this.planDatePrefix = null; // DD-MM-YY captured once so -vN versions share it
 
@@ -385,6 +387,8 @@ class Orchestrator extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
+      this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
+      recordArtifact(this.pipeline.id, RUN_LOG_KIND, RUN_LOG_FILE); // index like prompt.md (sync; INSERT OR IGNORE)
       // A11(b): carry the resolved prompt on the in-memory state too (createPipeline
       // already INSERTs prompt and the curated UPSERT excludes it, so persistence is
       // safe — this keeps the live state object self-consistent for any reader).
@@ -523,6 +527,7 @@ class Orchestrator extends EventEmitter {
         if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
         else await this._teardownWorktree().catch(() => {});
       }
+      await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
   }
 
@@ -551,6 +556,8 @@ class Orchestrator extends EventEmitter {
       this.planDatePrefix = row.date_prefix;
       this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };
       this.state.pipelineDir = rp.pipelineDir;
+      this.logWriter.bind(rp.pipelineDir);
+      recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
@@ -667,6 +674,7 @@ class Orchestrator extends EventEmitter {
         if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
         else await this._teardownWorktree().catch(() => {});
       }
+      await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
   }
 
@@ -2379,6 +2387,7 @@ class Orchestrator extends EventEmitter {
       if (attr.sub) evt.sub = true;        // drives sub-agent web styling
     }
     this._emit('log', evt);
+    this.logWriter.push(evt); // persist the full stream (buffered; flushed on a timer)
   }
 
   _artifact(kind, path) {
