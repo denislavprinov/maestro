@@ -7,6 +7,7 @@
   "agentFile": "maestro-plan-refiner.md",
   "runnerType": "producer",
   "loopSource": false,
+  "fanOut": true,
   "produces": ["plan","review"],
   "consumes": ["plan"],
   "connectsTo": ["implementer","refiner","decomposer"],

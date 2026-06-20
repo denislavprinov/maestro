@@ -8,7 +8,7 @@
   "agentFile": "maestro-decomposer.md",
   "runnerType": "producer",
   "loopSource": false,
-  "fanOut": false,
+  "fanOut": true,
   "produces": ["decomposition"],
   "consumes": ["plan"],
   "optionalConsumes": [],
