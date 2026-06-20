@@ -9,6 +9,7 @@ import { _resetForTests } from '../src/core/db.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
 import { listPhases, listTasks } from '../src/core/artifacts.mjs';
 import { createOrchestrator, decomposedTaskNode } from '../src/core/orchestrator.mjs';
+import { ctxFanOut } from '../src/core/phases.mjs';
 
 let home, proj;
 beforeEach(async () => {
@@ -81,6 +82,24 @@ test('decomposedTaskNode carries phase siblings (excluding self) for the shared-
   // Solo task in its phase -> no siblings.
   const solo = decomposedTaskNode(implNode, tasks[0], [tasks[0]], '/runs/pipe1');
   assert.deepEqual(solo.siblings, []);
+});
+
+test('decomposedTaskNode inherits fanOut from the implementer node so each task implementer fans out', () => {
+  const tasks = [{ id: 'p1t1', nodeId: 's_impl_p1_t1', title: 'A', file: 'tasks/p1-t1-a.md' }];
+
+  // fanOut ON -> the synthetic per-task node carries it -> ctxFanOut(ctx) true per task.
+  const on = decomposedTaskNode({ model: 'sonnet', effort: 'high', tools: ['Read'], fanOut: true }, tasks[0], tasks, '/runs/pipe1');
+  assert.equal(on.fanOut, true);
+  assert.equal(ctxFanOut({ node: on }), true);
+
+  // fanOut OFF -> propagated as false -> ctxFanOut false (byte-identical behavior to today).
+  const off = decomposedTaskNode({ model: 'sonnet', effort: 'high', tools: ['Read'], fanOut: false }, tasks[0], tasks, '/runs/pipe1');
+  assert.equal(off.fanOut, false);
+  assert.equal(ctxFanOut({ node: off }), false);
+
+  // implNode WITHOUT a fanOut field (passthrough undefined) safely coerces to off downstream (D1).
+  const bare = decomposedTaskNode({ model: 'sonnet', tools: ['Read'] }, tasks[0], tasks, '/runs/pipe1');
+  assert.equal(ctxFanOut({ node: bare }), false);
 });
 
 test('decomposed run records a pipeline step per task node', async () => {

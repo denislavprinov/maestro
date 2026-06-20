@@ -53,3 +53,15 @@ test('_phaseCtx forwards fanOut into the node-less clarify ctx', () => {
   assert.equal(orch._phaseCtx('planner').fanOut, false);            // default: off
   assert.equal(orch._phaseCtx('planner', { fanOut: true }).fanOut, true);
 });
+
+// Pins the exact expression runImplementer inserts: `fanOutDirective(ctxFanOut(ctx))`.
+// Green before and after the runImplementer edit (the helpers are unchanged) — this is a
+// living spec of the inserted line + a regression guard on the helpers, NOT a red->green.
+test('implementer fan-out wiring: the expression runImplementer inserts is gated by the node', () => {
+  // Solo (no decomposer): the resolved implementer node carries fanOut.
+  assert.match(fanOutDirective(ctxFanOut({ node: { key: 'implementer', fanOut: true } })), /Fan-out ENABLED/);
+  // Decomposed: the synthetic task node carries the inherited fanOut (Step 1).
+  assert.match(fanOutDirective(ctxFanOut({ node: { key: 'implementer', decomposedTask: true, fanOut: true } })), /Fan-out ENABLED/);
+  // Off -> empty string -> the implementer prompt is byte-identical to today.
+  assert.equal(fanOutDirective(ctxFanOut({ node: { key: 'implementer', fanOut: false } })), '');
+});
