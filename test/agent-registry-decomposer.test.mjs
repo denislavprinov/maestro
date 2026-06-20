@@ -7,7 +7,7 @@ test('decomposer is registered with the expected channel spec', () => {
   const d = reg.decomposer;
   assert.ok(d, 'decomposer not found in registry');
   assert.equal(d.runnerType, 'producer');
-  assert.equal(d.fanOut, false);
+  assert.equal(d.fanOut, true);
   assert.equal(d.scope, 'project');
   assert.deepEqual(d.consumes, ['plan']);
   assert.deepEqual(d.produces, ['decomposition']);

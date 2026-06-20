@@ -66,12 +66,12 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
   const steps = registryToSteps(reg);
   // clarify is now steps[0]; the original four keep their labels, but the decomposer
   // (order 2.5) now sits at steps[3] between refiner and implementer. fanOut now
-  // defaults ON for every agent role (planner/refiner/implementer/reviewer); only the
-  // decomposer splitter stays OFF.
+  // defaults ON for every agent role (planner/refiner/implementer/reviewer AND the
+  // decomposer splitter).
   assert.deepEqual(steps.slice(1, 6), [
     { key: 'planner', label: 'Plan', fanOut: true },
     { key: 'refiner', label: 'Refine', fanOut: true },
-    { key: 'decomposer', label: 'Decompose', fanOut: false },
+    { key: 'decomposer', label: 'Decompose', fanOut: true },
     { key: 'implementer', label: 'Implement', fanOut: true },
     { key: 'reviewer', label: 'Review', fanOut: true },
   ]);
@@ -83,7 +83,7 @@ test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
   assert.equal(steps.length, 9);
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true });
-  assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: false });
+  assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true });
   assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
   assert.deepEqual(steps[7], { key: 'manualWebUiTesting', label: 'Manual web UI testing', fanOut: false });
   assert.deepEqual(steps[8], { key: 'planReviewer', label: 'Plan Review', fanOut: true });

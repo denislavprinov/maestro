@@ -134,7 +134,7 @@ export function workspaceFanOutDirective(strategy, ws) {
   if (strategy === 'explore') {
     return (
       '## Workspace fan-out — explore across member projects\n\n' +
-      'Dispatch ONE read-only Explore sub-agent per member project (cap 4) to survey ' +
+      'Dispatch ONE read-only Explore sub-agent per member project (cap 8) to survey ' +
       'its worktree (modules, public API, deps) and return a brief. Then write the ' +
       'SINGLE unified plan yourself, with findings under per-project headings and ' +
       'every plan TASK tagged `Projects: <projectKey>[, ...]` for the project(s) it ' +
@@ -146,7 +146,7 @@ export function workspaceFanOutDirective(strategy, ws) {
     return (
       '## Workspace fan-out — one sub-agent per plan task\n\n' +
       'Read the plan\'s `## Tasks`; dispatch ONE implementer sub-agent per task ' +
-      '(cap 3, `subagent_type:"general-purpose"`), each editing ONLY the worktree(s) ' +
+      '(cap 8, `subagent_type:"general-purpose"`), each editing ONLY the worktree(s) ' +
       'of the project(s) named in that task\'s `Projects:` tag (cwd into the named ' +
       'worktree). Do NOT edit any project not named by a task. Schedule two tasks ' +
       'that touch the SAME project sequentially (no overlapping ownership in a wave). ' +
@@ -156,7 +156,7 @@ export function workspaceFanOutDirective(strategy, ws) {
   if (strategy === 'review') {
     return (
       '## Workspace fan-out — one reviewer per touched project\n\n' +
-      'Dispatch ONE reviewer sub-agent per TOUCHED member project (cap 4) — skip a ' +
+      'Dispatch ONE reviewer sub-agent per TOUCHED member project (cap 8) — skip a ' +
       'project whose diff against its checkpoint is empty. Each sub-agent reviews its ' +
       'project\'s `checkpointRef...feature` diff against the plan and reports issues. ' +
       'Then YOU synthesize ONE review markdown + ONE verdict JSON: the UNION of every ' +
@@ -792,8 +792,8 @@ export async function runWorkspaceScan(ctx, opts = {}) {
     '## What to do\n\n' +
     'Discover how these projects interconnect (REST APIs, shared DB/migrations, build deps, ' +
     'message/queue, shared libs) and write ONE editable interconnection description.\n\n' +
-    fanOutDirective(true) +  // scan-fanout: one read-only investigator per project (cap 4)
-    'Dispatch ONE read-only investigator per member project (cap 4); merge their reports in sorted ' +
+    fanOutDirective(true) +  // scan-fanout: one read-only investigator per project (cap 8)
+    'Dispatch ONE read-only investigator per member project (cap 8); merge their reports in sorted ' +
     '`projectKey` order and synthesize the single description yourself. Investigators MUST NOT ' +
     're-fan-out.\n\n' +
     'Announce each investigation with a line `INVESTIGATING <projectKey> relations to <otherKey>` ' +
