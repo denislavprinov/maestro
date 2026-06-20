@@ -262,9 +262,9 @@ export function upsertSubAgent(pipelineId, rec) {
     tx(() => {
       getDb().prepare(`
         INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
-          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase)
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills)
         VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
-          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase)
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills)
         ON CONFLICT(pipeline_id, id) DO UPDATE SET
           status      = excluded.status,
           step_key    = COALESCE(excluded.step_key, step_key),
@@ -277,7 +277,8 @@ export function upsertSubAgent(pipelineId, rec) {
           duration_ms = COALESCE(excluded.duration_ms, duration_ms),
           tokens      = COALESCE(excluded.tokens, tokens),
           cost_usd    = COALESCE(excluded.cost_usd, cost_usd),
-          ui_phase    = COALESCE(excluded.ui_phase, ui_phase)
+          ui_phase    = COALESCE(excluded.ui_phase, ui_phase),
+          skills      = COALESCE(excluded.skills, skills)
       `).run({
         pipeline_id: pipelineId,
         id: rec.id,
@@ -293,6 +294,7 @@ export function upsertSubAgent(pipelineId, rec) {
         tokens: Number.isFinite(rec.tokens) ? rec.tokens : null,
         cost_usd: Number.isFinite(rec.costUsd) ? rec.costUsd : null,
         ui_phase: rec.uiPhase ?? null,
+        skills: s(rec.skills),   // s() = JSON.stringify or null; growing supersets overwrite via COALESCE
       });
     });
   } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
@@ -313,7 +315,7 @@ export function listSubAgents(pipelineId) {
   if (!pipelineId) return [];
   return getDb().prepare(`
     SELECT id, label, node_id, step_index, cycle, step_key, status,
-           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase
+           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills
     FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
   `).all(pipelineId).map((r) => ({
     id: r.id,
@@ -329,6 +331,7 @@ export function listSubAgents(pipelineId) {
     tokens: r.tokens ?? null,
     costUsd: r.cost_usd ?? null,
     uiPhase: r.ui_phase ?? null,
+    skills: j(r.skills, []),     // NULL -> [] so the UI always has an array (no pills)
   }));
 }
 
@@ -927,8 +930,8 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id, skills)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       ins.run(
@@ -939,6 +942,7 @@ export async function writeState(pipelineDir, stateObj) {
         st.runningSince == null ? null : String(st.runningSince),
         Number.isFinite(st.costUsd) ? st.costUsd : 0,
         st.sessionId ?? null,
+        s(st.skills),
       );
     }
   });
@@ -1330,6 +1334,7 @@ function stepRowToStep(r) {
     runningSince: r.running_since == null ? null : Number(r.running_since),
     costUsd: r.cost_usd ?? 0,
     sessionId: r.session_id ?? undefined,
+    skills: j(r.skills, []),
   };
   if (r.node_id != null) step.nodeId = r.node_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
@@ -1366,7 +1371,7 @@ function rowToState(row) {
     tools: j(row.tools, null),
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd, session_id
+             active_ms, running_since, cost_usd, session_id, skills
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),

@@ -42,7 +42,7 @@ test('upsertSubAgent inserts a running record; listSubAgents returns the camelCa
     id: 'toolu_aaa', label: 'investigate auth', nodeId: 's2_0', stepIndex: 2,
     cycle: 1, stepKey: '2:s2_0#1', status: 'running',
     startedAt: '2026-06-07T00:00:01Z', finishedAt: null,
-    durationMs: null, tokens: null, costUsd: null, uiPhase: null,
+    durationMs: null, tokens: null, costUsd: null, uiPhase: null, skills: [],
   }, 'row maps back to the shared camelCase record shape');
 });
 

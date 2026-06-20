@@ -279,7 +279,7 @@ function handleServerMessage(msg) {
   // exactly what produced the phantom "(untitled)" pipeline. Other event types may
   // legitimately create a card for a run this tab didn't start (CLI / another tab),
   // and `state` snapshots reconcile r.subAgents anyway, so nothing is lost.
-  if (msg.type === 'subagent' && !runs.has(msg.runId)) return;
+  if ((msg.type === 'subagent' || msg.type === 'stepskills') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
@@ -300,6 +300,9 @@ function handleServerMessage(msg) {
       break;
     case 'subagent':
       onSubagent(r, msg);
+      break;
+    case 'stepskills':
+      onStepSkills(r, msg);
       break;
     case 'done':
       onDone(r, msg);
@@ -739,6 +742,7 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     pendingQuestion,
     logLines: [],
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
+    stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     el: null,
     _finished: false,
   };
@@ -957,6 +961,20 @@ function subsByNodeCycleArrays(subAgents) {
   return out;
 }
 
+// {`${nodeId}|${cycle}`: string[]} of MAIN-agent skills, from state.steps[]. Keys
+// by the SAME nodeId|cycle composite as subsByNodeCycleArrays (cycle ?? 0) so
+// renderSubsTree looks up a group's header skills by its group key. NOTE: this is
+// NOT costByNode's keying — costByNode buckets by stepBucketKey (nodeId alone),
+// which would NOT match the dropdown group key. Use the composite below.
+function stepSkillsFromSteps(steps) {
+  const out = {};
+  for (const st of Array.isArray(steps) ? steps : []) {
+    if (!st || st.nodeId == null || !Array.isArray(st.skills) || !st.skills.length) continue;
+    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = st.skills;
+  }
+  return out;
+}
+
 // Map<nodeId, Set<cycle>> — distinct cycles each node spawned sub-agents in.
 // Drives whether a group header gets a "· cycle N" suffix. Record-driven: the
 // suffix appears when a node actually has sub-agents across >1 cycle, independent
@@ -1016,6 +1034,7 @@ function onState(r, msg) {
   if (Array.isArray(msg.steps)) {
     r.steps = msg.steps;
     r.costByNode = costByNode(msg.steps);
+    r.stepSkills = stepSkillsFromSteps(msg.steps);
   }
   if (typeof msg.totalCostUsd === 'number') r.totalCostUsd = msg.totalCostUsd;
   // Sub-agents: the state snapshot is authoritative (covers late-join/replay and
@@ -1041,7 +1060,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
@@ -1049,6 +1068,16 @@ function onSubagent(r, msg) {
     rec.finishedAt = msg.finishedAt !== undefined ? msg.finishedAt
       : (msg.ts != null ? new Date(msg.ts).toISOString() : new Date().toISOString());
   }
+  paintRunCard(r);
+}
+
+// Per-step MAIN-agent skill delta, keyed by the same nodeId|cycle composite the
+// dropdown groups by. The `state` snapshot stays authoritative (rebuilds the map).
+// The delta carries the full cumulative superset, so a plain replace is correct.
+function onStepSkills(r, msg) {
+  if (!msg || msg.nodeId == null) return;
+  if (!r.stepSkills) r.stepSkills = {};
+  r.stepSkills[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Array.isArray(msg.skills) ? msg.skills : [];
   paintRunCard(r);
 }
 
@@ -1790,6 +1819,9 @@ if (typeof window !== 'undefined') {
     paintSubsBar,
     subGroupStatus,
     renderSubsTree,
+    skillPillsHtml,
+    onStepSkills,
+    stepSkillsFromSteps,
     nodeLabelLookup,
     historyBadge,
     statusPill,
@@ -5169,7 +5201,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents));
+    if (histSubsBar) paintSubsBar(histSubsBar, subsByNodeCycleArrays(data.state.subAgents), cycleAwareLabel(data.state.stepper, data.state.subAgents), stepSkillsFromSteps(data.state.steps));
     renderHistClarifyReviews(detail, data.clarify);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
@@ -5503,7 +5535,7 @@ function subsPillText(byNode) {
 // Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
 // [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
 // handler is bound once (dataset guard), the count/text repaint every call.
-function paintSubsBar(barEl, byNode, labelOf) {
+function paintSubsBar(barEl, byNode, labelOf, stepSkills) {
   if (!barEl) return;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
   const total = Object.values(groups).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
@@ -5519,6 +5551,7 @@ function paintSubsBar(barEl, byNode, labelOf) {
   // recently painted card's grouping/labels into another card's open panel.
   barEl._subsGroups = groups;
   barEl._subsLabelOf = labelFn;
+  barEl._subsStepSkills = stepSkills && typeof stepSkills === 'object' ? stepSkills : {};
 
   const { text, active } = subsPillText(groups);
   if (count) {
@@ -5528,7 +5561,7 @@ function paintSubsBar(barEl, byNode, labelOf) {
 
   // Re-render an already-open panel in place so live spawns/finishes reflect immediately.
   if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
-    renderSubsTree(panel, groups, labelFn);
+    renderSubsTree(panel, groups, labelFn, barEl._subsStepSkills);
   }
 
   if (btn && btn.dataset.bound !== '1') {
@@ -5538,7 +5571,7 @@ function paintSubsBar(barEl, byNode, labelOf) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf);
+        if (!open) renderSubsTree(panel, barEl._subsGroups || {}, barEl._subsLabelOf, barEl._subsStepSkills || {});
       }
     });
   }
@@ -5571,17 +5604,33 @@ const SUBS_STAT_TEXT = { run: 'running', done: 'done', stop: 'stopped' };
 // (defaults to the id). Idempotent: the panel is fully rebuilt each call.
 // NOTE: squares here are .sq/.led and are NEVER placed under .fan, so the
 // graph-only sqPulse animation can never reach them.
-function renderSubsTree(panelEl, byNode, nodeLabel) {
+// Flex-wrap pill row for kind-tagged labels ("skill:foo"/"mcp:bar"); '' when empty.
+// The .subs-skills container wraps (CSS) so pills reflow as the window shrinks.
+function skillPillsHtml(skills) {
+  const arr = Array.isArray(skills) ? skills : [];
+  if (!arr.length) return '';
+  const pills = arr.map((tag) => {
+    const i = String(tag).indexOf(':');
+    const kind = i >= 0 ? tag.slice(0, i) : 'skill';
+    const name = i >= 0 ? tag.slice(i + 1) : tag;
+    const cls = kind === 'mcp' ? 'skill-pill is-mcp' : 'skill-pill is-skill';
+    return `<span class="${cls}">${escapeHtml(name)}</span>`;
+  }).join('');
+  return `<div class="subs-skills">${pills}</div>`;
+}
+
+function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills) {
   if (!panelEl) return;
   const labelOf = typeof nodeLabel === 'function' ? nodeLabel : (id) => id;
   const groups = byNode && typeof byNode === 'object' ? byNode : {};
+  const skillsByGroup = stepSkills && typeof stepSkills === 'object' ? stepSkills : {};
   panelEl.innerHTML =
     '<div class="subs-legend">' +
       '<span class="lk"><span class="sq on"></span>active</span>' +
       '<span class="lk"><span class="sq off"></span>finished</span>' +
     '</div>';
 
-  for (const nodeId of Object.keys(groups)) {
+  for (const nodeId of Object.keys(groups)) {            // nodeId === the "nodeId|cycle" group key
     const list = Array.isArray(groups[nodeId]) ? groups[nodeId] : [];
     if (list.length === 0) continue;
     const gstat = subGroupStatus(list);
@@ -5593,7 +5642,8 @@ function renderSubsTree(panelEl, byNode, nodeLabel) {
         `<b>${escapeHtml(labelOf(nodeId))}</b>` +
         `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat]}</span>` +
         `<span class="subs-n">${list.length} sub-agents</span>` +
-      '</div>';
+      '</div>' +
+      skillPillsHtml(skillsByGroup[nodeId]);              // MAIN-agent pills, own row under the header
     const ul = document.createElement('ul');
     ul.className = 'subs-tree';
     for (const s of list) {
@@ -5602,7 +5652,8 @@ function renderSubsTree(panelEl, byNode, nodeLabel) {
       li.innerHTML =
         `<span class="led${rstat === 'run' ? ' on' : ''}"></span>` +
         `<span class="ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
-        `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>`;
+        `<span class="st ${rstat}">${rstat === 'run' ? 'running' : rstat === 'stop' ? 'stopped' : 'done'}</span>` +
+        skillPillsHtml(s && s.skills);                    // per-sub-agent pills, wrap to their own row
       ul.appendChild(li);
     }
     step.appendChild(ul);
@@ -5698,7 +5749,7 @@ function paintRunCard(r) {
   // subsByNode(...) directly, but that Map yields Object.values()===[] -> the bar
   // would never show; see report.)
   const subsBar = r.el.querySelector('.subs-bar');
-  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents));
+  if (subsBar) paintSubsBar(subsBar, subsByNodeCycleArrays(r.subAgents), cycleAwareLabel(r.stepper, r.subAgents), r.stepSkills || {});
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');

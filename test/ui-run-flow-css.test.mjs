@@ -219,3 +219,10 @@ test('tree legend + step + connector-row CSS, and NO animation on tree squares',
   assert.doesNotMatch(css, /\.subs-tree[^{]*\{[^}]*animation/, 'tree rows never animate');
   assert.doesNotMatch(css, /\.subs-legend[^{]*\{[^}]*animation/, 'legend never animates');
 });
+
+test('skill pills: .subs-skills flex-wraps; row pills take their own full line; pills are rounded', () => {
+  assert.match(ruleBody('.subs-skills'), /flex-wrap:\s*wrap/, '.subs-skills wraps');
+  assert.match(css, /\.subs-tree li\{[^}]*flex-wrap:\s*wrap/, '.subs-tree li wraps so pills drop below name/status');
+  assert.match(ruleBody('.subs-tree li .subs-skills'), /flex:\s*0 0 100%/, 'row pill container takes a full row');
+  assert.match(ruleBody('.skill-pill'), /border-radius:\s*999px/, 'pills are rounded like the house style');
+});
