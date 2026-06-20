@@ -262,9 +262,9 @@ export function upsertSubAgent(pipelineId, rec) {
     tx(() => {
       getDb().prepare(`
         INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
-          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase)
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills)
         VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
-          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase)
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills)
         ON CONFLICT(pipeline_id, id) DO UPDATE SET
           status      = excluded.status,
           step_key    = COALESCE(excluded.step_key, step_key),
@@ -277,7 +277,8 @@ export function upsertSubAgent(pipelineId, rec) {
           duration_ms = COALESCE(excluded.duration_ms, duration_ms),
           tokens      = COALESCE(excluded.tokens, tokens),
           cost_usd    = COALESCE(excluded.cost_usd, cost_usd),
-          ui_phase    = COALESCE(excluded.ui_phase, ui_phase)
+          ui_phase    = COALESCE(excluded.ui_phase, ui_phase),
+          skills      = COALESCE(excluded.skills, skills)
       `).run({
         pipeline_id: pipelineId,
         id: rec.id,
@@ -293,6 +294,7 @@ export function upsertSubAgent(pipelineId, rec) {
         tokens: Number.isFinite(rec.tokens) ? rec.tokens : null,
         cost_usd: Number.isFinite(rec.costUsd) ? rec.costUsd : null,
         ui_phase: rec.uiPhase ?? null,
+        skills: s(rec.skills),   // s() = JSON.stringify or null; growing supersets overwrite via COALESCE
       });
     });
   } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
@@ -313,7 +315,7 @@ export function listSubAgents(pipelineId) {
   if (!pipelineId) return [];
   return getDb().prepare(`
     SELECT id, label, node_id, step_index, cycle, step_key, status,
-           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase
+           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills
     FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
   `).all(pipelineId).map((r) => ({
     id: r.id,
@@ -329,6 +331,7 @@ export function listSubAgents(pipelineId) {
     tokens: r.tokens ?? null,
     costUsd: r.cost_usd ?? null,
     uiPhase: r.ui_phase ?? null,
+    skills: j(r.skills, []),     // NULL -> [] so the UI always has an array (no pills)
   }));
 }
 
@@ -449,9 +452,6 @@ export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
     });
   } catch { /* best-effort */ }
 }
-
-/** Hard cap for the FROZEN workspace description copied into a run (cap-on-freeze). */
-const WORKSPACE_DESCRIPTION_CAP = 2000;
 
 /**
  * Convert an arbitrary string to a safe kebab-case slug.
@@ -635,28 +635,15 @@ function shortId() {
 }
 
 /**
- * Freeze a workspace description into a run: hard cap at WORKSPACE_DESCRIPTION_CAP
- * total chars (.length, i.e. UTF-16 code units), truncating with a trailing
- * ellipsis when over (the ellipsis counts toward the cap so the result is never
- * longer than the cap). Cap-on-freeze only — the editable registry copy in
- * workspaces.json is never truncated.
- *
- * Truncation is code-point aware: it accumulates whole code points until the next
- * one would push past CAP-1 code units, so it never splits a surrogate pair (a
- * naive s.slice(0, CAP-1) could leave a lone surrogate before the ellipsis).
+ * Freeze a workspace description into a run: take a VERBATIM snapshot of the text so
+ * later registry edits never retroactively alter a started run. No length cap — the
+ * description's size is bounded only by the workspace-scanner prompt. Non-strings
+ * become ''.
  * @param {string} text
  * @returns {string}
  */
 function freezeDescription(text) {
-  const s = typeof text === 'string' ? text : '';
-  if (s.length <= WORKSPACE_DESCRIPTION_CAP) return s;
-  const budget = WORKSPACE_DESCRIPTION_CAP - 1; // reserve one code unit for the ellipsis
-  let out = '';
-  for (const cp of s) {                          // iterates by code point, never mid-pair
-    if (out.length + cp.length > budget) break;
-    out += cp;
-  }
-  return out + '…';
+  return typeof text === 'string' ? text : '';
 }
 
 /**
@@ -678,7 +665,7 @@ function resolveAgainst(base, p) {
  * (target:'workspace', workspaceId/Key/Name, frozen workspaceDescription, sorted
  * projectKeys, projects[], empty checkpointRefs/branches), and a frozen
  * workspace-description.md snapshot is written into the pipeline dir. The frozen
- * description is hard-capped at 2000 chars (cap-on-freeze; the editable registry
+ * description is frozen verbatim (cap-on-freeze snapshot, no length cap; the editable registry
  * copy is untouched). `projectDir` is the PRIMARY member (projects[0] after sort).
  * Absent the workspace opts the single-project path is byte-identical.
  *
@@ -691,7 +678,7 @@ function resolveAgainst(base, p) {
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
  * @param {string} [opts.workspaceId]    == workspaceKey
  * @param {string} [opts.workspaceName]
- * @param {string} [opts.workspaceDescription]  frozen verbatim (capped at 2000)
+ * @param {string} [opts.workspaceDescription]  frozen verbatim (no cap)
  * @param {Array<{projectKey,projectDir,projectName}>} [opts.projects]  sorted members
  * @returns {Promise<{id:string, dir:string, promptText:string}>}
  */
@@ -779,7 +766,7 @@ export async function createPipeline(projectDir, opts = {}) {
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
-  // The description is FROZEN here (capped at 2000) so later registry edits never
+  // The description is FROZEN here verbatim (no cap) so later registry edits never
   // retroactively alter a started run; branches/checkpointRefs start empty and are
   // populated by the orchestrator at worktree/checkpoint setup.
   if (workspaceKey) {
@@ -927,8 +914,8 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id, skills)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       ins.run(
@@ -939,6 +926,7 @@ export async function writeState(pipelineDir, stateObj) {
         st.runningSince == null ? null : String(st.runningSince),
         Number.isFinite(st.costUsd) ? st.costUsd : 0,
         st.sessionId ?? null,
+        s(st.skills),
       );
     }
   });
@@ -1330,6 +1318,7 @@ function stepRowToStep(r) {
     runningSince: r.running_since == null ? null : Number(r.running_since),
     costUsd: r.cost_usd ?? 0,
     sessionId: r.session_id ?? undefined,
+    skills: j(r.skills, []),
   };
   if (r.node_id != null) step.nodeId = r.node_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
@@ -1366,7 +1355,7 @@ function rowToState(row) {
     tools: j(row.tools, null),
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd, session_id
+             active_ms, running_since, cost_usd, session_id, skills
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),

@@ -187,7 +187,7 @@ test('createPipeline (workspace opts) stamps the workspace_meta superset + works
   }
 });
 
-test('createPipeline freezes the description at a 2000-char cap (cap-on-freeze)', async () => {
+test('createPipeline freezes the FULL description verbatim (no cap)', async () => {
   const home = await mkdtemp(join(tmpdir(), 'maestro-wcap-'));
   const a = await mkdtemp(join(tmpdir(), 'maestro-wcap-a-'));
   const b = await mkdtemp(join(tmpdir(), 'maestro-wcap-b-'));
@@ -205,45 +205,10 @@ test('createPipeline freezes the description at a 2000-char cap (cap-on-freeze)'
       workspaceDescription: big, projects,
     });
     const wm = JSON.parse(getDb().prepare('SELECT workspace_meta FROM pipelines WHERE id = ?').get(id).workspace_meta);
-    assert.equal(wm.workspaceDescription.length, 2000, 'frozen copy capped at 2000');
-    assert.ok(wm.workspaceDescription.endsWith('…'), 'truncation marked with an ellipsis');
+    assert.equal(wm.workspaceDescription.length, 5000, 'frozen copy stores the full text');
+    assert.ok(!wm.workspaceDescription.endsWith('…'), 'no truncation ellipsis');
     const wd = await readFile(join(dir, 'workspace-description.md'), 'utf8');
-    assert.equal(wd.length, 2000);
-  } finally {
-    _resetForTests();
-    if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;
-  }
-});
-
-test('createPipeline freeze is surrogate-safe at the 2000-char boundary (no lone surrogate)', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'maestro-wsurr-'));
-  const a = await mkdtemp(join(tmpdir(), 'maestro-wsurr-a-'));
-  const b = await mkdtemp(join(tmpdir(), 'maestro-wsurr-b-'));
-  const prev = process.env.MAESTRO_HOME;
-  process.env.MAESTRO_HOME = home;
-  _resetForTests();
-  try {
-    // 1998 ASCII chars puts an astral emoji (2 UTF-16 code units) straddling the
-    // 1999-code-unit budget boundary: a naive slice(0,1999) would split the pair.
-    const big = 'a'.repeat(1998) + '😀'.repeat(50);
-    const projects = [
-      { projectKey: projectKey(a), projectDir: a, projectName: 'a' },
-      { projectKey: projectKey(b), projectDir: b, projectName: 'b' },
-    ].sort((x, y) => (x.projectKey < y.projectKey ? -1 : 1));
-    const { id } = await createPipeline(projects[0].projectDir, {
-      prompt: 'task', workspaceKey: 'wks-demo-12345678', workspaceId: 'wks-demo-12345678',
-      workspaceName: 'Surr', workspaceDescription: big, projects,
-    });
-    const wm = JSON.parse(getDb().prepare('SELECT workspace_meta FROM pipelines WHERE id = ?').get(id).workspace_meta);
-    const out = wm.workspaceDescription;
-    assert.ok(out.length <= 2000, `length ${out.length} must be <= 2000`);
-    assert.ok(out.endsWith('…'), 'ends with the ellipsis');
-    // No lone surrogate: the char immediately before '…' must NOT be a high
-    // surrogate (that would mean a pair was split), and the whole string must be
-    // well-formed UTF-16 (no lone surrogate anywhere).
-    assert.ok(!/[\uD800-\uDBFF]$/.test(out.slice(0, -1)), 'no dangling high surrogate before the ellipsis');
-    assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out),
-      'frozen description is well-formed UTF-16 (no lone surrogate)');
+    assert.equal(wd.length, 5000, 'on-disk snapshot is the full text');
   } finally {
     _resetForTests();
     if (prev === undefined) delete process.env.MAESTRO_HOME; else process.env.MAESTRO_HOME = prev;

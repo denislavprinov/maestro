@@ -411,8 +411,15 @@ async function emitMockSubAgents(role, onEvent, signal) {
   if (!MOCK_FANOUT_ROLES.has(role)) return;
   const labels = ['investigate area A', 'investigate area B'];
   const ids = labels.map((_, i) => `mock_${role}_${i + 1}`);
-  // Spawns first (one assistant event carrying both tool_use blocks), then a brief
-  // running window, then the matching tool_result finishes.
+
+  // (1) MAIN-agent skill use (no parent_tool_use_id) -> the step/group header gets a pill.
+  safeEmit(onEvent, {
+    type: 'assistant',
+    raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: `mock_${role}_skill`, name: 'Skill', input: { skill: 'graphify' } },
+    ] } },
+  });
+  // (2) Spawns (one assistant event carrying both Agent tool_use blocks).
   safeEmit(onEvent, {
     type: 'assistant',
     raw: { type: 'assistant', message: { content: ids.map((id, i) => ({
@@ -421,6 +428,17 @@ async function emitMockSubAgents(role, onEvent, signal) {
   });
   await new Promise((r) => setTimeout(r, 0));
   abortIfNeeded(signal);
+  // (3) The FIRST sub-agent uses a skill + an MCP tool (child stream: parent_tool_use_id).
+  safeEmit(onEvent, {
+    type: 'assistant',
+    raw: { type: 'assistant', parent_tool_use_id: ids[0], message: { content: [
+      { type: 'tool_use', id: `${ids[0]}_s1`, name: 'Skill', input: { skill: 'brainstorming' } },
+      { type: 'tool_use', id: `${ids[0]}_s2`, name: 'mcp__plugin_playwright_playwright__browser_navigate', input: { url: 'http://localhost' } },
+    ] } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  abortIfNeeded(signal);
+  // (4) Matching tool_result finishes.
   for (const id of ids) {
     safeEmit(onEvent, {
       type: 'user',

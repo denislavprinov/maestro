@@ -1827,6 +1827,12 @@ class Orchestrator extends EventEmitter {
       this._recordSubAgentFinishes(e.raw);
     }
 
+    // Capture named-skill / MCP-tool usage for the Sub-agents dropdown pills
+    // (main agent -> its step; sub-agent -> its record). Independent of the
+    // text/tool log branches below (it runs BEFORE the `if (text) return`), so a
+    // mixed text+tool_use turn is still caught.
+    this._recordSkills(e.raw, subId, attr);
+
     // Display source: parent role for main events; "role ▸ label" for sub-agent
     // events. `sub` drives the indented/dimmed web styling.
     let source = role;
@@ -1915,6 +1921,43 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Record skills / MCP-tools used in one agent event. Routes by parent_tool_use_id:
+   * a MAIN-agent turn (subId == null) attributes to its pipeline step (by stepKey);
+   * a sub-agent turn (subId != null) attributes to the spawned record (id === subId).
+   * Grows a deduped, capped `skills` array and emits a delta + persists ONLY when the
+   * set actually changed. No-op when there is nothing to attribute to (e.g. the
+   * clarify pre-step has no step; a child event seen before its spawn).
+   */
+  _recordSkills(raw, subId, attr) {
+    const labels = extractSkillLabels(raw);
+    if (!labels.length) return;
+    if (subId == null) {
+      const key = attr?.stepKey;
+      const step = key ? this.state.steps.find((s) => s.key === key) : null;
+      if (!step) return;
+      const merged = mergeSkills(step.skills, labels);
+      if (!merged) return;
+      step.skills = merged;
+      this._emit('stepskills', {
+        stepKey: step.key,
+        nodeId: step.nodeId ?? null,
+        cycle: step.cycle ?? null,
+        skills: merged,
+        ts: new Date().toISOString(),
+      });
+      this._persist().catch(() => {}); // mirrors _recordCost: per-step skills survive a reload
+    } else {
+      const rec = this.state.subAgents.find((s) => s.id === subId);
+      if (!rec) return;
+      const merged = mergeSkills(rec.skills, labels);
+      if (!merged) return;
+      rec.skills = merged;
+      this._upsertSubAgent(rec);
+      this._subAgentTransition('update', rec);
+    }
+  }
+
   /** Best-effort mirror of a sub-agent record to the sub_agents table. Guarded
    *  exactly like _persist/_artifact: no pipeline → in-memory only (unit ctx). */
   _upsertSubAgent(rec) {
@@ -1938,6 +1981,7 @@ class Orchestrator extends EventEmitter {
       ...(rec.durationMs != null ? { durationMs: rec.durationMs } : {}),
       ...(rec.tokens != null ? { tokens: rec.tokens } : {}),
       ...(rec.costUsd != null ? { costUsd: rec.costUsd } : {}),
+      ...(Array.isArray(rec.skills) ? { skills: rec.skills } : {}),
       ts: new Date().toISOString(),
     });
   }
@@ -2504,6 +2548,73 @@ function toolTarget(name, input, projectDir) {
     default:
       return '';
   }
+}
+
+// ── Skill / MCP-tool capture (for the Sub-agents dropdown pills) ──────────────
+// Pills surface ONLY named skills (the Skill tool) and MCP server tools
+// (mcp__<server>__<tool>). Core file/bash/search/web tools and the sub-agent
+// spawn tools (Task/Agent) are NOT skills. Labels are kind-tagged strings —
+// "skill:<name>" / "mcp:<server>" — so the set dedups cleanly and the UI styles
+// the two kinds without a second field. Capped per agent.
+const SKILLS_MAX = 24;
+
+/** Display server token for an MCP tool name `mcp__<server>__<tool>`: strip a
+ *  leading `plugin_`, then collapse consecutive duplicate words. */
+function mcpServerLabel(name) {
+  const parts = String(name).split('__');
+  let server = (parts[1] || '').trim();
+  if (!server) return '';
+  server = server.replace(/^plugin_/, '');
+  const words = server.split('_').filter(Boolean);
+  const collapsed = words.filter((w, i) => w !== words[i - 1]); // playwright_playwright -> playwright
+  return collapsed.join('_') || server;
+}
+
+/** Kind-tagged pill label for ONE tool_use block, or '' if it is not a skill /
+ *  MCP tool. The Skill slug key is read defensively (the one stream-json detail
+ *  not pinned by a fixture). */
+function skillLabel(name, input) {
+  if (typeof name !== 'string') return '';
+  if (name === 'Skill') {
+    const raw = input && typeof input === 'object'
+      ? (input.skill ?? input.name ?? input.command ?? input.skill_name) : '';
+    const slug = typeof raw === 'string' ? raw.trim() : '';
+    return slug ? `skill:${slug}` : '';
+  }
+  if (name.startsWith('mcp__')) {
+    const server = mcpServerLabel(name);
+    return server ? `mcp:${server}` : '';
+  }
+  return ''; // Read/Write/Edit/Bash/Grep/Glob/Task/Agent/WebFetch/WebSearch/… excluded
+}
+
+/** All kind-tagged skill labels in ONE stream-json envelope (deduped within the
+ *  turn, order-preserving). */
+function extractSkillLabels(raw) {
+  const content = raw?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const c of content) {
+    if (c?.type !== 'tool_use') continue;
+    const label = skillLabel(c.name, c.input);
+    if (label && !seen.has(label)) { seen.add(label); out.push(label); }
+  }
+  return out;
+}
+
+/** Union `incoming` into `existing` (order-preserving, deduped, capped). Returns
+ *  the NEW array when it grew, else null (caller skips persist/emit). */
+function mergeSkills(existing, incoming) {
+  if (!incoming.length) return null;
+  const base = Array.isArray(existing) ? existing : [];
+  const seen = new Set(base);
+  const out = base.slice();
+  for (const x of incoming) {
+    if (seen.has(x) || out.length >= SKILLS_MAX) continue;
+    seen.add(x); out.push(x);
+  }
+  return out.length > base.length ? out : null;
 }
 
 /** Collapse whitespace and truncate to n chars with an ellipsis. */

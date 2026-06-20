@@ -31,6 +31,7 @@ import { readPipeline, listArtifacts } from '../src/core/artifacts.mjs';
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
 
 const PROMPT = 'add a login screen with email + password';
 
@@ -100,6 +101,28 @@ test('A11: a completed mock run round-trips prompt/projectKey/status/cost throug
   assert.equal(rawRow.total_active_ms, live.totalActiveMs, 'persisted active-ms equals the live terminal value');
   // A real run accrues active time; this proves a MUTATED value round-tripped (not a default).
   assert.ok(rawRow.total_active_ms > 0, 'active-ms accrued and persisted (mutated value survived)');
+});
+
+test('a step\'s skills round-trips through writeState -> readPipeline; absent reads back as []', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'maestro-skill-rt-home-'));
+  const prevHome = process.env.MAESTRO_HOME;
+  process.env.MAESTRO_HOME = home;
+  _resetForTests();
+  cleanups.push(() => restoreHome(prevHome));
+
+  const projectDir = await mkdtemp(join(tmpdir(), 'maestro-skill-rt-proj-'));
+  const { id } = await seedPipeline(projectDir, {
+    title: 'Run', status: 'done',
+    steps: [
+      { key: '2:n1', nodeId: 'n1', cycle: 1, skills: ['skill:graphify'] },
+      { key: '3:n2', nodeId: 'n2', cycle: 1 }, // no skills
+    ],
+  });
+  const saved = await readPipeline(projectDir, id);
+  assert.ok(saved && saved.state, 'readPipeline returns the persisted run');
+  const byKey = (k) => saved.state.steps.find((s) => s.key === k);
+  assert.deepEqual(byKey('2:n1').skills, ['skill:graphify'], 'step skills survived the round-trip');
+  assert.deepEqual(byKey('3:n2').skills, [], 'a step with no skills reads back as []');
 });
 
 test('A16: a completed mock run indexes the shared review md; deletePipeline unlinks it', async () => {

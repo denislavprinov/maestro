@@ -94,17 +94,16 @@ export function fanOutDirective(fanOut) {
  * The `## Workspace Context` preamble injected into EVERY agent on a workspace run,
  * after the toolInstruction and before the role body. Pure + exported. Returns ''
  * when there is no workspace (or no description), so single-project system prompts
- * are byte-identical. The frozen description is hard-capped (default 2000 chars,
- * MAESTRO_WS_DESC_CAP overrides) and truncated with a trailing ellipsis; the
- * on-disk frozen snapshot keeps the full text.
- * @param {{description?:string, projects?:Array<{projectName?:string}>}|null|undefined} ws
+ * are byte-identical. The frozen description is injected VERBATIM — no length cap
+ * (its size is bounded by the workspace-scanner prompt). Accepts either the bus
+ * channel shape (`workspaceDescription`, see orchestrator.mjs#_workspaceChannel) or
+ * a plain `description` field.
+ * @param {{workspaceDescription?:string, description?:string, projects?:Array<{projectName?:string}>}|null|undefined} ws
  * @returns {string}
  */
 export function workspaceContextBlock(ws) {
-  if (!ws || !ws.description) return '';
-  const cap = Number(process.env.MAESTRO_WS_DESC_CAP) || 2000;
-  let desc = String(ws.description);
-  if (desc.length > cap) desc = desc.slice(0, cap - 1) + '…';
+  const desc = String((ws && (ws.workspaceDescription ?? ws.description)) || '').trim();
+  if (!desc) return '';
   const names = (ws.projects || []).map((p) => p.projectName).filter(Boolean).join(', ');
   return `## Workspace Context\n\n${desc}\n\nMember projects: ${names}.\n`;
 }

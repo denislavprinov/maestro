@@ -880,6 +880,15 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .subs-tree li .st.run{background:var(--blue-bg);color:var(--blue-ink);}
 .subs-tree li .st.stop{background:var(--red-bg);color:var(--red-ink);}
 
+/* Skill / MCP pills — main-agent group header + per sub-agent row. Flex-wrap so
+   pills reflow onto multiple lines as the window shrinks (cf. .agent-chips, .fan). */
+.subs-skills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.subs-tree li{flex-wrap:wrap;}                       /* let the pill row drop below name/status */
+.subs-tree li .subs-skills{flex:0 0 100%;margin-top:6px;}  /* own full row, aligned under .ag-name */
+.skill-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;}
+.skill-pill.is-skill{background:var(--blue-bg);color:var(--blue-ink);}
+.skill-pill.is-mcp{background:var(--green-bg);color:var(--green-ink);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--green-ink) 18%, transparent);}
+
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */
 .run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
 

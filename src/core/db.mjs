@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -425,6 +425,19 @@ ALTER TABLE pipeline_steps ADD COLUMN session_id TEXT;
 `;
 
 /**
+ * Incremental v5 -> v6 migration (Skills-used indicator). Adds a nullable JSON
+ * `skills` column to BOTH agent tables: sub_agents (per sub-agent) and
+ * pipeline_steps (per main step agent). Each holds JSON.stringify of a deduped
+ * string[] of kind-tagged labels ("skill:foo"/"mcp:playwright"); legacy rows stay
+ * NULL and render as no pills. pipeline_steps is delete-all-rewritten on every
+ * persist, so its skills live on the live state.steps[] record — like cost_usd.
+ */
+const SCHEMA_V6 = `
+ALTER TABLE sub_agents ADD COLUMN skills TEXT;
+ALTER TABLE pipeline_steps ADD COLUMN skills TEXT;
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -455,6 +468,7 @@ export function migrate(db) {
     if (current < 3) db.exec(SCHEMA_V3);
     if (current < 4) db.exec(SCHEMA_V4);
     if (current < 5) db.exec(SCHEMA_V5);
+    if (current < 6) db.exec(SCHEMA_V6);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
