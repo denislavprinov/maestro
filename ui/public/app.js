@@ -5129,7 +5129,14 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
       link.rel = 'noopener';
       link.textContent = data.existed ? 'View PR' : 'PR opened';
       btn.replaceWith(link);
-      if (mergeEl) setMergePill(mergeEl, data.mergeable);
+      if (mergeEl) {
+        setMergePill(mergeEl, data.mergeable);
+        // If GitHub hasn't computed mergeability yet (UNKNOWN -> "checking…"),
+        // re-check once after a short pause so the pill never sticks.
+        if (String(data.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
+          scheduleMergeRecheck(mergeEl, { projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id });
+        }
+      }
     } catch (err) {
       btn.disabled = false;
       btn.textContent = label;
@@ -5238,6 +5245,38 @@ function setMergePill(el, mergeable) {
   if (m === 'MERGEABLE') { el.className = 'hist-merge ok'; el.textContent = 'can merge'; }
   else if (m === 'CONFLICTING') { el.className = 'hist-merge bad'; el.textContent = 'conflicts'; }
   else { el.className = 'hist-merge unknown'; el.textContent = 'merge: checking…'; }
+}
+
+// GitHub computes PR mergeability asynchronously, so a freshly-opened PR comes back
+// UNKNOWN ("merge: checking…"). Re-check ONCE after a short pause and either update
+// the pill (MERGEABLE/CONFLICTING) or hide it (still unknown) — never leave it stuck.
+const PR_MERGE_RECHECK_MS = 4000;
+// Test seam: jsdom specs set window.__prMergeRecheckMs = 0 to fire on the next tick
+// (mirrors the window.__ws / window.__np hooks; this repo uses no fake timers).
+function prMergeRecheckMs() {
+  const o = Number(window.__prMergeRecheckMs);
+  return Number.isFinite(o) && o >= 0 ? o : PR_MERGE_RECHECK_MS;
+}
+
+function scheduleMergeRecheck(mergeEl, body) {
+  const t = setTimeout(async () => {
+    if (!mergeEl || !mergeEl.isConnected) return;   // a Refresh rebuilt the card — stale timer no-ops
+    let mergeable = 'UNKNOWN';
+    try {
+      const res = await fetch('/api/pr/mergeable', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await safeJson(res);               // safeJson -> {} on non-JSON, never null
+      if (res.ok && data) mergeable = data.mergeable;
+    } catch { /* network error -> treat as still unknown -> hide below */ }
+    if (!mergeEl.isConnected) return;                 // a Refresh during the await -> no-op
+    const m = String(mergeable || 'UNKNOWN').toUpperCase();
+    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m);
+    else mergeEl.hidden = true;                        // still checking -> drop the stuck pill
+  }, prMergeRecheckMs());
+  // Node test runner: the timer keeps the loop alive; unref it where supported.
+  // Real browser setTimeout returns a number (no .unref) -> the guard makes this a no-op.
+  if (t && typeof t.unref === 'function') t.unref();
 }
 
 // Build one expandable history card from a (disk or live) record. The collapsed

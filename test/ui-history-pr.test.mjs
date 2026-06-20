@@ -153,3 +153,59 @@ test('merged PR with branch gone (survived=false) still shows the Merged link', 
   assert.equal(card.querySelector('.hist-pr'), null);
   assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged');
 });
+
+test('open PR still checking: a delayed re-check updates the stuck pill', async () => {
+  let recheckBody = null;
+  const { window, showHistory } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/api/history')) return runs([{ ...SURVIVED, pr: null }], true);
+      if (url.endsWith('/api/pr/mergeable')) {
+        recheckBody = JSON.parse(opts.body);
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, mergeable: 'MERGEABLE' }) });
+      }
+      if (url.endsWith('/api/pr')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, url: 'https://gh/x/pull/3', mergeable: 'UNKNOWN' }) });
+      }
+      return null;
+    },
+  });
+  window.__prMergeRecheckMs = 0;               // fire the re-check on the next tick (no fake timers)
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  card.querySelector('.hist-pr').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));   // PR opened -> pill paints "checking…"
+  const pill = card.querySelector('.hist-merge');
+  assert.ok(pill.classList.contains('unknown'), 'pill starts as checking…');
+  assert.match(pill.textContent, /checking/);
+  // let the re-check timer fire and its fetch + json resolve + apply (timer + 2 awaits)
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(recheckBody.id, 'p1', 're-check posted the same pipeline id');
+  assert.ok(pill.classList.contains('ok'), 'pill updated to can-merge after re-check');
+  assert.match(pill.textContent, /can merge/);
+});
+
+test('open PR still checking: re-check still unknown -> pill is hidden, not stuck', async () => {
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) return runs([{ ...SURVIVED, pr: null }], true);
+      if (url.endsWith('/api/pr/mergeable')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, mergeable: 'UNKNOWN' }) });
+      }
+      if (url.endsWith('/api/pr')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, url: 'https://gh/x/pull/4', mergeable: 'UNKNOWN' }) });
+      }
+      return null;
+    },
+  });
+  window.__prMergeRecheckMs = 0;
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  card.querySelector('.hist-pr').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const pill = card.querySelector('.hist-merge');
+  assert.equal(pill.hidden, false, 'pill shows checking… first');
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(pill.hidden, true, 'still-unknown pill is hidden, not left stuck');
+});
