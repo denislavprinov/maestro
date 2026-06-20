@@ -293,3 +293,34 @@ test('gate question renders issues + two decision buttons; approve posts {decisi
   assert.equal(captured[0].id, 'gate-refine-5');
   assert.deepEqual(captured[0].payload, { decision: 'another' }, 'approve posts decision:another');
 });
+
+test('multi-tab: a question-resolved event clears the card WITHOUT this tab having answered', async () => {
+  const ctx = await boot();
+  helloRunning(ctx);
+  ctx.showRunning();
+  ctx.dispatch(clarifyEvent()); // card shows; this tab never submits an answer (_answering stays false)
+
+  const card = ctx.window.document.querySelector(`.run-card[data-run-id="${RUN_ID}"]`);
+  assert.equal(card.classList.contains('attention'), true, 'card shows the question first');
+  assert.equal(card.querySelector('.qpanel').classList.contains('hidden'), false, 'panel visible first');
+
+  // Answered in ANOTHER tab -> the server broadcasts the resolution to this one.
+  ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: 'clarify-1' });
+
+  assert.equal(card.classList.contains('attention'), false, 'attention drops for the non-answering tab');
+  assert.equal(card.querySelector('.qpanel').classList.contains('hidden'), true, 'panel hidden');
+  assert.equal(card.querySelector('.qpanel').innerHTML, '', 'panel emptied');
+});
+
+test('a question-resolved for a STALE id leaves a newer pending question untouched', async () => {
+  const ctx = await boot();
+  helloRunning(ctx);
+  ctx.showRunning();
+  ctx.dispatch(clarifyEvent()); // pending = clarify-1
+
+  const card = ctx.window.document.querySelector(`.run-card[data-run-id="${RUN_ID}"]`);
+  ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: 'clarify-OLD' });
+
+  assert.equal(card.classList.contains('attention'), true, 'mismatched id leaves the card up');
+  assert.equal(card.querySelector('.qpanel').classList.contains('hidden'), false, 'panel still visible');
+});

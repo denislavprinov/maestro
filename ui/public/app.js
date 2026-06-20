@@ -279,7 +279,11 @@ function handleServerMessage(msg) {
   // exactly what produced the phantom "(untitled)" pipeline. Other event types may
   // legitimately create a card for a run this tab didn't start (CLI / another tab),
   // and `state` snapshots reconcile r.subAgents anyway, so nothing is lost.
-  if ((msg.type === 'subagent' || msg.type === 'stepskills') && !runs.has(msg.runId)) return;
+  // Neither a sub-agent delta, a skills update, nor a question resolution may
+  // MATERIALIZE a run: each only attaches to one this tab already knows. (A
+  // resolution for an unknown run is meaningless, and auto-creating a card would
+  // resurrect the phantom.)
+  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
@@ -291,6 +295,9 @@ function handleServerMessage(msg) {
       break;
     case 'question':
       onQuestion(r, msg);
+      break;
+    case 'question-resolved':
+      onQuestionResolved(r, msg);
       break;
     case 'artifact':
       onArtifact(r, msg);
@@ -785,9 +792,34 @@ function onPhase(r, msg) {
 // success is not proof). Clear the pending question + panel here.
 function maybeResume(r) {
   if (!r._answering) return;
+  dropPendingQuestion(r);
+}
+
+// Clear a run's pending question and un-freeze any frontier node left at 'pause'
+// solely because of it: nodeKindFor marks 'pause' iff pendingQuestion != null, so
+// once the question is gone every such mark is stale and would otherwise hold the
+// stepper on a false "awaiting input" until the next phase event. Shared by the
+// local post-answer resume (maybeResume) and the server-broadcast resolution
+// (onQuestionResolved). Caller repaints.
+function dropPendingQuestion(r) {
   r._answering = false;
   r.pendingQuestion = null;
+  for (const k of Object.keys(r.nodeStatus)) {
+    if (r.nodeStatus[k] === 'pause') r.nodeStatus[k] = 'now';
+  }
   clearQpanel(r);
+}
+
+// The server resolved this run's pending question — answered in THIS or ANOTHER
+// tab, or the run was paused/stopped/finished while it was open. Drop the card in
+// every client, independent of the _answering flag that gates maybeResume(), then
+// repaint so the foot chip + stepper leave the false "paused" state. Id-aware so a
+// late or duplicate resolution cannot wipe a NEWER pending question.
+function onQuestionResolved(r, msg) {
+  if (!r.pendingQuestion) return;
+  if (msg && msg.id && r.pendingQuestion.id !== msg.id) return;
+  dropPendingQuestion(r);
+  paintRunCard(r);
 }
 
 // Minimal HTML escape for text interpolated into node innerHTML.
