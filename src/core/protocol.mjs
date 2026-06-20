@@ -126,15 +126,19 @@ function firstIndexOfEither(text, a, b) {
   return Math.min(ia, ib);
 }
 
-// Hard cap so a single clarify round can never overwhelm the user, regardless of
-// what the planner emits. Tunable; pairs with the prompt guidance in
-// agents/maestro-planner.md.
-const MAX_CLARIFY_QUESTIONS = 4;
+// Hard caps so a single clarify round can never overwhelm the user, regardless of
+// what the clarify agent emits. Tunable; pairs with the prompt guidance in
+// agents/maestro-clarify.md (up to 8 questions, 2–4 options each).
+const MAX_CLARIFY_QUESTIONS = 8;
+const MAX_CLARIFY_OPTIONS = 4;
 
 /**
  * Coerce arbitrary parsed data into the canonical clarify shape:
- *   { questions: [ { id, question, options:[s,s,s], allowFreeText:true } ] }
- * Always returns at least { questions: [] }. Caps at MAX_CLARIFY_QUESTIONS.
+ *   { questions: [ { id, question, options:[2–4 strings], allowFreeText:true } ] }
+ * Always returns at least { questions: [] }. Caps questions at MAX_CLARIFY_QUESTIONS
+ * and options at MAX_CLARIFY_OPTIONS; blank options are trimmed away (the UI/CLI also
+ * filter them), so binary/assumption questions keep exactly their real choices —
+ * nothing is padded.
  */
 export function normalizeClarify(data) {
   if (!data || typeof data !== 'object') return { questions: [] };
@@ -146,10 +150,12 @@ export function normalizeClarify(data) {
     const id = asString(q.id).trim() || `q${i + 1}`;
     const question = asString(q.question).trim();
     if (!question) continue;
-    let options = Array.isArray(q.options) ? q.options.map(asString) : [];
-    // Guarantee exactly three option slots so the UI/CLI render is stable.
-    options = options.slice(0, 3);
-    while (options.length < 3) options.push('');
+    // Allow 2–4 options: trim, drop blanks, cap at MAX_CLARIFY_OPTIONS. No padding.
+    // asString does not trim, so trim explicitly here before dropping empties.
+    const options = (Array.isArray(q.options) ? q.options.map(asString) : [])
+      .map((o) => o.trim())
+      .filter(Boolean)
+      .slice(0, MAX_CLARIFY_OPTIONS);
     questions.push({ id, question, options, allowFreeText: true });
   }
   return { questions: questions.slice(0, MAX_CLARIFY_QUESTIONS) };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { taskHeader } from '../src/core/phases.mjs'; // now exported
+import { taskHeader, buildClarifyPrompt } from '../src/core/phases.mjs'; // now exported
 
 const base = { projectDir: '/p', pipelineDir: '/pipe', taskPrompt: 'BUILD THE THING' };
 
@@ -58,4 +58,11 @@ test('entry node with no attachments omits the attachments section', () => {
 test('non-entry node still omits the request block (no isEntry)', () => {
   const h = taskHeader({ ...base, node: { key: 'implementer' }, inputs: { plan: { path: '/x.md' } } }, 'Implement');
   assert.doesNotMatch(h, /## Original request/);
+});
+
+test('buildClarifyPrompt advertises the new limits (up to 8, 2–4 options)', () => {
+  const h = buildClarifyPrompt({ ...base });
+  assert.match(h, /2 to 4 options/i);
+  assert.match(h, /up to 8/i);
+  assert.doesNotMatch(h, /exactly three options/i);
 });

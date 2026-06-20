@@ -566,14 +566,21 @@ async function mockClarify(m, cycle, onEvent) {
     : {
         questions: [
           {
-            id: 'q1',
+            id: 'invalid-input',
             question:
               'How should the feature handle invalid input — fail fast, coerce, or ignore?',
             options: [
               'Fail fast with a clear error',
               'Coerce to a safe default',
               'Ignore and continue',
+              'Reject at the boundary', // 4 options — exercises the upper bound
             ],
+            allowFreeText: true,
+          },
+          {
+            id: 'delete-behavior',
+            question: 'Should delete be a hard delete or a soft delete?',
+            options: ['Hard delete', 'Soft delete'], // 2 options — exercises the relaxed floor
             allowFreeText: true,
           },
         ],

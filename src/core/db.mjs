@@ -291,7 +291,7 @@ CREATE INDEX idx_pipeline_events_pipeline ON pipeline_events (pipeline_id, id);
 -- questions/answers are JSON ({questions:[...]} / {answers:[...]} payloads).
 CREATE TABLE clarify (
   pipeline_id TEXT PRIMARY KEY,
-  questions   TEXT,  -- JSON: { questions: [ {id,question,options[3],allowFreeText} ] }
+  questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
   answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );

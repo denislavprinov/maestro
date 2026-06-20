@@ -170,11 +170,12 @@ export function workspaceFanOutDirective(strategy, ws) {
 // ── inline fallbacks (used only when agents/*.md is missing/empty) ──────────────
 const FALLBACK_PROMPTS = {
   clarify:
-    'You are the Clarify agent. Before a software task is planned you surface ONLY the few ' +
-    'highest-impact decisions that cannot be resolved from the task text or the codebase. For each, ' +
-    'write a conceptual question offering exactly THREE options plus a free-text field. Output a ' +
-    'JSON file (path given in the task) shaped as ' +
-    '{ "questions": [ { "id", "question", "options": [a,b,c], "allowFreeText": true } ] }. ' +
+    'You are the Clarify agent. Before a software task is planned you surface the decisions that ' +
+    'materially change the plan and cannot be resolved from the task text or the codebase — ' +
+    'including things downstream agents would otherwise silently assume. For each, write a ' +
+    'conceptual question offering 2 to 4 options plus a free-text field. Ask up to 8 questions, ' +
+    'but never pad. Output a JSON file (path given in the task) shaped as ' +
+    '{ "questions": [ { "id", "question", "options": [ ... ], "allowFreeText": true } ] }. ' +
     'If you genuinely have no open questions, write { "questions": [] }. You never write a plan.',
   'planner-plan':
     'You are the Planner. Write a thorough implementation plan to the markdown path given in ' +
@@ -365,11 +366,13 @@ export function buildClarifyPrompt(ctx, opts = {}) {
   return (
     taskHeader(ctx, 'Clarify before planning') +
     '\n## What to do\n\n' +
-    'Identify ONLY the few highest-impact decisions you cannot safely resolve from the task text ' +
-    'or the real codebase. For each, produce one conceptual question with exactly three options ' +
-    'and a free-text fallback. Prefer the smallest set of questions that unblocks a correct plan; ' +
-    'for low-impact details, pick a sensible default rather than asking. If you have no material ' +
-    'open questions, write { "questions": [] } to that same path.\n\n' +
+    'Identify the decisions you cannot safely resolve from the task text or the real ' +
+    'codebase — including things a downstream agent (planner/implementer) would otherwise ' +
+    'silently assume. For each, produce one conceptual question with 2 to 4 options and a ' +
+    'free-text fallback. Ask only what materially changes the plan (up to 8 questions); never ' +
+    'pad, and never split one decision. For low-impact details, pick a sensible default rather ' +
+    'than asking. If you have no material open questions, write { "questions": [] } to that ' +
+    'same path.\n\n' +
     fanOutDirective(ctxFanOut(ctx)) +
     `Write the clarify JSON to: ${outPath}\n\n` +
     answered +

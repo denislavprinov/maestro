@@ -242,7 +242,7 @@ function question(rl, q) {
 }
 
 /**
- * Ask the clarify questions interactively. Each question shows its 3 options plus a
+ * Ask the clarify questions interactively. Each question shows its options (2–4) plus a
  * "type your own" choice. Returns { answers: [{ id, choice }] }.
  */
 async function askClarify(rl, questions) {
