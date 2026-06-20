@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
 
 const AGENTS = [
   { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 1, origin: 'builtin', connectsTo: '*' },
@@ -157,4 +158,55 @@ test('composer save surfaces server warnings via the link-banner toast', async (
   await new Promise((r) => setTimeout(r, 0));
   assert.match(doc.querySelector('#composer-link-text').textContent, /consumes "checklist"/, 'warning toasted');
   assert.equal(doc.querySelector('#composer-link-banner').hidden, false);
+});
+
+test('agents view splits channel pills into labeled Input and Output rows', async () => {
+  const { window } = await boot();
+  await goAgents(window);
+  const planner = [...window.document.querySelectorAll('#agents-list .agent-card')]
+    .find((c) => c.dataset.agentKey === 'planner');
+  assert.ok(planner, 'planner card rendered');
+
+  const inRow = planner.querySelector('.agent-io-in');
+  const outRow = planner.querySelector('.agent-io-out');
+  assert.ok(inRow && outRow, 'both Input and Output rows render in the header');
+  assert.equal(inRow.querySelector('.agent-io-label').textContent, 'Input');
+  assert.equal(outRow.querySelector('.agent-io-label').textContent, 'Output');
+
+  // input pills under the Input row, output pills under the Output row
+  assert.deepEqual([...inRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['userPrompt']);
+  assert.deepEqual([...outRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['plan']);
+
+  // no consume pill leaks into the Output row (and vice-versa)
+  assert.equal(outRow.querySelector('.agent-chip.cons'), null, 'Output row has no consume pills');
+  assert.equal(inRow.querySelector('.agent-chip.prod'), null, 'Input row has no produce pills');
+
+  // rows live in the always-visible header, not the collapsible detail
+  assert.ok(planner.querySelector('.agent-head .agent-io'), 'io block is inside .agent-head');
+});
+
+test('agents view shows a placeholder when a channel side is empty', async () => {
+  const agents = [{
+    key: 'sink', displayName: 'Sink', description: 'consumes only', color: 'amber',
+    runnerType: 'verifier', consumes: ['code'], produces: [], order: 1, origin: 'user', connectsTo: '*',
+  }];
+  const { window } = await boot({
+    fetchHandler: (u) => u.includes('/api/agents')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ agents, channels: CHANNELS }) })
+      : null,
+  });
+  await goAgents(window);
+  const card = window.document.querySelector('#agents-list .agent-card');
+  const outRow = card.querySelector('.agent-io-out');
+  assert.equal(outRow.querySelector('.agent-chip'), null, 'no output pills for empty produces');
+  assert.equal(outRow.querySelector('.agent-io-none').textContent, '—', 'empty Output row shows muted placeholder');
+  // input side still renders its pill
+  assert.deepEqual(
+    [...card.querySelectorAll('.agent-io-in .agent-chip')].map((n) => n.textContent), ['code']);
+});
+
+test('agent detail body is spaced below the channel pills', () => {
+  // jsdom does not compute layout; assert the spacing RULE exists in the stylesheet.
+  const css = readFileSync(cssPath, 'utf8');
+  assert.match(css, /\.agent-detail\s*\{[^}]*margin-top\s*:/, '.agent-detail must define margin-top for pill→body spacing');
 });

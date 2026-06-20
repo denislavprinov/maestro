@@ -3903,6 +3903,18 @@ function agentChip(text, cls) {
   return s;
 }
 
+function fillChannelRow(container, ids, cls) {
+  const list = Array.isArray(ids) ? ids : [];
+  if (list.length === 0) {
+    const none = document.createElement('span');
+    none.className = 'agent-io-none';
+    none.textContent = '—';
+    container.appendChild(none);
+    return;
+  }
+  list.forEach((c) => container.appendChild(agentChip(c, cls)));
+}
+
 function buildAgentCard(a) {
   const tpl = $('#agent-card-tpl');
   const node = tpl.content.firstElementChild.cloneNode(true);
@@ -3911,9 +3923,8 @@ function buildAgentCard(a) {
   node.querySelector('.agent-origin').textContent = a.origin || 'builtin';
   node.querySelector('.agent-origin').classList.add(a.origin === 'user' ? 'origin-user' : 'origin-builtin');
   node.querySelector('.agent-sub').textContent = `${a.key} · ${a.runnerType || 'producer'} — ${a.description || ''}`;
-  const chips = node.querySelector('.agent-chips');
-  (Array.isArray(a.consumes) ? a.consumes : []).forEach((c) => chips.appendChild(agentChip(c, 'cons')));
-  (Array.isArray(a.produces) ? a.produces : []).forEach((c) => chips.appendChild(agentChip(c, 'prod')));
+  fillChannelRow(node.querySelector('.agent-chips-in'), a.consumes, 'cons');   // INPUT row
+  fillChannelRow(node.querySelector('.agent-chips-out'), a.produces, 'prod');  // OUTPUT row
   const isUser = a.origin === 'user';
   node.querySelector('.agent-edit').hidden = !isUser;
   node.querySelector('.agent-delete').hidden = !isUser;
