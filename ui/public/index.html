@@ -494,6 +494,21 @@
                 <div class="wiz-proj-list" id="wiz-projects"></div>
                 <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
               </div>
+              <div class="field wiz-add-project-trigger">
+                <button type="button" id="wiz-add-project-open" class="btn btn-ghost btn-mini">
+                  + Add project
+                </button>
+                <small class="hint">Register a new project on disk so you can include it here.</small>
+              </div>
+              <div id="wiz-add-project" class="add-project hidden" role="group" aria-label="Add project to workspace">
+                <input id="wizNewProjectName" type="text" placeholder="Project name" spellcheck="false" />
+                <input id="wizNewProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                <div class="add-project-actions">
+                  <button type="button" id="wizAddProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
+                  <button type="button" id="wizAddProjectSave" class="btn btn-primary btn-mini">Save</button>
+                </div>
+                <small class="hint" id="wizAddProjectMsg"></small>
+              </div>
               <div class="actions" style="justify-content:flex-end">
                 <button type="button" id="wiz-start-scan" class="btn-go" disabled>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
