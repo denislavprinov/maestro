@@ -96,6 +96,18 @@ export async function listProjects() {
 }
 
 /**
+ * Number of registered projects (missing-on-disk rows included, matching the
+ * Projects list + its sidebar count). Cheap COUNT(*); never throws.
+ * Uses the bare `prepare` already imported at projects.mjs:14.
+ * @returns {number}
+ */
+export function countProjects() {
+  getDb(); // ensure the singleton is open + migrated before preparing
+  const row = prepare('SELECT COUNT(*) AS n FROM projects').get();
+  return row ? Number(row.n) : 0;
+}
+
+/**
  * Add a project. Validates and persists to the projects table. Returns the
  * updated annotated list. Keyed by projectKey(path) (store.mjs), so every worktree
  * of a repo maps to one row. Name uniqueness is case-insensitive (checked here AND

@@ -93,7 +93,9 @@ test('filtering to the workspace pill shows only its runs (literal path-segment 
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(doc.querySelectorAll('#history .hist-group').length, 0, 'single bucket → flat list');
   assert.equal(doc.querySelectorAll('#history .hist-card').length, 2, 'two workspace runs');
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '2');
+  // Sidebar badge = TOTAL across all buckets regardless of the active filter (Q4): the
+  // workspace pill narrows the list to its 2 runs, but the badge reads the full 3.
+  assert.equal(doc.querySelector('#nav-history-count').textContent, '3');
   assert.equal(window.localStorage.getItem('maestro.history.project'), 'workspaces/wks-iot-9f3a1c20', 'filter persisted by literal key');
 });
 

@@ -1288,6 +1288,18 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
 }
 
 /**
+ * Total number of pipelines across every project + workspace store (all statuses).
+ * Backs the History sidebar count. Cheap COUNT(*) — never lists or loads rows.
+ * Sync (getDb().prepare(...).get()), matching this module's idiom (it imports
+ * only getDb + tx, not a bare `prepare`).
+ * @returns {number}
+ */
+export function countPipelines() {
+  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get();
+  return row ? Number(row.n) : 0;
+}
+
+/**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
  * in parallel batches. v1 sends ONLY `pr` (state OPEN/MERGED or null) —
  * findPrForBranch already distinguishes merged-vs-open. We do NOT compute live

@@ -154,6 +154,17 @@ export async function listWorkspaces() {
 }
 
 /**
+ * Number of saved workspaces (matches listWorkspaces().length). Cheap COUNT(*).
+ * Uses the bare `prepare` already imported at workspaces.mjs:30.
+ * @returns {number}
+ */
+export function countWorkspaces() {
+  getDb();
+  const row = prepare('SELECT COUNT(*) AS n FROM workspaces').get();
+  return row ? Number(row.n) : 0;
+}
+
+/**
  * Read one workspace by id, annotated. Returns null when absent.
  * @param {string} id
  * @returns {Promise<object|null>}

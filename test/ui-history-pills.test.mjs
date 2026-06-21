@@ -79,7 +79,10 @@ test('clicking a project pill filters to that project (flat) and persists the ch
   assert.equal(doc.querySelectorAll('#history .hist-group').length, 0, 'no grouping for a single project');
   assert.equal(doc.querySelectorAll('#history .hist-card').length, 1, 'only Beta pipelines');
   assert.match(doc.querySelector('#history').textContent, /Beta one/);
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '1');
+  // Sidebar badge stays at the TOTAL across all projects regardless of the active
+  // filter (clarification Q4): the Beta pill narrows the list to 1 card, but the badge
+  // still reads the full 3.
+  assert.equal(doc.querySelector('#nav-history-count').textContent, '3');
   assert.equal(window.localStorage.getItem('maestro.history.project'), 'beta-00000002', 'choice persisted');
 });
 

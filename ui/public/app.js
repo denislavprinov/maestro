@@ -294,6 +294,26 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Sidebar-count mutations (pipeline delete, project/workspace create+delete) are
+  // broadcast globally with NO runId. Re-read the authoritative counts; if the affected
+  // view is open, also reload it so its rows reflect the change. Handle BEFORE the
+  // !msg.runId early-return below.
+  if (msg.type === 'pipelines-changed') {
+    refreshAllCounts();
+    if (currentView() === 'history') loadHistoryView({ force: true });
+    return;
+  }
+  if (msg.type === 'projects-changed') {
+    refreshAllCounts();
+    if (currentView() === 'projects') loadProjectsView();
+    return;
+  }
+  if (msg.type === 'workspaces-changed') {
+    refreshAllCounts();
+    if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+
   // Tagged per-run event. Ignore anything without a runId.
   if (!msg.runId) return;
   // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
@@ -397,7 +417,7 @@ function onHello(msg) {
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
 
-  updateNavCounts();
+  refreshAllCounts();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
   // Background-load history on the first connect so the sidebar count + PR states
@@ -5269,7 +5289,11 @@ function renderHistory() {
   const filter = state.historyFilter;
   const records = filter ? all.filter((p) => p && p.projectKey === filter) : all;
 
-  if (el.navHistoryCount) el.navHistoryCount.textContent = String(records.length);
+  // Sidebar count is the TOTAL across all projects, independent of the in-view project
+  // filter (product decision): a filter pill changes the list, not the badge. `all` is
+  // state.historyAll (raw /api/history = listAllPipelines, all statuses) so all.length
+  // === COUNT(*) FROM pipelines === /api/counts.pipelines.
+  if (el.navHistoryCount) el.navHistoryCount.textContent = String(all.length);
 
   if (!records.length) {
     host.appendChild(histEmpty(filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
@@ -6374,6 +6398,15 @@ function renderRunningView() {
   const list = $('#run-list');
   if (!list) return;
   const live = liveRuns();
+  // The empty-state placeholder below (set via list.innerHTML) carries no data-run-id,
+  // so the stale-card cleanup loop won't remove it. Drop it up front whenever runs
+  // exist, else it lingers ABOVE the live cards on a 0 -> 1 transition. renderRunningView
+  // re-runs on every run frame and on hello, so this covers this-tab, other-tab, and
+  // reconnect starts.
+  if (live.length > 0) {
+    const stale = list.querySelector('.run-empty');
+    if (stale) stale.remove();
+  }
   const seen = new Set();
 
   for (const r of live) {
@@ -6423,6 +6456,27 @@ function updateNavCounts() {
   if (c) c.textContent = String(liveRuns().length);
 }
 
+// Single authoritative refresh for all four sidebar counts. Running is derived from
+// the in-memory runs map (synchronous, always live); the three persistent counts come
+// from one cheap /api/counts snapshot — NOT the full list endpoints — so a navigation
+// never pulls the whole machine-wide history just for a badge. Counts are SET to
+// absolute values, so this is safe to call redundantly (boot, every view switch, hello,
+// each *-changed broadcast) without drift. Never throws.
+async function refreshAllCounts() {
+  updateNavCounts();                                     // Running (in-memory, synchronous)
+  let data;
+  try {
+    const res = await fetch('/api/counts');
+    data = await safeJson(res);                          // safeJson(res) -> await res.json(); {} on failure
+    if (!res.ok || !data) return;                        // keep last-known badges
+  } catch {
+    return;
+  }
+  if (el.navHistoryCount && Number.isFinite(data.pipelines)) el.navHistoryCount.textContent = String(data.pipelines);
+  if (el.navProjectsCount && Number.isFinite(data.projects)) el.navProjectsCount.textContent = String(data.projects);
+  if (el.navWorkspacesCount && Number.isFinite(data.workspaces)) el.navWorkspacesCount.textContent = String(data.workspaces);
+}
+
 // ---------------------------------------------------------------------------
 // Router: sidebar nav (+ responsive top-nav) toggle between the views.
 // ---------------------------------------------------------------------------
@@ -6445,6 +6499,7 @@ function showView(name) {
     resetAgentWizard();
   }
   currentShownView = name;
+  refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
   navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
@@ -6519,4 +6574,4 @@ const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'work
 if (bootTarget === 'workspace') setRunTarget('workspace');
 const bootHash = location.hash.slice(1);
 showView(VIEW_NAMES.includes(bootHash) ? bootHash : 'new');
-updateNavCounts();
+refreshAllCounts();
