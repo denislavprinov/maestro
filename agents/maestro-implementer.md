@@ -1,7 +1,7 @@
 ---
 name: maestro-implementer
 description: Implementer for the orchestrator pipeline. Follows the latest approved plan with NO deviation using strict TDD (red-green-refactor); deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

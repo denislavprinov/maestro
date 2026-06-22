@@ -1,7 +1,7 @@
 ---
 name: maestro-code-reviewer
 description: Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

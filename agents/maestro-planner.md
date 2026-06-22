@@ -1,7 +1,7 @@
 ---
 name: maestro-planner
 description: Planner for the orchestrator pipeline. Writes a complete implementation plan markdown with concrete code snippets, grounded in the real codebase, honoring any clarify answers passed in the prompt and ending with a Clarifications Q&A section; never asks the user questions. Has a REVISE-from-review variant. Invoked by the deterministic orchestrator, never directly by a human.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

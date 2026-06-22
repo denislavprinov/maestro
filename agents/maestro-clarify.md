@@ -1,7 +1,7 @@
 ---
 name: maestro-clarify
 description: Clarify agent for the orchestrator pipeline. Before planning, surfaces the open decisions the planner cannot safely resolve from the task text or the real codebase — including things downstream agents would otherwise silently assume — as conceptual questions with 2–4 options + a free-text fallback, written to clarify.json. Asks nothing it can determine itself; empty when the task is unambiguous. Invoked by the deterministic orchestrator, never directly by a human.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Skill
 model: inherit
 ---
 
