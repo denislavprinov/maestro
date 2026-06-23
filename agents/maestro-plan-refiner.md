@@ -1,7 +1,7 @@
 ---
 name: maestro-plan-refiner
 description: Plan Refiner for the orchestrator pipeline. Reads an input plan (with code snippets), writes an improved -vN plan that fixes structure, correctness, and the code snippets, and emits review-cycleN.json with honest critical/major/minor/suggestion severities. Runs once per refine cycle until no blocking issues remain. Invoked by the deterministic orchestrator.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

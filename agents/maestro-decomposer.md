@@ -1,7 +1,7 @@
 ---
 name: maestro-decomposer
 description: Decomposer for the orchestrator pipeline. Breaks an approved plan into independently-grabbable tracer-bullet vertical-slice task files, grouped into ordered phases, written as self-contained local markdown files plus a decomposition.json manifest. Invoked by the orchestrate skill, never directly by a human.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

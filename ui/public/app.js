@@ -156,6 +156,28 @@ const el = {
   agentsMsg: $('#agents-msg'),
   agentCreateBtn: $('#agent-create-btn'),
 
+  // Projects management view
+  projectsList: $('#projects-list'),
+  projectsMsg: $('#projects-msg'),
+  projectAddBtn: $('#project-add-btn'),
+  navProjectsCount: $('#nav-projects-count'),
+
+  // Reusable confirm modal
+  confirmModal: $('#confirm-modal'),
+  confirmTitle: $('#confirm-title'),
+  confirmMessage: $('#confirm-message'),
+  confirmOk: $('#confirm-ok'),
+  confirmCancel: $('#confirm-cancel'),
+
+  // Add-project modal
+  projectAddModal: $('#project-add-modal'),
+  projAddName: $('#proj-add-name'),
+  projAddPath: $('#proj-add-path'),
+  projAddBrowse: $('#proj-add-browse'),
+  projAddSave: $('#proj-add-save'),
+  projAddCancel: $('#proj-add-cancel'),
+  projAddMsg: $('#proj-add-msg'),
+
   // Agent creation wizard
   agwName: $('#agw-name'),
   agwPurpose: $('#agw-purpose'),
@@ -272,6 +294,26 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Sidebar-count mutations (pipeline delete, project/workspace create+delete) are
+  // broadcast globally with NO runId. Re-read the authoritative counts; if the affected
+  // view is open, also reload it so its rows reflect the change. Handle BEFORE the
+  // !msg.runId early-return below.
+  if (msg.type === 'pipelines-changed') {
+    refreshAllCounts();
+    if (currentView() === 'history') loadHistoryView({ force: true });
+    return;
+  }
+  if (msg.type === 'projects-changed') {
+    refreshAllCounts();
+    if (currentView() === 'projects') loadProjectsView();
+    return;
+  }
+  if (msg.type === 'workspaces-changed') {
+    refreshAllCounts();
+    if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+
   // Tagged per-run event. Ignore anything without a runId.
   if (!msg.runId) return;
   // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
@@ -378,7 +420,7 @@ function onHello(msg) {
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
 
-  updateNavCounts();
+  refreshAllCounts();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
   // Background-load history on the first connect so the sidebar count + PR states
@@ -3089,6 +3131,7 @@ async function loadProjects(selectName) {
     state.projects = [];
   }
   renderProjectOptions(selectName);
+  updateProjectsCount();
 }
 
 function renderProjectOptions(selectName) {
@@ -4294,6 +4337,271 @@ if (typeof window !== 'undefined') {
   window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard, agentFormFill, agentFormRead, openAgentEdit };
 }
 
+// ---------------------------------------------------------------------------
+// Projects management view (sidebar peer of Workspaces / Agents).
+// Read-only list of {name, path, exists}; add via native picker, delete via a
+// custom confirm modal. Shares state.projects with the New-pipeline dropdown.
+// ---------------------------------------------------------------------------
+
+// The one bin/trash icon used across the UI (mirrors app.js:1775). Static markup
+// -> safe to assign via innerHTML.
+const TRASH_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function setProjectsMsg(text, kind) {
+  if (!el.projectsMsg) return;
+  el.projectsMsg.textContent = text || '';
+  el.projectsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function updateProjectsCount() {
+  if (el.navProjectsCount) el.navProjectsCount.textContent = String(state.projects.length);
+}
+
+// Folder basename, tolerant of trailing slashes and either separator.
+function basenameOf(p) {
+  return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+}
+
+// Thin wrapper over the native picker endpoint; never throws.
+async function pickFolder() {
+  try {
+    const res = await fetch('/api/fs/pick-folder', { method: 'POST' });
+    return await safeJson(res); // {status:'picked',path} | {status:'canceled'} | {status:'unsupported'} | {status:'busy'}
+  } catch {
+    return { status: 'unsupported' };
+  }
+}
+
+async function loadProjectsView() {
+  await loadProjects();      // refresh shared state.projects from /api/projects
+  renderProjectsList();
+}
+
+function buildProjectRow(p) {
+  const item = document.createElement('div');
+  item.className = 'pl-item';
+  item.dataset.name = p.name;
+
+  const row = document.createElement('div');
+  row.className = 'pl-row';
+
+  const main = document.createElement('div');
+  main.className = 'pl-main';
+
+  const name = document.createElement('div');
+  name.className = 'pl-name';
+  name.textContent = p.name;
+  if (!p.exists) {
+    const miss = document.createElement('span');
+    miss.className = 'proj-missing';
+    miss.textContent = 'missing';
+    name.append(' ', miss);
+  }
+
+  const path = document.createElement('div');
+  path.className = 'proj-path';
+  path.textContent = p.path;
+  path.title = p.path;
+
+  main.append(name, path);
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'proj-del';
+  del.title = `Delete ${p.name}`;
+  del.setAttribute('aria-label', `Delete ${p.name}`);
+  del.innerHTML = TRASH_SVG;
+
+  row.append(main, del);
+  item.append(row);
+  return item;
+}
+
+function renderProjectsList() {
+  const host = el.projectsList;
+  if (!host) return;
+  host.innerHTML = '';
+  updateProjectsCount();
+  if (!state.projects.length) {
+    host.appendChild(histEmpty('No projects yet — click “Add project” to register one.'));
+    return;
+  }
+  const card = document.createElement('section');
+  card.className = 'card saved-card';
+
+  const head = document.createElement('div');
+  head.className = 'saved-head';
+  const b = document.createElement('b');
+  b.textContent = 'Projects';
+  const cnt = document.createElement('span');
+  cnt.className = 'cnt';
+  cnt.textContent = String(state.projects.length);
+  head.append(b, cnt);
+
+  const list = document.createElement('div');
+  list.className = 'saved-list';   // real, styled class (style.css:671)
+  for (const p of state.projects) list.appendChild(buildProjectRow(p));
+
+  card.append(head, list);
+  host.appendChild(card);
+}
+
+// ---- Reusable confirmation modal -> Promise<boolean> ------------------------
+function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel' } = {}) {
+  return new Promise((resolve) => {
+    el.confirmTitle.textContent = title;
+    el.confirmMessage.textContent = message;
+    el.confirmOk.textContent = confirmLabel;
+    el.confirmCancel.textContent = cancelLabel;
+    el.confirmModal.classList.remove('hidden');
+    el.confirmOk.focus();
+
+    const done = (val) => {
+      el.confirmModal.classList.add('hidden');
+      el.confirmOk.removeEventListener('click', onOk);
+      el.confirmCancel.removeEventListener('click', onCancel);
+      el.confirmModal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onOk = () => done(true);
+    const onCancel = () => done(false);
+    const onBackdrop = (e) => { if (e.target === el.confirmModal) done(false); };
+    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+
+    el.confirmOk.addEventListener('click', onOk);
+    el.confirmCancel.addEventListener('click', onCancel);
+    el.confirmModal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+async function deleteProject(p) {
+  const ok = await confirmModal({
+    title: 'Remove project',
+    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.`,
+    confirmLabel: 'Remove project',
+  });
+  if (!ok) return;
+  setProjectsMsg('');
+  try {
+    const res = await fetch(`/api/projects?name=${encodeURIComponent(p.name)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    state.projects = Array.isArray(data.projects) ? data.projects : [];
+    if (localStorage.getItem(LAST_PROJECT_KEY) === p.name) localStorage.removeItem(LAST_PROJECT_KEY);
+    renderProjectsList();
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+  } catch (e) {
+    setProjectsMsg(e.message, 'err');
+  }
+}
+
+// ---- Add project (native picker first, manual fallback in the modal) --------
+// NOTE: kind may be 'err' (maps to the existing .hint.err rule) or omitted.
+// There is no .hint.warn rule, so informational hints pass NO kind (default
+// neutral .hint styling) — do not pass 'warn'.
+function setProjAddMsg(text, kind) {
+  if (!el.projAddMsg) return;
+  el.projAddMsg.textContent = text || '';
+  el.projAddMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+function openProjectAddModal(path) {
+  el.projAddPath.value = path || '';
+  el.projAddName.value = path ? basenameOf(path) : '';
+  // Informational hint only when there is no path (manual-entry fallback);
+  // neutral default .hint styling (no .hint.warn class exists).
+  setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path manually.');
+  el.projectAddModal.classList.remove('hidden');
+  el.projAddName.focus();
+  el.projAddName.select();
+}
+
+function closeProjectAddModal() {
+  el.projectAddModal.classList.add('hidden');
+}
+
+async function addProjectFlow() {
+  setProjectsMsg('');
+  const data = await pickFolder();
+  if (data && data.status === 'picked' && data.path) { openProjectAddModal(data.path); return; }
+  if (data && data.status === 'canceled') return;                 // respect the cancel
+  if (data && data.status === 'busy') { setProjectsMsg('A folder dialog is already open — finish or cancel it first.', 'err'); return; }
+  openProjectAddModal('');                                        // unsupported / error -> manual entry
+}
+
+async function saveProjectAdd() {
+  const name = el.projAddName.value.trim();
+  const path = el.projAddPath.value.trim();
+  if (!name) return setProjAddMsg('Name is required.', 'err');
+  if (!path) return setProjAddMsg('Folder is required.', 'err');
+  el.projAddSave.disabled = true;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    state.projects = Array.isArray(data.projects) ? data.projects : state.projects;
+    closeProjectAddModal();
+    renderProjectsList();
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+  } catch (e) {
+    setProjAddMsg(e.message, 'err');
+  } finally {
+    el.projAddSave.disabled = false;
+  }
+}
+
+// ---- Event wiring (guarded so non-UI test imports don't throw) --------------
+if (el.projectsList) {
+  el.projectsList.addEventListener('click', (e) => {
+    const del = e.target.closest && e.target.closest('.proj-del');
+    if (!del) return;
+    const item = del.closest('.pl-item');
+    if (!item) return;
+    const p = state.projects.find((x) => x.name === item.dataset.name);
+    if (p) deleteProject(p);
+  });
+}
+if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
+if (el.projAddSave) {
+  el.projAddSave.addEventListener('click', saveProjectAdd);
+  el.projAddCancel.addEventListener('click', closeProjectAddModal);
+  el.projAddBrowse.addEventListener('click', async () => {
+    el.projAddBrowse.disabled = true;
+    try {
+      const data = await pickFolder();
+      if (data && data.status === 'picked' && data.path) {
+        el.projAddPath.value = data.path;
+        if (!el.projAddName.value.trim()) el.projAddName.value = basenameOf(data.path);
+        setProjAddMsg('');
+      } else if (data && data.status === 'busy') {
+        setProjAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
+      }
+      // canceled / unsupported: leave the manual fields as-is
+    } finally {
+      el.projAddBrowse.disabled = false;
+    }
+  });
+  el.projectAddModal.addEventListener('click', (e) => { if (e.target === el.projectAddModal) closeProjectAddModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) closeProjectAddModal();
+  });
+}
+
+// Test hook (mirrors window.__agents at app.js:4219).
+if (typeof window !== 'undefined') {
+  window.__projects = {
+    loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
+    confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd, updateProjectsCount,
+  };
+}
+
 // ---- Agent creation wizard ---------------------------------------------------
 
 function resetAgentWizard() {
@@ -5056,7 +5364,11 @@ function renderHistory() {
   const filter = state.historyFilter;
   const records = filter ? all.filter((p) => p && p.projectKey === filter) : all;
 
-  if (el.navHistoryCount) el.navHistoryCount.textContent = String(records.length);
+  // Sidebar count is the TOTAL across all projects, independent of the in-view project
+  // filter (product decision): a filter pill changes the list, not the badge. `all` is
+  // state.historyAll (raw /api/history = listAllPipelines, all statuses) so all.length
+  // === COUNT(*) FROM pipelines === /api/counts.pipelines.
+  if (el.navHistoryCount) el.navHistoryCount.textContent = String(all.length);
 
   if (!records.length) {
     host.appendChild(histEmpty(filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
@@ -6166,6 +6478,15 @@ function renderRunningView() {
   const list = $('#run-list');
   if (!list) return;
   const live = liveRuns();
+  // The empty-state placeholder below (set via list.innerHTML) carries no data-run-id,
+  // so the stale-card cleanup loop won't remove it. Drop it up front whenever runs
+  // exist, else it lingers ABOVE the live cards on a 0 -> 1 transition. renderRunningView
+  // re-runs on every run frame and on hello, so this covers this-tab, other-tab, and
+  // reconnect starts.
+  if (live.length > 0) {
+    const stale = list.querySelector('.run-empty');
+    if (stale) stale.remove();
+  }
   const seen = new Set();
 
   for (const r of live) {
@@ -6215,6 +6536,27 @@ function updateNavCounts() {
   if (c) c.textContent = String(liveRuns().length);
 }
 
+// Single authoritative refresh for all four sidebar counts. Running is derived from
+// the in-memory runs map (synchronous, always live); the three persistent counts come
+// from one cheap /api/counts snapshot — NOT the full list endpoints — so a navigation
+// never pulls the whole machine-wide history just for a badge. Counts are SET to
+// absolute values, so this is safe to call redundantly (boot, every view switch, hello,
+// each *-changed broadcast) without drift. Never throws.
+async function refreshAllCounts() {
+  updateNavCounts();                                     // Running (in-memory, synchronous)
+  let data;
+  try {
+    const res = await fetch('/api/counts');
+    data = await safeJson(res);                          // safeJson(res) -> await res.json(); {} on failure
+    if (!res.ok || !data) return;                        // keep last-known badges
+  } catch {
+    return;
+  }
+  if (el.navHistoryCount && Number.isFinite(data.pipelines)) el.navHistoryCount.textContent = String(data.pipelines);
+  if (el.navProjectsCount && Number.isFinite(data.projects)) el.navProjectsCount.textContent = String(data.projects);
+  if (el.navWorkspacesCount && Number.isFinite(data.workspaces)) el.navWorkspacesCount.textContent = String(data.workspaces);
+}
+
 // ---------------------------------------------------------------------------
 // Router: sidebar nav (+ responsive top-nav) toggle between the views.
 // ---------------------------------------------------------------------------
@@ -6222,7 +6564,7 @@ const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
 function showView(name) {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -6237,6 +6579,7 @@ function showView(name) {
     resetAgentWizard();
   }
   currentShownView = name;
+  refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
   navLinks.forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
@@ -6249,6 +6592,7 @@ function showView(name) {
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'agent-create') enterAgentWizard();
+  if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
 }
@@ -6310,4 +6654,4 @@ const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'work
 if (bootTarget === 'workspace') setRunTarget('workspace');
 const bootHash = location.hash.slice(1);
 showView(VIEW_NAMES.includes(bootHash) ? bootHash : 'new');
-updateNavCounts();
+refreshAllCounts();

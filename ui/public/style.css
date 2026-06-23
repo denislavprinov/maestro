@@ -968,3 +968,34 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .agent-actions { display:flex; gap:8px; }
 .chip-select { display:flex; flex-wrap:wrap; gap:8px; }
 .chip-select label { display:inline-flex; gap:6px; align-items:center; font-size:12.5px; border:1px solid var(--line); border-radius:999px; padding:4px 10px; cursor:pointer; }
+
+/* ===== Projects management view ===== */
+/* Static rows (no expand) — neutralize the pipeline row's pointer cursor. */
+#projects-list .pl-row{cursor:default;}
+.proj-path{
+  font-family:var(--mono);font-size:12px;color:var(--ink-2);
+  margin-top:4px;word-break:break-all;
+}
+.proj-missing{
+  display:inline-block;margin-left:8px;vertical-align:middle;
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--ink-3);border:1px solid var(--line-2);border-radius:6px;padding:1px 6px;
+}
+/* Neutral bin button — same size/shape as .pl-del but stays neutral on hover (no red, ever). */
+.proj-del{
+  flex:0 0 auto;width:34px;height:34px;border-radius:10px;
+  border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;
+  cursor:pointer;color:var(--ink-3);transition:.12s;align-self:center;
+}
+.proj-del:hover{border-color:var(--ink-3);color:var(--ink);background:var(--field);}
+.proj-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.proj-del svg{width:16px;height:16px;stroke-width:1.9;}
+
+/* ===== Confirm + add-project modals (reuse .viewer-modal shell) ===== */
+/* MUST come after .viewer-modal .card (style.css:514) — equal specificity, later wins. */
+.confirm-modal .card{width:min(440px,100%);}
+.confirm-message{margin:4px 0 18px;color:var(--ink-2);font-size:14px;line-height:1.5;white-space:pre-line;}
+.confirm-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:14px;}
+/* The base .path-row is scoped to .add-project; re-declare it for our modal. */
+.confirm-modal .path-row{display:flex;gap:9px;align-items:center;}
+.confirm-modal .path-row input{flex:1 1 auto;min-width:0;}

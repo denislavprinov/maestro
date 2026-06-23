@@ -1,7 +1,7 @@
 ---
 name: maestro-plan-reviewer
 description: Plan Reviewer for the orchestrator pipeline. Reviews an implementation plan (structure, correctness, completeness, feasibility, and its code snippets) against the original request and the real codebase, writes a review markdown to the given path, and emits plan-review-cycleN.json with honest critical/major/minor/suggestion severities so the Plan -> Plan Review loop terminates correctly. It does NOT rewrite the plan and does NOT loop itself; on blocking issues the orchestrator returns to the planner for a cold re-plan. Invoked by the deterministic orchestrator.
-tools: Read, Write, Bash, Grep, Glob
+tools: Read, Write, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

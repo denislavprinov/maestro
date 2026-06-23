@@ -21,9 +21,9 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
-  readRunLogText,
+  readRunLogText, countPipelines,
 } from '../src/core/artifacts.mjs';
-import { listProjects, addProject, removeProject, normalizeProjectPath } from '../src/core/projects.mjs';
+import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
@@ -42,7 +42,7 @@ import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.m
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
-  updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE,
+  updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
 } from '../src/core/workspaces.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -243,6 +243,16 @@ function broadcast(obj) {
       }
     }
   }
+}
+
+// Fire-and-forget "this entity set changed — refetch your counts" signal. Bare +
+// unbuffered + global, exactly like the history-pr broadcast: every connected tab
+// (including the one that triggered the mutation) gets it and re-reads /api/counts.
+// Because the client always SETS counts to an absolute value (never +1/-1), a tab
+// receiving its own echo is idempotent. A tab disconnected at mutation time recovers
+// on its next view switch / reload (the agreed product behavior).
+function emitChanged(type, action) {
+  broadcast({ type, action: action || null });
 }
 
 // Append a tagged event to an entry's ring buffer (runId LAST so the runs-Map key
@@ -926,6 +936,23 @@ app.get('/api/history', async (_req, res) => {
   }
 });
 
+// Lightweight sidebar-count snapshot. Three cheap COUNT(*) queries — deliberately NOT
+// the full list endpoints, so a navigation/refresh never pulls the (potentially large)
+// machine-wide history just to update a badge. Running is derived client-side from the
+// in-memory runs map (live via WS), so it is not included here. Synchronous: the three
+// helpers are sync getDb().prepare(...).get() calls.
+app.get('/api/counts', (_req, res) => {
+  try {
+    res.json({
+      pipelines: countPipelines(),
+      projects: countProjects(),
+      workspaces: countWorkspaces(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/history/pr  -> enrich the skeleton with live PR state, pushed back
 // over the WS as batched `history-pr` events (reuses broadcast(), the same
@@ -1013,6 +1040,7 @@ app.delete('/api/runs/:id', async (req, res) => {
       id,
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    emitChanged('pipelines-changed', 'deleted');
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
@@ -1160,6 +1188,7 @@ app.post('/api/projects', async (req, res) => {
   const body = req.body || {};
   try {
     const projects = await addProject({ name: body.name, path: body.path });
+    emitChanged('projects-changed', 'created');
     res.json({ projects });
   } catch (err) {
     // addProject only throws on validation (empty/duplicate/not-a-directory), so
@@ -1173,7 +1202,9 @@ app.delete('/api/projects', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : '';
   if (!name.trim()) return badRequest(res, 'name is required');
   try {
-    res.json({ projects: await removeProject(name) });
+    const projects = await removeProject(name);
+    emitChanged('projects-changed', 'deleted');
+    res.json({ projects });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1240,6 +1271,7 @@ app.post('/api/workspaces', async (req, res) => {
   if (projectPaths.length < 2) return badRequest(res, 'a workspace needs at least 2 member projects');
   try {
     const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description });
+    emitChanged('workspaces-changed', 'created');
     res.status(201).json({ workspace });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
@@ -1279,6 +1311,7 @@ app.delete('/api/workspaces/:id', async (req, res) => {
   if (live) return res.status(409).json({ error: 'cannot delete a workspace with a live run or scan' });
   try {
     const report = await deleteWorkspace(id);
+    emitChanged('workspaces-changed', 'deleted');
     res.json({ ok: true, warnings: (report && report.warnings) || [] });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
