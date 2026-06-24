@@ -144,6 +144,7 @@ const el = {
   wizAddProject:        $('#wiz-add-project'),
   wizNewProjectName:    $('#wizNewProjectName'),
   wizNewProjectPath:    $('#wizNewProjectPath'),
+  wizNewProjectBrowse:  $('#wizNewProjectBrowse'),
   wizAddProjectSave:    $('#wizAddProjectSave'),
   wizAddProjectCancel:  $('#wizAddProjectCancel'),
   wizAddProjectMsg:     $('#wizAddProjectMsg'),
@@ -3221,29 +3222,44 @@ el.addProjectSave.addEventListener('click', async () => {
 // --- Folder selector (Browse…): native OS dialog, in-app modal fallback ----
 let folderState = { path: '', parent: null, home: '' };
 
-el.newProjectBrowse.addEventListener('click', async () => {
-  el.newProjectBrowse.disabled = true;
-  setAddMsg('');
+// The add-project form currently driving Browse… — set on click so the native
+// dialog, the in-app modal, and applyPickedFolder all write back to the right
+// inputs. New Pipeline and the workspace wizard share this one flow.
+const newPipeFolderTarget = {
+  pathInput: el.newProjectPath, nameInput: el.newProjectName,
+  browseBtn: el.newProjectBrowse, setMsg: setAddMsg,
+};
+let folderPickTarget = newPipeFolderTarget;
+
+// Browse…: native OS dialog first, in-app modal fallback. `target` names the
+// inputs/button/message fn of the form that invoked it.
+async function browseForFolder(target) {
+  folderPickTarget = target;
+  target.browseBtn.disabled = true;
+  target.setMsg('');
   try {
     const res = await fetch('/api/fs/pick-folder', { method: 'POST' });
     const data = await safeJson(res);
     if (res.ok && data.status === 'picked' && data.path) applyPickedFolder(data.path);
     else if (res.ok && data.status === 'canceled') { /* user dismissed the dialog */ }
-    else if (res.ok && data.status === 'busy') setAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
-    else await openFolderBrowser(el.newProjectPath.value.trim()); // unsupported / error -> in-app fallback
+    else if (res.ok && data.status === 'busy') target.setMsg('A folder dialog is already open — finish or cancel it first.', 'err');
+    else await openFolderBrowser(target.pathInput.value.trim()); // unsupported / error -> in-app fallback
   } catch {
-    await openFolderBrowser(el.newProjectPath.value.trim());
+    await openFolderBrowser(target.pathInput.value.trim());
   } finally {
-    el.newProjectBrowse.disabled = false;
+    target.browseBtn.disabled = false;
   }
-});
+}
 
-// Fill the path field; prefill an EMPTY name with the folder's basename.
+el.newProjectBrowse.addEventListener('click', () => browseForFolder(newPipeFolderTarget));
+
+// Fill the active target's path field; prefill an EMPTY name with the basename.
 function applyPickedFolder(path) {
-  el.newProjectPath.value = path;
-  if (!el.newProjectName.value.trim()) {
+  const t = folderPickTarget;
+  t.pathInput.value = path;
+  if (!t.nameInput.value.trim()) {
     const base = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
-    if (base) el.newProjectName.value = base;
+    if (base) t.nameInput.value = base;
   }
 }
 
@@ -3875,6 +3891,10 @@ async function saveWizAddProject() {
 if (el.wizAddProjectOpen)   el.wizAddProjectOpen  .addEventListener('click', openWizAddProject);
 if (el.wizAddProjectCancel) el.wizAddProjectCancel.addEventListener('click', hideWizAddProject);
 if (el.wizAddProjectSave)   el.wizAddProjectSave  .addEventListener('click', saveWizAddProject);
+if (el.wizNewProjectBrowse) el.wizNewProjectBrowse.addEventListener('click', () => browseForFolder({
+  pathInput: el.wizNewProjectPath, nameInput: el.wizNewProjectName,
+  browseBtn: el.wizNewProjectBrowse, setMsg: setWizAddMsg,
+}));
 
 // Start (or restart) the scan. Validates name + 2+ projects, shows Step 2,
 // creates an AbortController, POSTs (pre-persist for new / :id/scan for re-scan),
@@ -4362,6 +4382,9 @@ if (typeof window !== 'undefined') {
 const TRASH_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+const PENCIL_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 function setProjectsMsg(text, kind) {
   if (!el.projectsMsg) return;
   el.projectsMsg.textContent = text || '';
@@ -4420,6 +4443,13 @@ function buildProjectRow(p) {
 
   main.append(name, path);
 
+  const ren = document.createElement('button');
+  ren.type = 'button';
+  ren.className = 'proj-rename';
+  ren.title = `Rename ${p.name}`;
+  ren.setAttribute('aria-label', `Rename ${p.name}`);
+  ren.innerHTML = PENCIL_SVG;
+
   const del = document.createElement('button');
   del.type = 'button';
   del.className = 'proj-del';
@@ -4427,9 +4457,64 @@ function buildProjectRow(p) {
   del.setAttribute('aria-label', `Delete ${p.name}`);
   del.innerHTML = TRASH_SVG;
 
-  row.append(main, del);
+  row.append(main, ren, del);
   item.append(row);
   return item;
+}
+
+// Inline rename: swap the .pl-name label for a text input. Enter / blur commits,
+// Escape reverts. A re-render (commit or cancel) restores the label, so a `done`
+// latch keeps the trailing blur from firing the handler twice.
+function startRename(item, p) {
+  if (!item || item.querySelector('.pl-rename-input')) return;
+  const nameEl = item.querySelector('.pl-name');
+  if (!nameEl) return;
+  setProjectsMsg('');
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'pl-rename-input';
+  input.value = p.name;
+  input.spellcheck = false;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const revert = () => { if (done) return; done = true; renderProjectsList(); };
+  const commit = () => {
+    if (done) return;
+    const next = input.value.trim();
+    if (!next || next === p.name) { revert(); return; }
+    done = true;
+    commitRename(p, next);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); revert(); }
+  });
+  input.addEventListener('blur', commit);
+}
+
+async function commitRename(p, newName) {
+  setProjectsMsg('');
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: p.name, newName }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); renderProjectsList(); return; }
+    state.projects = Array.isArray(data.projects) ? data.projects : [];
+    // Keep the New-pipeline "last project" pointer (tracked by name) in sync.
+    if (localStorage.getItem(LAST_PROJECT_KEY) === p.name) localStorage.setItem(LAST_PROJECT_KEY, newName);
+    renderProjectsList();
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');
+  } catch (e) {
+    setProjectsMsg(e.message, 'err');
+    renderProjectsList();
+  }
 }
 
 function renderProjectsList() {
@@ -4574,7 +4659,15 @@ async function saveProjectAdd() {
 // ---- Event wiring (guarded so non-UI test imports don't throw) --------------
 if (el.projectsList) {
   el.projectsList.addEventListener('click', (e) => {
-    const del = e.target.closest && e.target.closest('.proj-del');
+    if (!e.target.closest) return;
+    const ren = e.target.closest('.proj-rename');
+    if (ren) {
+      const item = ren.closest('.pl-item');
+      const p = item && state.projects.find((x) => x.name === item.dataset.name);
+      if (p) startRename(item, p);
+      return;
+    }
+    const del = e.target.closest('.proj-del');
     if (!del) return;
     const item = del.closest('.pl-item');
     if (!item) return;
@@ -4612,6 +4705,7 @@ if (el.projAddSave) {
 if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
+    startRename, commitRename,
     confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd, updateProjectsCount,
   };
 }

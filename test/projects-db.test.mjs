@@ -9,7 +9,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { addProject, removeProject, listProjects } from '../src/core/projects.mjs';
+import { addProject, removeProject, renameProject, listProjects } from '../src/core/projects.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 
 const homes = [];
@@ -91,6 +91,40 @@ test('removeProject deletes case-insensitively; an absent name is a no-op', asyn
   assert.deepEqual(list, []);
   list = await removeProject('nope'); // no-op
   assert.deepEqual(list, []);
+});
+
+test('renameProject changes only the name; key + path are untouched', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'old', path: home });
+  const keyBefore = getDb().prepare('SELECT key FROM projects').get().key;
+  const list = await renameProject('OLD', 'fresh'); // case-insensitive match on old name
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'fresh');
+  assert.equal(list[0].path, home, 'path unchanged');
+  const row = getDb().prepare('SELECT key, name FROM projects').get();
+  assert.equal(row.key, keyBefore, 'key (path-derived) unchanged');
+  assert.equal(row.name, 'fresh');
+});
+
+test('renameProject allows a pure case-change of the same project', async () => {
+  const home = homes[homes.length - 1];
+  await addProject({ name: 'demo', path: home });
+  const list = await renameProject('demo', 'Demo');
+  assert.equal(list[0].name, 'Demo');
+});
+
+test('renameProject rejects empty newName, unknown oldName, and a colliding name', async () => {
+  const home = homes[homes.length - 1];
+  const other = await mkdtemp(join(tmpdir(), 'maestro-projdb-other-'));
+  homes.push(other);
+  await addProject({ name: 'alpha', path: home });
+  await addProject({ name: 'beta', path: other });
+  await assert.rejects(() => renameProject('alpha', '   '), /new project name is required/);
+  await assert.rejects(() => renameProject('ghost', 'x'), /no project named/);
+  await assert.rejects(() => renameProject('alpha', 'BETA'), /already exists/); // case-insensitive clash
+  // Nothing changed after the failures.
+  const names = (await listProjects()).map((p) => p.name).sort();
+  assert.deepEqual(names, ['alpha', 'beta']);
 });
 
 test('two projects with the SAME path collapse to one key (PK), latest name wins on re-add', async () => {

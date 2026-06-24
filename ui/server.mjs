@@ -23,7 +23,7 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
   readRunLogText, countPipelines,
 } from '../src/core/artifacts.mjs';
-import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects } from '../src/core/projects.mjs';
+import { listProjects, addProject, removeProject, renameProject, normalizeProjectPath, countProjects } from '../src/core/projects.mjs';
 import { getMaestroRoot, setMaestroRoot, defaultRoot } from '../src/core/settings.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
@@ -1207,6 +1207,22 @@ app.delete('/api/projects', async (req, res) => {
     res.json({ projects });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/projects', async (req, res) => {
+  const body = req.body || {};
+  const from = typeof body.name === 'string' ? body.name : '';
+  const to = typeof body.newName === 'string' ? body.newName : '';
+  if (!from.trim()) return badRequest(res, 'name is required');
+  if (!to.trim()) return badRequest(res, 'newName is required');
+  try {
+    const projects = await renameProject(from, to);
+    emitChanged('projects-changed', 'renamed');
+    res.json({ projects });
+  } catch (err) {
+    // renameProject only throws on validation (empty/unknown/duplicate) -> 400.
+    return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 

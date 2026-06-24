@@ -949,15 +949,23 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
   color:var(--ink-3);border:1px solid var(--line-2);border-radius:6px;padding:1px 6px;
 }
-/* Neutral bin button — same size/shape as .pl-del but stays neutral on hover (no red, ever). */
-.proj-del{
+/* Neutral bin / pencil buttons — same size/shape; stay neutral on hover (no red, ever). */
+.proj-del,.proj-rename{
   flex:0 0 auto;width:34px;height:34px;border-radius:10px;
   border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;
   cursor:pointer;color:var(--ink-3);transition:.12s;align-self:center;
 }
-.proj-del:hover{border-color:var(--ink-3);color:var(--ink);background:var(--field);}
-.proj-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.proj-del svg{width:16px;height:16px;stroke-width:1.9;}
+.proj-del:hover,.proj-rename:hover{border-color:var(--ink-3);color:var(--ink);background:var(--field);}
+.proj-del:focus-visible,.proj-rename:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.proj-del svg,.proj-rename svg{width:16px;height:16px;stroke-width:1.9;}
+
+/* Inline rename field replacing the .pl-name label. */
+.pl-rename-input{
+  font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);
+  font-family:inherit;border:1.5px solid var(--ink-3);border-radius:8px;
+  padding:4px 9px;width:100%;max-width:340px;background:#fff;
+}
+.pl-rename-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 
 /* ===== Confirm + add-project modals (reuse .viewer-modal shell) ===== */
 /* MUST come after .viewer-modal .card (style.css:514) — equal specificity, later wins. */

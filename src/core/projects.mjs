@@ -155,3 +155,32 @@ export async function removeProject(name) {
   }
   return listProjects();
 }
+
+/**
+ * Rename a project. Identified by its CURRENT name (case-insensitive); only the
+ * display `name` changes — the row key (derived from path) and every path/key
+ * reference (workspaces, runs, worktrees) are untouched, so nothing else breaks.
+ * @param {string} oldName  current name (case-insensitive)
+ * @param {string} newName  new name
+ * @returns {Promise<Array<{name:string, path:string, exists:boolean}>>}
+ * @throws {Error} on empty newName, an unknown oldName, or a name that collides
+ *   (case-insensitive) with a DIFFERENT project.
+ */
+export async function renameProject(oldName, newName) {
+  const from = (typeof oldName === 'string' ? oldName : '').trim();
+  const to = (typeof newName === 'string' ? newName : '').trim();
+  if (!from) throw new Error('current project name is required');
+  if (!to) throw new Error('new project name is required');
+  tx(() => {
+    const row = prepare('SELECT key FROM projects WHERE name = ? COLLATE NOCASE').get(from);
+    if (!row) throw new Error(`no project named "${from}"`);
+    // Collision only with a DIFFERENT row (a pure case-change of the same project
+    // keeps its own key and is allowed).
+    const clash = prepare(
+      'SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE AND key <> ?'
+    ).get(to, row.key);
+    if (clash) throw new Error(`a project named "${to}" already exists`);
+    prepare('UPDATE projects SET name = ? WHERE key = ?').run(to, row.key);
+  });
+  return listProjects();
+}
