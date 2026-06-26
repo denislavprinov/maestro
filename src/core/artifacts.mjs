@@ -850,7 +850,7 @@ export async function appendAudit(pipelineDir, markdownLine) {
 }
 
 /** Resolve the 8-hex pipeline id for a run dir: cache hit, else parse the basename. */
-function resolvePipelineId(pipelineDir) {
+export function resolvePipelineId(pipelineDir) {
   if (!pipelineDir) return null;
   const hit = _dirIdCache.get(resolve(pipelineDir));
   if (hit) return hit;
