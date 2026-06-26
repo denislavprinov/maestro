@@ -99,6 +99,11 @@ export const EMBEDDED_AGENTS = {
     color: 'amber', order: 7, connectsTo: ['planner', 'implementer', 'decomposer'],
     icon: '<path d="M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z"/><path d="M15.5 15.5L21 21" stroke-linecap="round"/><path d="M7.6 10.3l2 2 3.3-3.6" stroke-linecap="round" stroke-linejoin="round"/>',
   },
+  projectOnboarding: {
+    key: 'projectOnboarding', displayName: 'Project Onboarding', description: 'onboard a repo: CLAUDE.md, skills, rules',
+    color: 'green', order: 8, connectsTo: [],
+    icon: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9z"/><path d="M8.5 13l2.5 2.5 4.5-5" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
 };
 
 // mergePalette(agentsResponse) -> ordered Array<{key,displayName,description,color,icon,origin,order}>.
