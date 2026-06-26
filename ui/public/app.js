@@ -347,6 +347,9 @@ function handleServerMessage(msg) {
     case 'state':
       onState(r, msg);
       break;
+    case 'title':
+      onTitle(r, msg);
+      break;
     case 'subagent':
       onSubagent(r, msg);
       break;
@@ -1207,9 +1210,42 @@ function onState(r, msg) {
   // any missed `subagent` delta). Replace wholesale when present; a snapshot that
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
+  if (msg.title && msg.title !== r.title) r.title = msg.title;
   if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
   paintRunCard(r);
+}
+
+// Live title replacement: the LLM title landed, replacing the instant provisional.
+// Update the in-memory run model first (source of truth for re-renders), then patch
+// only the .run-title node of the open card in place (mirrors patchHistoryPr — never
+// full-repaint, never lose stepper/expand state).
+function onTitle(r, msg) {
+  if (!msg || typeof msg.title !== 'string' || !msg.title) return;
+  r.title = msg.title;                          // model is source of truth for re-renders
+  r.titleProvisional = !!msg.provisional;       // false once the real title lands
+  // Patch the live Running card in place (no rebuild), keyed by runId.
+  const card = document.querySelector(`.run-card[data-run-id="${cssEscape(r.runId)}"]`);
+  const titleEl = card && card.querySelector('.run-title');
+  if (titleEl) {
+    titleEl.textContent = r.title;
+    titleEl.classList.remove('title-provisional');
+  }
+  // If this pipeline is also shown in History (e.g. it finished before the title
+  // settled), patch it too. The pipeline id comes from the MESSAGE — the run model
+  // has none.
+  patchHistoryTitle(msg.pipelineId, r.title);
+}
+
+// Patch an already-rendered History card's title without a full paintHistory().
+// Pipeline ids are globally unique, so id-only selection is sufficient.
+function patchHistoryTitle(pipelineId, title) {
+  if (!pipelineId || !title) return;
+  const el = document.querySelector(`.hist-card[data-pipeline-id="${cssEscape(pipelineId)}"]`);
+  const b = el && el.querySelector('.h-meta b');
+  if (b) b.textContent = title;
+  const row = (state.historyAll || []).find((p) => p && p.id === pipelineId);
+  if (row) row.title = title;                   // keep the model so a later paintHistory() keeps it
 }
 
 // Per-run sub-agent lifecycle delta. Upsert into r.subAgents by `id`: a spawn
@@ -6057,7 +6093,10 @@ function buildRunCard(r) {
   if (stepHost) buildRunGraph(stepHost, r.stepper);
 
   const titleEl = node.querySelector('.run-title');
-  if (titleEl) titleEl.textContent = r.title;
+  if (titleEl) {
+    titleEl.textContent = r.title;
+    if (r.titleProvisional) titleEl.classList.add('title-provisional');
+  }
   const metaEl = node.querySelector('.rm-text');
   if (metaEl) {
     const branchTxt = r.branchFeature ? ` · ${r.branchFeature}` : '';
@@ -6377,6 +6416,8 @@ function paintRunCard(r) {
       stepStatusByKey(r.steps, r.stepper),
     );
   }
+  const titleEl = r.el.querySelector('.run-title');
+  if (titleEl && r.title && titleEl.textContent !== r.title) titleEl.textContent = r.title;
   const timeEl = r.el.querySelector('.run-time');
   if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, Date.now()));
   const totalEl = r.el.querySelector('.run-cost');

@@ -20,8 +20,10 @@ import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
 
+import { generateTitle } from './title.mjs';
 import {
   createPipeline,
+  updatePipelineTitle,
   appendAudit,
   writeState,
   artifactPaths,
@@ -417,6 +419,13 @@ class Orchestrator extends EventEmitter {
         this.state.branches = {};
       }
       if (!this.state.title) this.state.title = basename(this.pipeline.dir);
+      // The title set above (firstMeaningfulLine(prompt) or the dir basename) is
+      // PROVISIONAL: shown instantly. Kick off the real LLM title without blocking
+      // run start. Skip on a resumed run — it already carries the previously-generated
+      // row.title (loaded by resume()). this.resumeOpts (= this.opts.resume) is the
+      // resume signal; resume() never reaches this run() site anyway (belt-and-suspenders).
+      this.state.titleProvisional = true;
+      if (!this.resumeOpts) this._kickoffTitleGeneration();
       this.baseName = this._deriveBaseName(this.pipeline.promptText, this.state.title);
       // Capture the date prefix ONCE so every plan -vN and the review file share
       // the v1 date even if the run crosses midnight.
@@ -2418,6 +2427,33 @@ class Orchestrator extends EventEmitter {
     } catch {
       /* never let a listener crash the state machine */
     }
+  }
+
+  /**
+   * Fire-and-forget: generate a concise LLM title and, when ready, persist + broadcast it.
+   * The promise is stored on this._titlePromise for test determinism but is NEVER awaited
+   * by run() (must not delay the run). Aborts with the run via this.abort.signal.
+   */
+  _kickoffTitleGeneration() {
+    const prompt = this.pipeline?.promptText || this.opts.prompt || '';
+    const id = this.pipeline?.id;
+    if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
+    this._titlePromise = Promise.resolve()
+      .then(() => generateTitle(prompt, {
+        cwd: this.projectDir,
+        signal: this.abort.signal,
+      }))
+      .then((real) => {
+        if (!real || real === this.state.title) return;     // empty / unchanged → keep provisional
+        if (this.abort.signal.aborted) return;
+        this.state.title = real;
+        this.state.titleProvisional = false;
+        this.state.updatedAt = new Date().toISOString();
+        updatePipelineTitle(id, real);                      // persist (dedicated UPDATE)
+        // Carry pipelineId: the client run model has no pipeline id; History patch needs it.
+        this._emit('title', { title: real, provisional: false, pipelineId: id }); // live broadcast
+      })
+      .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
   }
 
   async _persist() {

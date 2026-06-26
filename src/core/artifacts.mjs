@@ -943,6 +943,26 @@ export async function writeState(pipelineDir, stateObj) {
 }
 
 /**
+ * Mutate ONLY the title of an existing pipeline row. writeState()'s UPSERT treats
+ * title as creation-immutable, so this is the single sanctioned post-creation path.
+ * Best-effort (mirrors writeReview/recordArtifact): a failure must not crash a run.
+ * @param {string} pipelineId
+ * @param {string} title
+ */
+export function updatePipelineTitle(pipelineId, title) {
+  if (!pipelineId || typeof title !== 'string' || !title.trim()) return;
+  try {
+    tx(() => {
+      getDb()
+        .prepare('UPDATE pipelines SET title = @title, updated_at = @updated_at WHERE id = @id')
+        .run({ id: pipelineId, title: title.trim(), updated_at: new Date().toISOString() });
+    });
+  } catch {
+    /* best-effort: the live state event still carries the new title */
+  }
+}
+
+/**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
  * catch/finally could write a terminal status, so the row was frozen at 'running'.
