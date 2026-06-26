@@ -1,5 +1,6 @@
 {
   "key": "workspaceScanner",
+  "domain": "shared",
   "displayName": "Workspace Scan",
   "description": "investigate cross-project relations",
   "color": "violet",

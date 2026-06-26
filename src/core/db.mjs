@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -460,6 +460,16 @@ ALTER TABLE pipeline_steps ADD COLUMN graphify_count INTEGER;
 `;
 
 /**
+ * Incremental v8 -> v9 migration (domain tag for workflows). Adds a nullable TEXT
+ * `domain` to the workflows table so the picker can group/filter by domain
+ * (coding, marketing, financing, …). Legacy rows stay NULL and read back as
+ * 'general' via the store layer's COALESCE — organizational only, no enforcement.
+ */
+const SCHEMA_V9 = `
+ALTER TABLE workflows ADD COLUMN domain TEXT;
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -493,6 +503,7 @@ export function migrate(db) {
     if (current < 6) db.exec(SCHEMA_V6);
     if (current < 7) db.exec(SCHEMA_V7);
     if (current < 8) db.exec(SCHEMA_V8);
+    if (current < 9) db.exec(SCHEMA_V9);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

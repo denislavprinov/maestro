@@ -50,6 +50,7 @@ import {
   mergePalette,
   canConnect,
   EMBEDDED_AGENTS,
+  groupPaletteByDomain,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
 
@@ -1320,11 +1321,11 @@ async function getWorkflow(id) {
   }
 }
 
-async function saveWorkflow({ name, steps, feedbacks }) {
+async function saveWorkflow({ name, domain, steps, feedbacks }) {
   const res = await fetch('/api/workflows', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, steps, feedbacks }),
+    body: JSON.stringify({ name, domain, steps, feedbacks }),
   });
   const data = await safeJson(res);
   if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
@@ -1435,25 +1436,69 @@ async function initComposer() {
 }
 
 /* ---- palette ---- */
+// Ordered header list derived from the already-order-sorted palette, mirroring
+// collectDomains (general last, shared excluded) — no extra API round-trip.
+function paletteDomains(pal) {
+  const seen = [];
+  pal.forEach((a) => { if (a.domain && a.domain !== 'shared' && a.domain !== 'general' && !seen.includes(a.domain)) seen.push(a.domain); });
+  seen.push('general');
+  return seen;
+}
+
+const composerCollapsed = new Set();   // domains the user has collapsed via chips
+
 function composerBuildPalette(pal) {
   const palette = composer.els.palette;
   palette.innerHTML = '';
-  pal.forEach((ag) => {
-    const p = document.createElement('div');
-    p.className = 'agent-pill';
-    p.draggable = true;
-    p.dataset.key = ag.key;
-    p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}`;
-    p.addEventListener('dragstart', (e) => {
-      composer.dragKey = ag.key; p.classList.add('dragging');
-      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
+  const domains = paletteDomains(pal);
+  const groups = groupPaletteByDomain(pal, domains);
+
+  // Filter chips: one per domain, toggles section visibility.
+  const chips = document.createElement('div');
+  chips.className = 'pal-chips';
+  domains.forEach((d) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'pal-chip' + (composerCollapsed.has(d) ? ' off' : '');
+    chip.textContent = d;
+    chip.addEventListener('click', () => {
+      if (composerCollapsed.has(d)) composerCollapsed.delete(d); else composerCollapsed.add(d);
+      composerBuildPalette(pal);                 // cheap re-render
     });
-    p.addEventListener('dragend', () => {
-      composer.dragKey = null; p.classList.remove('dragging');
-      document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
-    });
-    palette.appendChild(p);
+    chips.appendChild(chip);
   });
+  palette.appendChild(chips);
+
+  groups.forEach((g) => {
+    const sec = document.createElement('div');
+    sec.className = 'pal-section';
+    if (composerCollapsed.has(g.domain)) sec.classList.add('collapsed');
+    const head = document.createElement('div');
+    head.className = 'pal-head';
+    head.textContent = g.domain;
+    sec.appendChild(head);
+    g.agents.forEach((ag) => sec.appendChild(composerPalettedPill(ag)));
+    palette.appendChild(sec);
+  });
+}
+
+// Extracted from the old composerBuildPalette loop body so the pill markup + drag
+// handlers live in one place.
+function composerPalettedPill(ag) {
+  const p = document.createElement('div');
+  p.className = 'agent-pill';
+  p.draggable = true;
+  p.dataset.key = ag.key;
+  p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}`;
+  p.addEventListener('dragstart', (e) => {
+    composer.dragKey = ag.key; p.classList.add('dragging');
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
+  });
+  p.addEventListener('dragend', () => {
+    composer.dragKey = null; p.classList.remove('dragging');
+    document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
+  });
+  return p;
 }
 
 /* ---- node ---- */
@@ -1713,16 +1758,32 @@ async function composerReset() {
   composer.feedbacks = model.feedbacks;
   composerRefresh();
 }
+// Auto-suggest the workflow domain = the dominant non-`shared` domain among member
+// agents, else 'general'. The user can override in the second save prompt.
+function suggestWorkflowDomain(steps) {
+  const counts = new Map();
+  distinctAgents(steps).forEach((k) => {
+    const d = (composerAgent(k)?.domain) || 'general';   // composerAgent fallback lacks domain → 'general'
+    if (d === 'shared') return;               // shared never dominates
+    counts.set(d, (counts.get(d) || 0) + 1);
+  });
+  let best = 'general', bestN = 0;
+  for (const [d, n] of counts) if (n > bestN) { best = d; bestN = n; }
+  return best;                                 // 'general' when only shared / none
+}
+
 async function composerSave() {
   if (!composer.steps.length) return;
   composerExitLink();
   const name = (window.prompt('Name this pipeline:', '') || '').trim();
   if (!name) return;
+  const suggested = suggestWorkflowDomain(composer.steps);
+  const domain = (window.prompt('Domain (organizes the picker — e.g. coding, marketing):', suggested) || '').trim() || suggested;
   const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
   const saveBtn = document.getElementById('composer-save');
   let saved, warnings;
   try {
-    ({ workflow: saved, warnings } = await saveWorkflow({ name, steps: body.steps, feedbacks: body.feedbacks }));
+    ({ workflow: saved, warnings } = await saveWorkflow({ name, domain, steps: body.steps, feedbacks: body.feedbacks }));
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
     return;
@@ -1787,15 +1848,45 @@ function composerRenderRO(host, item) {
   setTimeout(paint, 60);
 }
 
+let composerWfDomain = 'all';   // current filter
+
+// Dynamic filter set (clarify Q4): distinct domains present among saved workflows,
+// plus 'general', led by an 'all' option. wf_default (coding) participates like any row.
+function composerWfDomains() {
+  const seen = [];
+  composer.saved.forEach((w) => { const d = w.domain || 'general';
+    if (d !== 'general' && !seen.includes(d)) seen.push(d); });
+  seen.push('general');
+  return ['all', ...seen];
+}
+
 function composerRenderList() {
   const listEl = composer.els.list, cntEl = composer.els.count;
   listEl.innerHTML = '';
   cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
+  // The first-run empty state keys off the UNFILTERED list, so a filtered-to-empty
+  // domain shows an empty list under the chips, not the "no pipelines yet" copy.
   if (!composer.saved.length) {
     listEl.innerHTML = '<div class="pl-empty">No saved pipelines yet — build one above and hit "Save pipeline".</div>';
     return;
   }
-  composer.saved.forEach((item) => {
+  // Domain filter chip row, inserted just before the list (reused across renders).
+  const filterDomains = composerWfDomains();
+  const filterEl = listEl.previousElementSibling?.classList?.contains('wf-filter')
+    ? listEl.previousElementSibling
+    : (() => { const el = document.createElement('div'); el.className = 'wf-filter';
+               listEl.parentNode.insertBefore(el, listEl); return el; })();
+  filterEl.innerHTML = '';
+  filterDomains.forEach((d) => {
+    const c = document.createElement('button'); c.type = 'button';
+    c.className = 'pal-chip' + (composerWfDomain === d ? '' : ' off');
+    c.textContent = d; c.addEventListener('click', () => { composerWfDomain = d; composerRenderList(); });
+    filterEl.appendChild(c);
+  });
+  const rows = composerWfDomain === 'all'
+    ? composer.saved
+    : composer.saved.filter((w) => (w.domain || 'general') === composerWfDomain);
+  rows.forEach((item) => {
     const used = distinctAgents(item.steps);
     const chips = used.map((k) => {
       const ag = composerAgent(k);
@@ -1810,7 +1901,7 @@ function composerRenderList() {
       `<div class="pl-row">` +
         `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
         `<div class="pl-main">` +
-          `<div class="pl-name">${escapeHtml(item.name)}</div>` +
+          `<div class="pl-name">${escapeHtml(item.name)} <span class="pl-domain">${escapeHtml(item.domain || 'general')}</span></div>` +
           `<div class="pl-meta">${meta}</div>` +
           `<div class="pl-chips">${chips}</div>` +
         `</div>` +

@@ -1,5 +1,6 @@
 {
   "key": "reviewer",
+  "domain": "coding",
   "displayName": "Review Implementation",
   "description": "verify & report",
   "color": "blue",

@@ -12,7 +12,31 @@ import {
   mergePalette,
   canConnect,
   EMBEDDED_AGENTS,
+  groupPaletteByDomain,
 } from '../ui/public/composer-core.mjs';
+
+test('mergePalette carries domain (defaults general)', () => {
+  const out = mergePalette({ agents: [
+    { key: 'a', order: 1, domain: 'marketing' },
+    { key: 'b', order: 2 },                          // no domain
+  ]});
+  assert.equal(out.find((x) => x.key === 'a').domain, 'marketing');
+  assert.equal(out.find((x) => x.key === 'b').domain, 'general');
+});
+
+test('groupPaletteByDomain injects shared into every section, preserves order', () => {
+  const pal = [
+    { key: 'plan', order: 1, domain: 'coding' },
+    { key: 'scan', order: 0, domain: 'shared' },
+    { key: 'copy', order: 2, domain: 'marketing' },
+    { key: 'misc', order: 3, domain: 'general' },
+  ];
+  const groups = groupPaletteByDomain(pal, ['coding', 'marketing', 'general']);
+  assert.deepEqual(groups.map((g) => g.domain), ['coding', 'marketing', 'general']);
+  assert.deepEqual(groups[0].agents.map((a) => a.key), ['scan', 'plan']);
+  assert.deepEqual(groups[1].agents.map((a) => a.key), ['scan', 'copy']);
+  assert.deepEqual(groups[2].agents.map((a) => a.key), ['scan', 'misc']);
+});
 
 test('topology() reindexes node ids to s{step}_{member} and remaps feedbacks', () => {
   const steps = [

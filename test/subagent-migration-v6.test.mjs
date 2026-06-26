@@ -25,6 +25,7 @@ const V5_SEED = `
 CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_key TEXT);
 CREATE TABLE sub_agents (pipeline_id TEXT, id TEXT, ui_phase TEXT, PRIMARY KEY (pipeline_id,id));
 CREATE TABLE pipeline_steps (pipeline_id TEXT, key TEXT, session_id TEXT, PRIMARY KEY (pipeline_id,key));
+CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT, steps TEXT, feedbacks TEXT, created_at TEXT, updated_at TEXT);
 INSERT INTO pipelines (id, project_key) VALUES ('p1','proj');
 `;
 
@@ -37,7 +38,7 @@ test('opening a user_version=5 DB forward-migrates to v6 (adds skills to both ag
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8, 'forward-migrated to v8');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9, 'forward-migrated to v9');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('skills'));
   assert.ok(db.prepare('PRAGMA table_info(pipeline_steps)').all().map((c) => c.name).includes('skills'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');
