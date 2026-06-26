@@ -47,6 +47,7 @@ import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
+import { classifyError } from './recoverable-error.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { loadAgentRegistry, collectChannelDefs } from './agent-registry.mjs';
@@ -74,6 +75,12 @@ const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 const FANOUT_ELIGIBLE = new Set([
   'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer',
 ]);
+
+/** Max auto-mode retries for a recoverable error before falling back to status error. */
+const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
+  const n = Number(process.env.MAESTRO_RECOVERY_MAX_ATTEMPTS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+})();
 
 /**
  * Build the synthetic implementer node for one decomposed task. Pure (exported for
@@ -186,6 +193,9 @@ class Orchestrator extends EventEmitter {
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
     this.pendingQuestion = null; // { id, resolve, reject, kind }
+    this._recovery = null;      // class -> in-flight Promise<'retry'|'abort'> (same-class dedupe)
+    this._recoveryTail = null;  // serializes _ask: only one recovery prompt open at a time
+    this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
     this.toolInstruction = '';
     // Cap for the in-worktree graphify build (macOS has no timeout(1)).
@@ -1433,20 +1443,23 @@ class Orchestrator extends EventEmitter {
     let result;
     let endMark = 'done';
     try {
-      const runner = this._runners[node.runnerType];
-      if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
-      try {
-        result = await runner(ctx);
-      } catch (err) {
-        // Session-resume fallback (spec §7): a vanished session must not fail the
-        // run — re-run the node fresh, once, and audit the fallback.
-        if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
-          this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
-          await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
-          ctx.resumeSessionId = undefined;
-          result = await runner(ctx);
-        } else {
-          throw err;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          result = await this._runOnce(node, ctx);
+          break;
+        } catch (err) {
+          // Pause/stop always win over a recoverable error.
+          if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+            endMark = 'paused';
+            throw pauseErr();
+          }
+          if (isAbort(err) || isPause(err)) throw err;
+          const cls = classifyError(err);
+          if (!cls) throw err;                    // not recoverable -> today's path
+          const decision = await this._recover({ node, cls, err, attempt });
+          if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
+          this._nodeStep(node, stepIndex, cycle, 'start'); // node back to running for the retry
+          // loop -> re-run the node fresh
         }
       }
     } catch (err) {
@@ -1460,6 +1473,96 @@ class Orchestrator extends EventEmitter {
     }
     // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
     return { node, result, ctx };
+  }
+
+  /** Run a node's runner once, with the spec §7 vanished-session fresh re-run
+   *  fallback (a dead `--resume` session must not fail the run). Extracted from
+   *  _runNode verbatim so the recovery loop wraps a single clean call. */
+  async _runOnce(node, ctx) {
+    const runner = this._runners[node.runnerType];
+    if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
+    try {
+      return await runner(ctx);
+    } catch (err) {
+      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
+        await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
+        ctx.resumeSessionId = undefined;
+        return await runner(ctx);
+      }
+      throw err;
+    }
+  }
+
+  /** Decide how to recover from a classified error. Auto mode: bounded backoff
+   *  then give up (and abort immediately if a pause fired during backoff, so a
+   *  pause is never followed by a wasted retry). Interactive: ONE shared prompt
+   *  per error class (same-class siblings await the same answer), and distinct
+   *  classes are serialized so only one recovery prompt is open at a time (the
+   *  gate holds a single pendingQuestion). Returns 'retry' | 'abort'. */
+  async _recover({ node, cls, err, attempt }) {
+    this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`);
+    await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
+
+    if (this.auto) {
+      if (attempt > RECOVERY_MAX_AUTO_ATTEMPTS) return 'abort';
+      await this._backoff(attempt, this.pauseAbort.signal);
+      // A pause during backoff must win: abort instead of retrying. The loop's
+      // outer catch then re-classifies the thrown error under pauseRequested and
+      // unwinds as a pause (the pauseAbort signal is aborted).
+      if (this.pauseRequested || this.pauseAbort.signal.aborted) return 'abort';
+      return 'retry';
+    }
+
+    this._recovery ||= new Map();
+    if (!this._recovery.has(cls)) {
+      const p = this._enqueueRecoveryPrompt(cls, firstLine(err.message))
+        .finally(() => { if (this._recovery) this._recovery.delete(cls); });
+      this._recovery.set(cls, p);
+    }
+    return this._recovery.get(cls);
+  }
+
+  /** Open a recovery prompt for one class, serialized behind any in-flight
+   *  recovery prompt (the question gate has a single pendingQuestion slot, so
+   *  distinct classes must queue — see the clarify answer). Returns 'retry'|'abort'. */
+  _enqueueRecoveryPrompt(cls, message) {
+    const run = () =>
+      this._ask({
+        id: `recovery-${cls}-${this._recoveryNonce()}`,
+        kind: 'recovery',
+        recovery: { cls, message },
+      }).then((ans) => (ans && ans.decision === 'abort' ? 'abort' : 'retry'));
+    // Chain after the current tail (run regardless of whether the prior prompt
+    // resolved or rejected) so only one prompt is ever open.
+    const prev = this._recoveryTail || Promise.resolve();
+    const next = prev.then(run, run);
+    this._recoveryTail = next.catch(() => {}); // tail must never reject the chain
+    return next;
+  }
+
+  /** Abort-aware backoff: base * 2^(attempt-1) ms, resolving early (and still
+   *  'retry') if the pause-only signal fires so a pause is not delayed. */
+  _backoff(attempt, signal) {
+    const base = (() => {
+      const n = Number(process.env.MAESTRO_RECOVERY_BACKOFF_MS);
+      return Number.isFinite(n) && n >= 0 ? n : 1000;
+    })();
+    const ms = base * Math.pow(2, Math.max(0, attempt - 1));
+    if (!ms) return Promise.resolve();
+    return new Promise((res) => {
+      const t = setTimeout(res, ms);
+      t.unref?.();
+      if (signal) {
+        if (signal.aborted) { clearTimeout(t); res(); }
+        else signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });
+      }
+    });
+  }
+
+  /** Monotonic id source for recovery prompts (no Date.now/random — replay-safe). */
+  _recoveryNonce() {
+    return ++this._recoverySeq;
   }
 
   /**
@@ -1584,7 +1687,7 @@ class Orchestrator extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues }) {
+  async _ask({ id, kind, questions, issues, recovery }) {
     this._checkAbort();
 
     // Freeze the active-time clock while we wait on the user (active-time-only).
@@ -1596,10 +1699,15 @@ class Orchestrator extends EventEmitter {
       this._persist().catch(() => {});
     }
 
-    this._emit('question', { id, kind, questions, issues });
+    this._emit('question', { id, kind, questions, issues, recovery });
 
     try {
       if (this.auto) {
+        if (kind === 'recovery') {
+          // Auto mode handles recovery in _recover before ever calling _ask;
+          // this is a defensive fallback so an auto run can never hang.
+          return { decision: 'abort' };
+        }
         if (kind === 'clarify') {
           this._log('orchestrator', 'info', `auto-answering clarify ${id}`);
           return {

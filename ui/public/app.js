@@ -2621,21 +2621,25 @@ function renderQpanel(r) {
     return;
   }
 
-  const isGate = pq.kind === 'gate' || Array.isArray(pq.issues);
+  const isRecovery = pq.kind === 'recovery';
+  const isGate = !isRecovery && (pq.kind === 'gate' || Array.isArray(pq.issues));
 
   // ----- head -----
   const head = document.createElement('div');
   head.className = 'qpanel-head';
   head.appendChild(questionIcon());
   const title = document.createElement('b');
-  if (isGate) {
+  if (isRecovery) {
+    const cls = (pq.recovery && pq.recovery.cls) || 'recoverable';
+    title.textContent = `${cls.replace('_', ' ')} error — action needed`;
+  } else if (isGate) {
     title.textContent = 'Cycle gate';
   } else {
     const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
     title.textContent = `${phaseLabel} needs your input`;
   }
   head.appendChild(title);
-  if (!isGate) {
+  if (!isGate && !isRecovery) {
     const n = realQuestions(pq).length;
     const count = document.createElement('span');
     count.className = 'qcount';
@@ -2644,7 +2648,8 @@ function renderQpanel(r) {
   }
   panel.appendChild(head);
 
-  if (isGate) renderGateBody(r, panel, pq);
+  if (isRecovery) renderRecoveryBody(r, panel, pq);
+  else if (isGate) renderGateBody(r, panel, pq);
   else renderClarifyBody(r, panel, pq);
 
   panel.classList.remove('hidden');
@@ -2826,6 +2831,39 @@ function renderGateBody(r, panel, pq) {
   another.className = 'btn btn-primary gate-another';
   another.textContent = 'I approve another cycle';
   foot.append(cont, another);
+  panel.appendChild(foot);
+}
+
+// Recovery prompt: a node hit a recoverable error (auth / rate-limit / quota /
+// network). Show the cause and let the user fix it then Retry, or Abort the run.
+function renderRecoveryBody(r, panel, pq) {
+  const rec = pq.recovery || {};
+  const intro = document.createElement('div');
+  intro.className = 'gate-intro';
+  const hint = rec.cls === 'auth'
+    ? 'Re-authenticate (e.g. run `claude setup-token` or `/login`), then Retry.'
+    : 'Fix the problem (wait out a limit, restore connectivity, top up credit), then Retry.';
+  intro.textContent = `This step could not reach the model. ${hint}`;
+  panel.appendChild(intro);
+
+  if (rec.message) {
+    const msg = document.createElement('div');
+    msg.className = 'issue-detail';
+    msg.textContent = rec.message;
+    panel.appendChild(msg);
+  }
+
+  const foot = document.createElement('div');
+  foot.className = 'qpanel-foot gate-actions';
+  const abort = document.createElement('button');
+  abort.type = 'button';
+  abort.className = 'btn recovery-abort';
+  abort.textContent = 'Abort run';
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'btn btn-primary recovery-retry';
+  retry.textContent = 'Retry';
+  foot.append(abort, retry);
   panel.appendChild(foot);
 }
 
@@ -4990,7 +5028,7 @@ if (runListEl) {
 
     // qpanel actions. Resolve the run per-card via the enclosing .run-card so
     // delegation works for any dynamically-built card.
-    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another');
+    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-abort');
     if (qbtn) {
       const card = qbtn.closest('.run-card');
       const runId = card && card.dataset.runId;
@@ -4998,6 +5036,8 @@ if (runListEl) {
       if (!r) return;
       if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
       else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
+      else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
+      else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
       else submitAnswer(r);
     }
   });

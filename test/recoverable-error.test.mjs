@@ -1,0 +1,37 @@
+// test/recoverable-error.test.mjs — pure classifier unit tests.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { classifyError } from '../src/core/recoverable-error.mjs';
+
+test('classifies the reported headless auth failure as auth', () => {
+  const e = new Error('claude exited with code 1: Failed to authenticate. API Error: 401 Invalid authentication credentials');
+  assert.equal(classifyError(e), 'auth');
+});
+
+test('classifies authentication_error / not-logged-in as auth', () => {
+  assert.equal(classifyError(new Error('authentication_error: token expired')), 'auth');
+  assert.equal(classifyError(new Error('Not logged in. Please run claude login')), 'auth');
+});
+
+test('classifies 429 / 529 / overloaded as rate_limit', () => {
+  assert.equal(classifyError(new Error('API Error: 429 rate_limit_error')), 'rate_limit');
+  assert.equal(classifyError(new Error('API Error: 529 Overloaded')), 'rate_limit');
+});
+
+test('classifies credit/quota/billing as quota', () => {
+  assert.equal(classifyError(new Error('Your credit balance is too low to access the API')), 'quota');
+  assert.equal(classifyError(new Error('usage limit reached')), 'quota');
+});
+
+test('classifies connectivity failures as network', () => {
+  assert.equal(classifyError(new Error('request to https://api.anthropic.com failed, reason: ECONNRESET')), 'network');
+  assert.equal(classifyError(new Error('fetch failed')), 'network');
+  assert.equal(classifyError(new Error('socket hang up')), 'network');
+});
+
+test('returns null for a plain bug and accepts a raw string / nullish', () => {
+  assert.equal(classifyError(new Error('TypeError: x is not a function')), null);
+  assert.equal(classifyError('401 Invalid authentication credentials'), 'auth');
+  assert.equal(classifyError(null), null);
+  assert.equal(classifyError(undefined), null);
+});
