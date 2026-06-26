@@ -1437,7 +1437,7 @@ function buildAuditMarkdown(row) {
  * @param {string} id
  * @returns {object|null}
  */
-function lookupPipelineRow(key, id) {
+export function lookupPipelineRow(key, id) {
   const isWs = typeof key === 'string' && key.startsWith('workspaces/');
   const col = isWs ? 'workspace_key' : 'project_key';
   const val = isWs ? key.slice('workspaces/'.length) : key;
@@ -1502,6 +1502,37 @@ export async function readRunLogText(key, id) {
   } catch {
     return null; // no log file (older run / never bound)
   }
+}
+
+/**
+ * Resolve a pipeline row's absolute on-disk run dir (mirrors readRunLogText).
+ * Workspace rows (target==='workspace') live under the workspace store namespace,
+ * keyed by workspace_key; project rows live under their project store namespace.
+ * @returns {Promise<string>}
+ */
+export async function runDirForRow(row) {
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs
+    ? workspaceStorePath(row.workspace_key)
+    : projectStorePath(row.project_key);
+  const pipelinesDir = join(storeRoot, 'pipelines');
+  const dirById = await runDirIndex(pipelinesDir);
+  return dirById.get(row.id) || join(pipelinesDir, row.id);
+}
+
+/** Read a pipeline-local artifact file as text, or null if absent. */
+export async function readRunArtifactText(key, id, relPath) {
+  const row = lookupPipelineRow(key, id);
+  if (!row) return null;
+  const dir = await runDirForRow(row);
+  try { return await readFile(join(dir, relPath), 'utf8'); } catch { return null; }
+}
+
+/** Read + JSON-parse a pipeline-local artifact, or null. */
+export async function readRunArtifactJson(key, id, relPath) {
+  const txt = await readRunArtifactText(key, id, relPath);
+  if (txt == null) return null;
+  try { return JSON.parse(txt); } catch { return null; }
 }
 
 /**
