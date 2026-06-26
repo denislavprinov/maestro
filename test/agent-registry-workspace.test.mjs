@@ -2,7 +2,7 @@
 // M4: the two workspace agents in the registry — scope coercion, the
 // produces===['workspace'] canary (the §6.9 highest-risk hazard), the DEFAULT_SPEC
 // channel wiring, and the mandatory registryToSteps `scope:'workspace-only'`
-// exclusion that keeps AGENT_STEPS at EXACTLY 8 (single-project byte-identity).
+// exclusion that keeps AGENT_STEPS at EXACTLY 10 (single-project byte-identity).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
