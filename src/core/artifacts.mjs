@@ -1471,12 +1471,25 @@ export async function readPipeline(projectDir, id) {
 export async function readPipelineByKey(key, id) {
   const row = lookupPipelineRow(key, id);
   if (!row) return null;
+  // Layer-1 results + (if generated) the Layer-2 overview, read from the run dir.
+  // File-name literals inlined (not imported from results.mjs) to avoid a load-order
+  // cycle: results.mjs imports recordArtifact/resolvePipelineId from this module.
+  const dir = await runDirForRow(row);
+  const results = await readJsonFile(join(dir, 'results.json'));
+  const overview = await readJsonFile(join(dir, 'overview.json'));
   return {
     state: rowToState(row),
     auditMarkdown: buildAuditMarkdown(row),
     artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
+    results,
+    overview,
     ...readPipelineExtras(row.id),
   };
+}
+
+/** Local helper: read + JSON-parse a file, null on any failure. */
+async function readJsonFile(p) {
+  try { return JSON.parse(await readFile(p, 'utf8')); } catch { return null; }
 }
 
 /**
