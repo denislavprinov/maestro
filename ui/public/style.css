@@ -510,6 +510,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qopt:hover,.q-option:hover{border-color:var(--ink-3);}
 .qopt.sel,.q-option.selected{background:var(--ink);color:#fff;border-color:var(--ink);}
 .qopt:focus-visible,.q-option:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Clarify confidence: option becomes a flex row; the bar spans full width. */
+.qopt{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;}
+.qopt-label{flex:1 1 auto;}
+.qopt-meta{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;}
+.qopt-pct{font-variant-numeric:tabular-nums;font-weight:700;opacity:.85;}
+.qopt-rec{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  background:var(--amber-bg);color:var(--amber-ink);padding:2px 7px;border-radius:999px;}
+.qopt-bar{flex:0 0 100%;height:4px;border-radius:999px;background:var(--line-2);overflow:hidden;}
+.qopt-bar-fill{display:block;height:100%;background:var(--ink-3);border-radius:999px;}
+/* Keep contrast when the option is selected (.qopt.sel => dark fill, white text). */
+.qopt.sel .qopt-bar{background:rgba(255,255,255,.25);}
+.qopt.sel .qopt-bar-fill{background:#fff;}
+.qopt.sel .qopt-rec{background:#fff;color:var(--ink);}
 .qfree,.q-free input{width:100%;font-family:inherit;font-size:13.5px;color:var(--ink);background:var(--field);
   border:1.5px solid transparent;border-radius:11px;padding:11px 14px;transition:.14s;}
 .qfree::placeholder,.q-free input::placeholder{color:var(--ink-3);}

@@ -3050,6 +3050,10 @@ function renderClarifyBody(r, panel, pq) {
     // option click; if none is picked it stays '' (submit yields '' gracefully).
     const showFree = q.allowFreeText !== false;
 
+    // Confidence is rendered only when present and aligned to the filtered options.
+    const conf = Array.isArray(q.confidence) && q.confidence.length === opts.length ? q.confidence : null;
+    const recommended = conf ? q.recommended : null; // recommended only ever rides with confidence
+
     const optsWrap = document.createElement('div');
     optsWrap.className = 'qopts';
 
@@ -3061,25 +3065,57 @@ function renderClarifyBody(r, panel, pq) {
       free.placeholder = 'Or type your own answer…';
     }
 
-    opts.forEach((optText) => {
+    // One selection path for both user clicks and the recommended preselect:
+    // select this option, clear siblings + the free-text field, record the choice.
+    function selectOption(btn, optText) {
+      optsWrap.querySelectorAll('.qopt').forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('sel', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      if (free) { free.value = ''; free.classList.remove('has'); }
+      slot.choice = optText;
+    }
+
+    let recBtn = null;
+    opts.forEach((optText, oi) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'qopt';
       btn.setAttribute('aria-pressed', 'false');
-      btn.textContent = optText;
-      btn.addEventListener('click', () => {
-        // Select this option, clear siblings + the free-text field (if present).
-        optsWrap.querySelectorAll('.qopt').forEach((b) => {
-          const on = b === btn;
-          b.classList.toggle('sel', on);
-          b.setAttribute('aria-pressed', String(on));
-        });
-        if (free) {
-          free.value = '';
-          free.classList.remove('has');
+
+      const label = document.createElement('span');
+      label.className = 'qopt-label';
+      label.textContent = optText;
+      btn.appendChild(label);
+
+      if (conf) {
+        const pct = conf[oi];
+        const meta = document.createElement('span');
+        meta.className = 'qopt-meta';
+        if (recommended && optText === recommended) {
+          const badge = document.createElement('span');
+          badge.className = 'qopt-rec';
+          badge.textContent = 'Recommended';
+          meta.appendChild(badge);
         }
-        slot.choice = optText;
-      });
+        const pctEl = document.createElement('span');
+        pctEl.className = 'qopt-pct';
+        pctEl.textContent = `${pct}%`;
+        meta.appendChild(pctEl);
+        btn.appendChild(meta);
+
+        const bar = document.createElement('span');
+        bar.className = 'qopt-bar';
+        const fill = document.createElement('span');
+        fill.className = 'qopt-bar-fill';
+        fill.style.width = `${pct}%`;
+        bar.appendChild(fill);
+        btn.appendChild(bar);
+      }
+
+      btn.addEventListener('click', () => selectOption(btn, optText));
+      if (recommended && optText === recommended) recBtn = btn;
       optsWrap.appendChild(btn);
     });
     if (opts.length) block.appendChild(optsWrap);
@@ -3099,6 +3135,9 @@ function renderClarifyBody(r, panel, pq) {
       });
       block.appendChild(free);
     }
+
+    // Preselect the recommendation (mirrors a user click): empty submit takes it.
+    if (recBtn) selectOption(recBtn, recommended);
 
     panel.appendChild(block);
   });
