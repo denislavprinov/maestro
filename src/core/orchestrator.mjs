@@ -51,6 +51,7 @@ import { classifyError } from './recoverable-error.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { loadAgentRegistry, collectChannelDefs } from './agent-registry.mjs';
+import { collectRequiredSkills, validateSkills, injectSkills } from './skills.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
@@ -61,6 +62,7 @@ import {
  * Default location of the agent prompt markdown files, relative to this module.
  */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
+const REPO_ROOT = new URL('../../', import.meta.url).pathname; // maestro repo root; holds skills/
 
 /**
  * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
@@ -471,6 +473,27 @@ class Orchestrator extends EventEmitter {
       // 3c) Build the knowledge graph INSIDE each worktree so agents can query it.
       if (this.isWorkspace) await this._buildWorktreeGraphAll();
       else await this._buildWorktreeGraph();
+      this._checkAbort();
+
+      // 3d) Resolve, validate, and inject declared agent skills onto the worktree
+      //     scan path. Hard-fails the run BEFORE any node if a required skill is
+      //     unresolvable (built beside graphify's probe; does not touch it).
+      const requiredSkills = collectRequiredSkills(this.registry, plan);
+      if (requiredSkills.length) {
+        const skillCtx = { repoRoot: REPO_ROOT, projectDir: this.projectDir };
+        const resolvedSkills = validateSkills(requiredSkills, skillCtx); // throws => caught => run ends 'error'
+        // Inject ONLY into real isolated worktrees, never the main projectDir,
+        // so a copy can never pollute the user's working tree.
+        const candidates = this.isWorkspace ? [...this.workDirs.values()] : [this.workDir];
+        const worktrees = candidates.filter((d) => d && d !== this.projectDir);
+        const injected = await injectSkills(resolvedSkills, { worktrees });
+        if (injected.length) {
+          await appendAudit(
+            this.pipeline.dir,
+            `Skills: injected ${injected.join(', ')} into ${worktrees.length} worktree(s).`,
+          );
+        }
+      }
       this._checkAbort();
 
       // 4) (Clarify now runs as the first graph node — see _runClarifyNode.)

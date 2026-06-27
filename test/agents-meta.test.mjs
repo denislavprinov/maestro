@@ -88,6 +88,28 @@ test('every sidecar declares produces/consumes/connectsTo explicitly', async () 
   }
 });
 
+test('requiresSkills, when present, is an array of non-blank strings', async () => {
+  const files = (await readdir(AGENTS_DIR)).filter((x) => x.endsWith('.meta.json'));
+  for (const f of files) {
+    const m = JSON.parse(await readFile(join(AGENTS_DIR, f), 'utf8'));
+    if (m.requiresSkills === undefined) continue; // optional: absent is fine
+    assert.ok(Array.isArray(m.requiresSkills), `${f}: requiresSkills must be an array when present`);
+    for (const s of m.requiresSkills) {
+      assert.equal(typeof s, 'string', `${f}: requiresSkills entries must be strings`);
+      assert.ok(s.trim().length > 0, `${f}: requiresSkills entries must be non-blank`);
+    }
+  }
+});
+
+test('normalizeMeta exposes requiresSkills (defaulting to []) and filters junk', async () => {
+  const { normalizeMeta } = await import('../src/core/agent-registry.mjs');
+  assert.deepEqual(normalizeMeta({ key: 'a', order: 1 }).requiresSkills, []);
+  assert.deepEqual(
+    normalizeMeta({ key: 'b', order: 2, requiresSkills: ['imagegen', ' ', 3, ' x '] }).requiresSkills,
+    ['imagegen', 'x'],
+  );
+});
+
 test('M4: the two workspace agents are paired (md + sidecar) and scope:"workspace-only"', async () => {
   const { prompts } = await listAgents();
   const registry = loadAgentRegistry(AGENTS_DIR);
