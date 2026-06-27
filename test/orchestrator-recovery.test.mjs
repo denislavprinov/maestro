@@ -1,12 +1,14 @@
 // test/orchestrator-recovery.test.mjs — recoverable-error retry gate.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, mkdirSync } from 'node:fs';
+import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { readPipelineForResume, reconcileStaleRunning } from '../src/core/artifacts.mjs';
+import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
 process.env.MAESTRO_RECOVERY_BACKOFF_MS = '0'; // no real waiting in tests
@@ -161,4 +163,67 @@ test('serialized gate: two DISTINCT classes never open two prompts at once', asy
   assert.equal(b, 'retry');
   assert.equal(asks, 2, 'one prompt per distinct class');
   assert.equal(maxOpen, 1, 'prompts are serialized — only one open at a time');
+});
+
+// ── Feature 5: incremental boundary resume point ────────────────────────────────
+
+const okVerifierF5 = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
+
+test('done row has NULL resume_point (incremental writes cleared by done arm)', async () => {
+  const dir = gitDir();
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: okVerifierF5, verifier: okVerifierF5 },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done');
+  const saved = readPipelineForResume(orch.state.id);
+  assert.equal(saved.resumePoint, null, 'done row must have NULL resume_point');
+});
+
+test('crash -> reconcile -> resume continues from saved boundary to done', async () => {
+  const dir = gitDir();
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: okVerifierF5, verifier: okVerifierF5 },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done');
+  const id = orch.state.id;
+  const pDir = orch.state.pipelineDir;
+
+  // Forge a "crash": flip the finished row back to running with a dead PID and a
+  // synthetic boundary point at step 0 (re-run from step 0 is safe for a mock runner).
+  const point = {
+    version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+    bus: null, stepModels: null, workflowId: 'wf_default', plan: null,
+    nodes: [], gate: null, toolInstruction: '', pipelineDir: pDir,
+    pausedAt: new Date().toISOString(),
+  };
+  // Re-create the worktree dir so resume()'s existsSync check passes: in a real crash
+  // the worktree was never torn down, but our test ran to completion (teardown ran).
+  const savedRow = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(id);
+  const branchInfo = savedRow?.branch ? JSON.parse(savedRow.branch) : null;
+  if (branchInfo?.worktreeDir) mkdirSync(branchInfo.worktreeDir, { recursive: true });
+  getDb().prepare(
+    `UPDATE pipelines SET status='running', owner_pid=?, owner_host=?, heartbeat_at=?,
+     resume_point=? WHERE id=?`,
+  ).run(2 ** 31 - 1, hostname(), new Date().toISOString(), JSON.stringify(point), id);
+
+  // Reconcile: dead PID on THIS host → row flipped to 'interrupted', resume_point preserved.
+  const rec = reconcileStaleRunning({ host: hostname() });
+  assert.ok(rec.ids.includes(id), 'reaper must flip the row');
+  const after = readPipelineForResume(id);
+  assert.equal(after.row.status, 'interrupted');
+  assert.ok(after.resumePoint, 'resume_point preserved across reclassify');
+  assert.equal(after.resumePoint.kind, 'boundary');
+
+  // Resume (requires Feature 6 widening to accept 'interrupted').
+  const orch2 = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: okVerifierF5, verifier: okVerifierF5 },
+    resume: after,
+  });
+  const res2 = await orch2.resume();
+  assert.equal(res2.status, 'done');
 });

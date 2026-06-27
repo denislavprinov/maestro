@@ -536,14 +536,18 @@ async function cmdResume(argv) {
   const auto = argv.includes('--yes') || argv.includes('--non-interactive');
   if (mock) process.env.MAESTRO_MOCK = '1';
 
-  const { readPipelineForResume } = await import('../core/artifacts.mjs');
+  const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
+  try {
+    const { reconciled } = reconcileStaleRunning({ liveIds: [] }); // CLI owns no live runs
+    if (reconciled) process.stdout.write(`reaped ${reconciled} interrupted pipeline(s)\n`);
+  } catch { /* best-effort: resume still works if the sweep fails */ }
   const saved = readPipelineForResume(id);
   if (!saved) {
     process.stderr.write(`pipeline ${id} not found\n`);
     return 1;
   }
-  if (saved.row.status !== 'paused') {
-    process.stderr.write(`pipeline ${id} is "${saved.row.status}", not paused\n`);
+  if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
+    process.stderr.write(`pipeline ${id} is "${saved.row.status}", not resumable (paused/interrupted only)\n`);
     return 1;
   }
   if (!saved.resumePoint) {

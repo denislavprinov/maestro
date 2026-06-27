@@ -783,7 +783,7 @@ app.post('/api/resume', async (req, res) => {
     if (!pipelineId || typeof pipelineId !== 'string') return badRequest(res, 'pipelineId is required');
     const saved = readPipelineForResume(pipelineId);
     if (!saved) return res.status(404).json({ error: 'pipeline not found' });
-    if (saved.row.status !== 'paused') return badRequest(res, `pipeline is "${saved.row.status}", not paused`);
+    if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') return badRequest(res, `pipeline is "${saved.row.status}", not resumable`);
     if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
 
     // Double-resume guard: any live entry already driving this pipeline id.
