@@ -1,5 +1,6 @@
 {
   "key": "manualWebUiTesting",
+  "domain": "coding",
   "displayName": "Manual web UI testing",
   "description": "run manual cases via Playwright",
   "color": "violet",

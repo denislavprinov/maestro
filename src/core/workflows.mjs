@@ -22,6 +22,16 @@ import { slugify } from './artifacts.mjs';
  */
 const DEFAULT_MAX_CYCLES = 3;
 
+/** Local domain guard (mirrors agent-registry DOMAIN_RE). workflows.mjs deliberately
+ *  does not import the registry, so a one-line constant is cheaper than a new coupling.
+ *  Unlike the registry's normalizeDomain, this .trim()s — store input may carry
+ *  whitespace from a prompt. Absent/malformed → the VISIBLE 'general' default. */
+const DOMAIN_RE = /^[a-z][a-z0-9-]{0,31}$/;
+function normDomain(raw) {
+  const v = typeof raw === 'string' ? raw.trim() : '';
+  return DOMAIN_RE.test(v) ? v : 'general';
+}
+
 /** Default location of the agent prompt markdown files (mirrors orchestrator.mjs). */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
@@ -83,6 +93,7 @@ export const DEFAULT_WORKFLOW = Object.freeze({
   id: 'wf_default',
   name: 'Default',
   version: 1,
+  domain: 'coding',                         // built-in coding flow
   steps: [
     [{ id: 's_clarify', key: 'clarify' }],
     [{ id: 's0_0', key: 'planner' }],
@@ -120,6 +131,7 @@ function rowToTpl(r) {
     id: r.id,
     name: r.name,
     version: r.version,
+    domain: r.domain || 'general',          // pre-migration NULL → 'general'
     steps: parseArr(r.steps),
     feedbacks: parseArr(r.feedbacks),
     createdAt: r.created_at,
@@ -132,7 +144,7 @@ function readRaw(id) {
   if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
   getDb();
   const r = prepare(
-    'SELECT id, name, version, steps, feedbacks, created_at, updated_at FROM workflows WHERE id = ?'
+    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at FROM workflows WHERE id = ?'
   ).get(id);
   if (!r) return null;
   const tpl = rowToTpl(r);
@@ -152,6 +164,7 @@ export async function writeWorkflow(tpl) {
   const id = (tpl && typeof tpl.id === 'string' && tpl.id.trim()) || `wf_${slugify(name)}`;
   const steps = Array.isArray(tpl?.steps) ? tpl.steps : [];
   const feedbacks = Array.isArray(tpl?.feedbacks) ? tpl.feedbacks : [];
+  const domain = normDomain(tpl && tpl.domain);
 
   getDb();
   // Preserve the original createdAt if this id already exists (re-save).
@@ -163,16 +176,16 @@ export async function writeWorkflow(tpl) {
     (existing && existing.created_at) ||
     now;
 
-  const stored = { id, name, version: 1, steps, feedbacks, createdAt, updatedAt: now };
+  const stored = { id, name, version: 1, domain, steps, feedbacks, createdAt, updatedAt: now };
   tx(() => {
     prepare(`
-      INSERT INTO workflows (id, name, version, steps, feedbacks, created_at, updated_at)
-      VALUES (?, ?, 1, ?, ?, ?, ?)
+      INSERT INTO workflows (id, name, version, domain, steps, feedbacks, created_at, updated_at)
+      VALUES (?, ?, 1, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name, version = 1,
+        name = excluded.name, version = 1, domain = excluded.domain,
         steps = excluded.steps, feedbacks = excluded.feedbacks,
         updated_at = excluded.updated_at
-    `).run(id, name, JSON.stringify(steps), JSON.stringify(feedbacks), createdAt, now);
+    `).run(id, name, domain, JSON.stringify(steps), JSON.stringify(feedbacks), createdAt, now);
   });
   return stored;
 }
@@ -196,7 +209,7 @@ export async function readWorkflow(id) {
 export async function listWorkflows() {
   getDb();
   const rows = prepare(
-    'SELECT id, name, version, steps, feedbacks, created_at, updated_at FROM workflows ORDER BY created_at DESC, id'
+    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at FROM workflows ORDER BY created_at DESC, id'
   ).all();
   return rows.filter((r) => r.id !== DEFAULT_WORKFLOW.id).map(rowToTpl);
 }

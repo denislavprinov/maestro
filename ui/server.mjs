@@ -1630,6 +1630,7 @@ app.post('/api/workflows', async (req, res) => {
   // Build the candidate template from the editor payload (topology only).
   const tpl = {
     name: typeof body.name === 'string' ? body.name.trim() : '',
+    domain: typeof body.domain === 'string' ? body.domain : undefined, // writeWorkflow normDomain → 'general' if absent/blank/malformed
     steps: Array.isArray(body.steps) ? body.steps : [],
     feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
   };

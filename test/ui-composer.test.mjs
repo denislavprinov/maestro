@@ -159,8 +159,9 @@ test('saved list renders rows with meta line + chips; expand builds a read-only 
 
   const rows = window.document.querySelectorAll('#composer-saved-list .pl-item');
   assert.equal(rows.length, 2, 'Default + Quick Fix');
-  const quick = [...rows].find((r) => r.querySelector('.pl-name').textContent === 'Quick Fix');
+  const quick = [...rows].find((r) => r.querySelector('.pl-name').textContent.trim().startsWith('Quick Fix'));
   assert.ok(quick, 'Quick Fix row present');
+  assert.equal(quick.querySelector('.pl-domain').textContent, 'general', 'untagged workflow shows the general domain badge');
   assert.equal(quick.querySelector('.pl-meta').textContent.replace(/\s+/g, ' ').trim(), '3 steps · 3 agents · 1 feedback loop');
   assert.equal(quick.querySelectorAll('.pl-chip').length, 3, 'three distinct-agent chips');
 

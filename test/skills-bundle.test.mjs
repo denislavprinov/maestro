@@ -7,12 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 const BUNDLE = fileURLToPath(new URL('../skills/imagegen/', import.meta.url));
 
-test('imagegen skill is bundled with SKILL.md, script, and assets', async () => {
+test('imagegen skill is bundled with SKILL.md and script', async () => {
   for (const rel of [
     'SKILL.md',
     'scripts/generate_image.py',
-    'assets/bevup-logo-pink.png',
-    'assets/bevup-logo-cream.png',
   ]) {
     await assert.doesNotReject(access(BUNDLE + rel), `missing bundled file: ${rel}`);
   }

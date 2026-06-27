@@ -1,5 +1,6 @@
 {
   "key": "workspaceReviewer",
+  "domain": "shared",
   "displayName": "Workspace Review",
   "description": "fan-out per-project review, synthesize one verdict",
   "color": "blue",

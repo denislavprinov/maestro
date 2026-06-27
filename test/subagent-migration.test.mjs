@@ -54,6 +54,11 @@ const V1_PIPELINES = `
     PRIMARY KEY (pipeline_id, key),
     FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
   );
+  CREATE TABLE workflows (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+    steps TEXT NOT NULL DEFAULT '[]', feedbacks TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
 `;
 
 test('opening a user_version=1 DB forward-migrates to v2 (adds sub_agents + indexes)', () => {
@@ -70,7 +75,7 @@ test('opening a user_version=1 DB forward-migrates to v2 (adds sub_agents + inde
 
   // 2) Open through production getDb() — migrate() must run the v2 ladder step.
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8, 'forward-migrated to v8 (the v2 step added sub_agents)');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9, 'forward-migrated to v9 (the v2 step added sub_agents)');
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='sub_agents'").get().n,
     1, 'sub_agents table created by the v1->v2 migration');

@@ -1,5 +1,6 @@
 {
   "key": "planner",
+  "domain": "coding",
   "displayName": "Plan",
   "description": "architecture & breakdown",
   "color": "violet",

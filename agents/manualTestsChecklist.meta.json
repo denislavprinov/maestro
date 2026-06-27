@@ -1,5 +1,6 @@
 {
   "key": "manualTestsChecklist",
+  "domain": "coding",
   "displayName": "Manual Tests Checklist",
   "description": "draft manual test cases",
   "color": "blue",

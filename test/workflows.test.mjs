@@ -57,6 +57,33 @@ test('DEFAULT_WORKFLOW is the Plan->Refine->Implement->Review topology', () => {
   assert.deepEqual(ids, ['s_clarify', 's0_0', 's1_0', 's2_0', 's3_0']);
 });
 
+test('DEFAULT_WORKFLOW.domain === "coding"', () => {
+  assert.equal(DEFAULT_WORKFLOW.domain, 'coding');
+});
+
+test('writeWorkflow persists domain; readWorkflow round-trips; malformed/blank → general', async () => {
+  await freshHome();
+  await writeWorkflow({ id: 'wf_mk', name: 'Campaign', steps: [], feedbacks: [], domain: 'marketing' });
+  const got = await readWorkflow('wf_mk');          // exercises readRaw's OWN SELECT
+  assert.equal(got.domain, 'marketing');
+
+  await writeWorkflow({ id: 'wf_bad', name: 'X', steps: [], feedbacks: [], domain: 'Bad Domain!' });
+  assert.equal((await readWorkflow('wf_bad')).domain, 'general');
+
+  await writeWorkflow({ id: 'wf_none', name: 'Y', steps: [], feedbacks: [] });   // absent
+  assert.equal((await readWorkflow('wf_none')).domain, 'general');
+});
+
+test('pre-migration row reads back as general (COALESCE) via list + read', async () => {
+  await freshHome();
+  const db = getDb();
+  db.exec("INSERT INTO workflows (id,name,version,steps,feedbacks,created_at,updated_at) " +
+          "VALUES ('wf_old','Old',1,'[]','[]','1970-01-01T00:00:00.000Z','1970-01-01T00:00:00.000Z')");
+  const list = await listWorkflows();
+  assert.equal(list.find((w) => w.id === 'wf_old').domain, 'general');   // list path
+  assert.equal((await readWorkflow('wf_old')).domain, 'general');        // readRaw path
+});
+
 test('DEFAULT_WORKFLOW feedbacks reproduce the refine self-loop and review->implement loop', () => {
   // Two loops: refiner self-loop (s1_0 -> s1_0) and review -> implement (s3_0 -> s2_0).
   const fbs = DEFAULT_WORKFLOW.feedbacks;

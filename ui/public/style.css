@@ -1039,3 +1039,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* The base .path-row is scoped to .add-project; re-declare it for our modal. */
 .confirm-modal .path-row{display:flex;gap:9px;align-items:center;}
 .confirm-modal .path-row input{flex:1 1 auto;min-width:0;}
+
+/* ── domain tag: palette sections + filter chips, workflow badge + filter ── */
+.pal-chips{display:flex;flex-wrap:wrap;gap:6px;width:100%;margin-bottom:8px;}
+.pal-chip{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--line,#d8d8de);background:var(--card,#fff);cursor:pointer;text-transform:capitalize;}
+.pal-chip.off{opacity:.45;text-decoration:line-through;}
+.pal-section{width:100%;}
+.pal-section.collapsed .agent-pill,.pal-section.collapsed .pal-head{display:none;}
+.pal-head{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted,#8a8a92);margin:6px 0 4px;}
+.pl-domain{font-size:10px;padding:1px 6px;border-radius:999px;background:var(--chip,#eee);color:var(--muted,#777);text-transform:capitalize;vertical-align:middle;}
+.wf-filter{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
