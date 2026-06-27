@@ -2642,6 +2642,20 @@ function buildLogLine({ source, level, text, ts, sub }) {
 }
 
 // Per-run log: push to the model and, if the card is mounted, append the line.
+// Pin a card's log to the bottom when its auto-scroll switch is on. Used by both
+// the live stream (onLog) AND whenever the card's log first becomes visible
+// (hydration on build, reattach on focus) — a detached node reports
+// scrollHeight≈0, so the scroll set on build/stream is lost until the node is in
+// the document. Re-applying after paint closes that gap. No-op if the switch is
+// off or there is no log element.
+function maybeAutoscrollLog(r) {
+  if (!r || !r.el) return;
+  const logEl = r.el.querySelector('.log');
+  if (!logEl) return;
+  const sw = r.el.querySelector('.switch.autoscroll');
+  if (sw && sw.classList.contains('on')) logEl.scrollTop = logEl.scrollHeight;
+}
+
 function onLog(r, msg) {
   const text = msg.text;
   if (text === undefined || text === null) return;
@@ -2654,8 +2668,7 @@ function onLog(r, msg) {
     if (logEl) {
       logEl.appendChild(buildLogLine(rec));
       while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
-      const sw = r.el.querySelector('.switch.autoscroll');
-      if (sw && sw.classList.contains('on')) logEl.scrollTop = logEl.scrollHeight;
+      maybeAutoscrollLog(r);
     }
   }
 }
@@ -6861,6 +6874,10 @@ function paintRunList(list, rlist, emptyMsg) {
     if (!r.el || r.el.dataset.runId !== r.runId) r.el = buildRunCard(r);
     list.appendChild(r.el);   // appendChild MOVES existing nodes → enforces order
     paintRunCard(r);
+    // Card is now in the document → pin its log to the bottom (no-op if the
+    // auto-scroll switch is off). Covers fresh hydration + reattach, where a
+    // detached-node scrollTop set earlier was lost (scrollHeight≈0 off-DOM).
+    maybeAutoscrollLog(r);
   }
   [...list.children].forEach((c) => {
     if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
