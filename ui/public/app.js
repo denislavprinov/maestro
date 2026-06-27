@@ -6812,6 +6812,14 @@ function showView(name, param = '') {
   // Focus selection lives only while on the Running view.
   state.selectedRunId = (name === 'running') ? (param || '') : '';
 
+  // Sync hash so direct callers (beginRun, resume, boot) don't leave hash stale.
+  // Reconstruct the full hash (view + optional param) so a focused Running deep
+  // link (running/<id>) is preserved rather than collapsed to a bare view.
+  const targetHash = param ? `${name}/${param}` : name;
+  if (location.hash.slice(1) !== targetHash) {
+    syncingHash = true;
+    location.hash = targetHash;
+  }
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -6835,13 +6843,18 @@ function showView(name, param = '') {
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;
+// True only while showView() is writing location.hash itself, to prevent re-entry.
+let syncingHash = false;
 
 // Nav clicks only update the hash; the single hashchange listener drives
 // showView so each navigation runs it exactly once (no double /api/runs fetch).
 navLinks.forEach((a) =>
   a.addEventListener('click', (e) => {
     e.preventDefault();
-    location.hash = a.dataset.nav;
+    const name = a.dataset.nav;
+    // If hash already equals target, no hashchange fires — call showView directly.
+    if (location.hash.slice(1) === name) showView(name);
+    else location.hash = name;
   })
 );
 
@@ -6859,6 +6872,9 @@ $('#run-list')?.addEventListener('click', (e) => {
 });
 
 window.addEventListener('hashchange', () => {
+  // Swallow the hashchange that showView() itself produced (syncingHash) to keep
+  // the single-render guarantee; genuine user-driven hash changes still route normally.
+  if (syncingHash) { syncingHash = false; return; }
   const [view, param] = parseHash();
   if (VIEW_NAMES.includes(view)) showView(view, param);
 });
