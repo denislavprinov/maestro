@@ -7051,7 +7051,14 @@ function showView(name, param = '') {
   if (name === 'running') {
     renderRunningView();
     // Opening a run's focus view acknowledges it (linger → drops on next render).
-    if (state.selectedRunId) acknowledgeRun(state.selectedRunId);
+    // ONLY a finished run: opening a still-live run must NOT pre-acknowledge, or
+    // its later linger is suppressed (markLingering no-ops on acknowledged) and it
+    // skips Running straight into History. The acknowledge happens when the user
+    // opens the lingering row AFTER it finishes.
+    if (state.selectedRunId) {
+      const sr = runs.get(state.selectedRunId);
+      if (sr && (sr._finished || isTerminalStatus(sr.status))) acknowledgeRun(state.selectedRunId);
+    }
   }
   if (name === 'history') loadHistoryView();
   if (name === 'workspaces') loadWorkspacesView();

@@ -139,11 +139,12 @@ body{
    (violet=plan, peach=refine/review/running, blue=implement, red=clarify),
    grey-pulse=starting/pausing, green=done, red=error/stopped. */
 .child-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-.child-dot.peach  { background: var(--peach);  animation: pulse 1.3s ease-in-out infinite; }
-.child-dot.blue   { background: var(--blue);   animation: pulse 1.3s ease-in-out infinite; }
-.child-dot.violet { background: var(--violet); animation: pulse 1.3s ease-in-out infinite; }
-.child-dot.amber  { background: var(--amber);  animation: pulse 1.3s ease-in-out infinite; }
-.child-dot.grey-pulse { background: var(--ink-3); animation: pulse 1.3s ease-in-out infinite; }
+/* Running states: colour + scale/halo pulse (currentColor drives the halo hue). */
+.child-dot.peach  { color: var(--peach);  background: currentColor; animation: dotpulse 1.3s ease-in-out infinite; }
+.child-dot.blue   { color: var(--blue);   background: currentColor; animation: dotpulse 1.3s ease-in-out infinite; }
+.child-dot.violet { color: var(--violet); background: currentColor; animation: dotpulse 1.3s ease-in-out infinite; }
+.child-dot.amber  { color: var(--amber);  background: currentColor; animation: dotpulse 1.3s ease-in-out infinite; }
+.child-dot.grey-pulse { color: var(--ink-3); background: currentColor; animation: dotpulse 1.3s ease-in-out infinite; }
 .child-dot.green { background: var(--green); }
 .child-dot.red   { background: var(--red); }
 
@@ -417,6 +418,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pill-run.green{background:var(--green-bg);color:var(--green-ink);} .pill-run.green .pdot{background:var(--green);}
 .pill-run.red{background:var(--red-bg);color:var(--red-ink);} .pill-run.red .pdot{background:var(--red);}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+/* Stronger "alive" pulse for the leading run dots: scale + expanding halo so a
+   live run reads as actively working, not a faint blink. currentColor halo so
+   each colour variant glows in its own hue. */
+@keyframes dotpulse{
+  0%{transform:scale(1);box-shadow:0 0 0 0 color-mix(in srgb, currentColor 55%, transparent);}
+  70%{transform:scale(1.18);box-shadow:0 0 0 5px color-mix(in srgb, currentColor 0%, transparent);}
+  100%{transform:scale(1);box-shadow:0 0 0 0 color-mix(in srgb, currentColor 0%, transparent);}
+}
 
 /* empty state for the running list */
 .run-empty{color:var(--ink-3);padding:24px;text-align:center;}
@@ -571,7 +580,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce){
-  .pdot,.cur{animation:none;}
+  .pdot,.cur,.child-dot,.child-q{animation:none;}
   *{transition:none !important;}
 }
 

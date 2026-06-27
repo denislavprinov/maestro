@@ -80,6 +80,20 @@ test('a run finishing live lingers as a greyed child row, then drops once opened
   assert.equal(row, null, 'acknowledged run drops from tabs');
 });
 
+// Regression: watching a run LIVE (focus view open) must not pre-acknowledge it.
+// Opening a still-running run used to call acknowledgeRun, which made the later
+// markLingering a no-op so the finished run skipped Running straight into History.
+test('opening a run while LIVE does not suppress its later linger', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [live('auth-fix')] });
+  window.location.hash = 'running/auth-fix';                        // open while still running
+  window.dispatchEvent(new window.Event('hashchange'));
+  recv({ type: 'done', runId: 'auth-fix', status: 'done' });        // finishes LIVE, focus drops
+  const row = window.document.querySelector('#nav-running-children .nav-child[data-child-run-id="auth-fix"]');
+  assert.ok(row, 'finished run still lingers in Running (not acknowledged by live-open)');
+  assert.ok(row.classList.contains('lingering'));
+});
+
 test('a run finishing live shows a static green "●" end marker (done)', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix')] });
