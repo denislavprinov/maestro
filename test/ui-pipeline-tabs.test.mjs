@@ -80,6 +80,28 @@ test('a run finishing live lingers as a greyed child row, then drops once opened
   assert.equal(row, null, 'acknowledged run drops from tabs');
 });
 
+test('a run finishing live shows a static green "●" end marker (done)', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [live('auth-fix')] });
+  recv({ type: 'done', runId: 'auth-fix', status: 'done' });
+  const m = window.document.querySelector('#nav-running-children .nav-child .child-q');
+  assert.ok(m, 'finished marker present');
+  assert.equal(m.textContent, '●');
+  assert.ok(m.classList.contains('ok'), 'green (ok) marker for done');
+  assert.equal(m.classList.contains('bad'), false);
+});
+
+test('a run failing live shows a static red "●" end marker (error/stopped)', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [live('auth-fix')] });
+  recv({ type: 'done', runId: 'auth-fix', status: 'error' });
+  const m = window.document.querySelector('#nav-running-children .nav-child .child-q');
+  assert.ok(m, 'finished marker present');
+  assert.equal(m.textContent, '●');
+  assert.ok(m.classList.contains('bad'), 'red (bad) marker for error');
+  assert.equal(m.classList.contains('ok'), false);
+});
+
 test('seed-on-first-hello: a pre-existing terminal run is NOT a lingerer', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('old-done', { status: 'done' })] });

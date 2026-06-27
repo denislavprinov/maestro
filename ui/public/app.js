@@ -6955,13 +6955,25 @@ function renderPipelineTabs() {
     body.append(title, hint);
     row.append(dot, body);
 
-    // Awaiting-input marker: a pulsing yellow "?" pinned at the end of the row.
+    // End-of-row marker (same slot, three mutually exclusive states):
+    //  - pending input  → pulsing amber "?"   (needs your answer)
+    //  - finished done   → static green "●"    (completed, unseen)
+    //  - finished failed → static red "●"      (error/stopped, unseen)
+    // The green/red marker persists until the run is acknowledged (opened), at
+    // which point isLingering() goes false and the row leaves the list entirely.
     if (r.pendingQuestion != null) {
       const q = document.createElement('span');
       q.className = 'child-q';
       q.textContent = '?';
       q.title = 'Waiting for your input';
       row.appendChild(q);
+    } else if (r._finished || isTerminalStatus(r.status)) {
+      const ok = r.status === 'done';
+      const m = document.createElement('span');
+      m.className = `child-q ${ok ? 'ok' : 'bad'}`;
+      m.textContent = '●';
+      m.title = ok ? 'Completed' : 'Did not complete';
+      row.appendChild(m);
     }
     row.addEventListener('click', (e) => { e.preventDefault(); location.hash = `running/${r.runId}`; });
     host.appendChild(row);

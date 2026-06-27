@@ -153,6 +153,9 @@ body{
   color: var(--amber); font-weight: 800; font-size: 15px; line-height: 1;
   animation: pulse 1.3s ease-in-out infinite;
 }
+/* Finished-but-unseen marker: static green/red "●" in the same end slot (no pulse). */
+.child-q.ok  { color: var(--green); font-size: 12px; animation: none; }
+.child-q.bad { color: var(--red);   font-size: 12px; animation: none; }
 
 /* Overview cards are clickable to focus */
 #run-list .run-card .run-top { cursor: pointer; }
