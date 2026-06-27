@@ -192,6 +192,9 @@ export function normalizeMeta(raw) {
     promptHints: typeof raw.promptHints === 'string' ? raw.promptHints : '',
     version: typeof raw.version === 'string' || typeof raw.version === 'number' ? String(raw.version) : '1',
     channelDefs: normalizeChannelDefs(raw.channelDefs, key),
+    requiresSkills: Array.isArray(raw.requiresSkills)
+      ? raw.requiresSkills.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
+      : [],
   };
 }
 
