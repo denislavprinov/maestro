@@ -413,7 +413,7 @@ async function attachAndDrive(orch, flags, start) {
   if (result?.status === 'done') {
     out(c('green', c('bold', 'Pipeline complete.')));
   } else if (result?.status === 'paused') {
-    out(c('yellow', 'Pipeline paused.'));
+    out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
     out(`Resume with: ${c('bold', `maestro resume ${orch.state.id}`)}`);
   } else if (result?.status === 'stopped') {
     out(c('yellow', 'Pipeline stopped.'));

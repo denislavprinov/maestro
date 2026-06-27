@@ -189,6 +189,7 @@ class Orchestrator extends EventEmitter {
     this.abort = new AbortController();
     this.pauseRequested = false;
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
+    this.pauseReason = null;                 // set when a session/usage limit forces the pause
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
@@ -1456,6 +1457,16 @@ class Orchestrator extends EventEmitter {
           if (isAbort(err) || isPause(err)) throw err;
           const cls = classifyError(err);
           if (!cls) throw err;                    // not recoverable -> today's path
+          if (cls === 'usage_limit') {
+            // A session/usage cap that only clears after a multi-hour reset.
+            // Retrying is futile and would burn the backoff budget then FAIL the
+            // run (discarding worktree work). Pause the whole run instead so the
+            // user resumes after the reset. pause() aborts in-flight siblings and
+            // the unwind persists a resume point (the same path as a manual pause).
+            this._pauseForLimit(node, err);
+            endMark = 'paused';
+            throw pauseErr();
+          }
           const decision = await this._recover({ node, cls, err, attempt });
           if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
           this._nodeStep(node, stepIndex, cycle, 'start'); // node back to running for the retry
@@ -1492,6 +1503,19 @@ class Orchestrator extends EventEmitter {
       }
       throw err;
     }
+  }
+
+  /** Pause the whole run because a node hit a session/usage cap that only clears
+   *  after a long reset. Records the cap message (surfaced on the paused row /
+   *  audit) and signals a graceful pause; the caller throws pauseErr() to unwind
+   *  this node, and pause() aborts the in-flight siblings. Idempotent: the first
+   *  limit-hit among parallel siblings wins, the rest no-op. */
+  _pauseForLimit(node, err) {
+    const reason = firstLine(err?.message || String(err));
+    if (!this.pauseReason) this.pauseReason = reason;
+    this._log(node.key, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`);
+    appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${node.key} — ${reason}. Resume after the reset.`).catch(() => {});
+    this.pause();
   }
 
   /** Decide how to recover from a classified error. Auto mode: bounded backoff
@@ -2577,9 +2601,11 @@ class Orchestrator extends EventEmitter {
   async _completePaused() {
     this._setStatus('paused');
     await this._persist();
-    await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
-    this._emit('done', { status: 'paused', pipelineDir: this.pipeline.dir });
-    return { status: 'paused', pipelineDir: this.pipeline.dir };
+    // A plain manual pause has no reason; only a limit-pause records one (audited
+    // already at the pause site, so don't double-log it here).
+    if (!this.pauseReason) await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
+    this._emit('done', { status: 'paused', pipelineDir: this.pipeline.dir, reason: this.pauseReason || null });
+    return { status: 'paused', pipelineDir: this.pipeline.dir, reason: this.pauseReason || null };
   }
 }
 

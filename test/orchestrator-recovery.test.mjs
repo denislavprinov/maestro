@@ -19,6 +19,7 @@ function gitDir() {
 
 const AUTH_ERR = () => new Error('claude exited with code 1: Failed to authenticate. API Error: 401 Invalid authentication credentials');
 const NET_ERR = () => new Error('request to https://api.anthropic.com failed, reason: ECONNRESET');
+const LIMIT_ERR = () => new Error("claude exited with code 1: You've hit your session limit · resets 6pm (Europe/Sofia)");
 const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
 
 // Producer that throws an auth error on its FIRST call, then succeeds.
@@ -86,6 +87,40 @@ test('auto: bounded retry then fail when the error never clears', async () => {
   assert.equal(res.status, 'error');
   // First producer node: 1 initial + RECOVERY_MAX_AUTO_ATTEMPTS retries = 4 calls.
   assert.equal(calls, 4);
+});
+
+test('auto: session-limit pauses the run (not error) and is resumable', async () => {
+  const dir = gitDir();
+  let calls = 0;
+  const limit = async () => { calls++; throw LIMIT_ERR(); };
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: limit, verifier: okVerifier },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.match(res.reason || '', /session limit/i);
+  assert.equal(calls, 1, 'a usage cap is NOT retried — it pauses on the first hit');
+});
+
+test('interactive: session-limit pauses WITHOUT opening a recovery prompt', async () => {
+  const dir = gitDir();
+  let orch;
+  let recoveryAsks = 0;
+  orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: false, claude: { mock: true },
+    runners: { producer: async () => { throw LIMIT_ERR(); }, verifier: okVerifier },
+  });
+  // Answer clarify normally; a usage cap must NEVER reach a recovery prompt.
+  orch.on('question', ({ id, kind, questions }) => {
+    if (kind === 'recovery') { recoveryAsks++; return; }
+    queueMicrotask(() => orch.answer(id, {
+      answers: (questions || []).map((q) => ({ id: q.id, choice: (q.options || ['auto'])[0] })),
+    }));
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.equal(recoveryAsks, 0, 'no retry/abort prompt — a usage cap always pauses');
 });
 
 test('shared gate: two concurrent recoveries of one class open ONE prompt', async () => {
