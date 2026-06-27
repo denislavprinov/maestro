@@ -86,6 +86,42 @@ body{
 .nav-count.n-grey{background:var(--field);color:var(--ink-3);}
 .nav a.active .nav-count{background:rgba(255,255,255,.18);color:#fff;}
 
+/* Parent roll-up "needs you" dot on the Running nav item (sidebar + topnav) */
+.nav-rollup {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--amber); margin-left: 6px; flex: 0 0 auto;
+  animation: pulse 1.3s ease-in-out infinite;
+}
+.nav a.active .nav-rollup { background: #fff; }
+
+/* Child pipeline rows nested under Running */
+.nav-children { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 0; }
+.nav-children.hidden, .nav-children.collapsed { display: none; }
+.nav-child {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px 6px 26px; border-radius: 9px;
+  color: var(--ink-2); text-decoration: none; font-size: 13px; font-weight: 600;
+  min-width: 0;
+}
+.nav-child:hover { background: var(--field); color: var(--ink); }
+.nav-child.active { background: var(--ink); color: #fff; }
+.nav-child.lingering { color: var(--ink-3); }   /* greyed finished-unread */
+.child-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.child-proj  { flex: 0 0 auto; font-size: 11px; font-weight: 500; color: var(--ink-3); }
+.nav-child.active .child-proj { color: rgba(255,255,255,.7); }
+
+/* Status dot (left). amber=needs input, blue=running, grey-pulse=starting/pausing,
+   green=done, red=error/stopped. */
+.child-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.child-dot.amber { background: var(--amber); animation: pulse 1.3s ease-in-out infinite; }
+.child-dot.blue  { background: var(--blue);  animation: pulse 1.3s ease-in-out infinite; }
+.child-dot.grey-pulse { background: var(--ink-3); animation: pulse 1.3s ease-in-out infinite; }
+.child-dot.green { background: var(--green); }
+.child-dot.red   { background: var(--red); }
+
+/* Overview cards are clickable to focus */
+#run-list .run-card .run-top { cursor: pointer; }
+
 .side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
 .side-project .sp-label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;
   text-transform:uppercase;color:var(--ink-3);margin:0 4px 8px;}

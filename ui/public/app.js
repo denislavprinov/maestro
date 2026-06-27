@@ -9,6 +9,7 @@ const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel
 const state = {
   ws: null,
   wsReady: false,
+  selectedRunId: '',   // focused pipeline for #running/<runId>; '' === Overview (transient, not persisted)
   helloSubscribed: new Set(), // runIds we've already sent a backfill subscribe for this socket
   projectDir: '',
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
@@ -369,6 +370,8 @@ function handleServerMessage(msg) {
       break;
   }
 
+  r.lastActivityAt = Date.now();   // recency for ordering
+
   updateNavCounts();
   // If the user is already on the Running view, build/repaint cards now.
   // Without this, a run this tab didn't start (begun in another tab or via the
@@ -376,6 +379,7 @@ function handleServerMessage(msg) {
   // later runs purely as tagged events) would bump the nav badge but never
   // render a card until the user navigated away and back. renderRunningView
   // diffs by data-run-id and reuses r.el, so this is cheap + idempotent.
+  renderPipelineTabs();            // keep sidebar child rows + roll-up live from ANY view
   if (currentView() === 'running') renderRunningView();
 }
 
@@ -385,6 +389,17 @@ function handleServerMessage(msg) {
 function onHello(msg) {
   const ws = state.ws;
   const list = Array.isArray(msg.runs) ? msg.runs : [];
+
+  if (!helloSeeded) {
+    helloSeeded = true;
+    for (const r0 of list) {
+      if (!r0 || !r0.runId) continue;
+      const terminal = isTerminalStatus(r0.status) && !r0.pendingQuestion;
+      if (terminal && !lingering.has(r0.runId)) acknowledged.add(r0.runId);
+    }
+    persistIdSet(ACK_RUNS_KEY, acknowledged);
+  }
+
   for (const r0 of list) {
     if (!r0 || !r0.runId) continue;
     const rr = upsertRun({
@@ -394,6 +409,9 @@ function onHello(msg) {
       status: r0.status,
       startedAt: r0.startedAt,
       pendingQuestion: r0.pendingQuestion || null,
+      kind: r0.kind || 'run',
+      pipelineId: r0.pipelineId || null,
+      workspaceId: r0.workspaceId || undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real (s0_0-keyed) nodes BEFORE any subagent delta paints
@@ -430,9 +448,14 @@ function onHello(msg) {
   historyBooted = true;
 }
 
+function parseHash() {
+  const raw = location.hash.slice(1);
+  const i = raw.indexOf('/');
+  return i === -1 ? [raw, ''] : [raw.slice(0, i), raw.slice(i + 1)];
+}
 function currentView() {
-  const h = location.hash.slice(1);
-  return VIEW_NAMES.includes(h) ? h : 'new';
+  const [view] = parseHash();
+  return VIEW_NAMES.includes(view) ? view : 'new';
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +799,11 @@ function nowHMS() {
   return d.toTimeString().slice(0, 8);
 }
 
-function makeRun({ runId, title, projectDir, status = 'running', startedAt, local = false, pendingQuestion = null }) {
+function makeRun({
+  runId, title, projectDir, status = 'running', startedAt, local = false,
+  pendingQuestion = null, kind = 'run', pipelineId = null,
+  workspaceId = undefined, workspaceName = undefined,
+}) {
   return {
     runId,
     title: title || '(untitled)',
@@ -784,6 +811,11 @@ function makeRun({ runId, title, projectDir, status = 'running', startedAt, loca
     status,
     startedAt: startedAt || nowHMS(),
     local,
+    kind,                 // 'run' | 'workspace-run' | 'scan' | 'agentgen' (only first two get tabs)
+    pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
+    workspaceId,
+    workspaceName,
+    lastActivityAt: Date.now(),  // recency for tab/overview ordering (bumped on every tagged event)
     stepper: null,        // run's own stepper manifest (from 'state'); null => legacy default
     nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
     nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
@@ -2972,6 +3004,7 @@ function finishRun(r, status) {
   r.status = status;
   r.pendingQuestion = null;
   r._answering = false;
+  r.lastActivityAt = Date.now();
 
   // Clear the card's qpanel + attention before it drops out.
   if (r.el) {
@@ -2980,18 +3013,28 @@ function finishRun(r, status) {
     paintStepper(r);
   }
 
+  // Orchestration pipeline finishing LIVE → it lingers (greyed) until opened once.
+  const willLinger = isPipelineRun(r);
+  if (willLinger) markLingering(r.runId);  // no-op if already acknowledged
+
+  // Q&A #5: if the user is staring at THIS run's focus tab, drop them to Overview.
+  if (state.selectedRunId === r.runId) {
+    state.selectedRunId = '';
+    if (location.hash.slice(1) !== 'running') location.hash = 'running'; // → hashchange → Overview
+  }
+
   // Card drops out of the live view (liveRuns excludes terminal statuses).
-  renderRunningView();
+  renderRunningView();   // Overview keeps the greyed lingerer; reconcile rebuilds if needed
   updateNavCounts();
+  renderPipelineTabs();
   // History is machine-wide + decoupled from the project picker now; if the user
   // is looking at it, force-refetch so the just-finished pipeline surfaces with no
   // stale-cache flash (and re-triggers Phase-2 PR enrichment).
   if (currentView() === 'history') loadHistoryView({ force: true });
 
-  // Client-evict heavy fields; keep the model so a stray duplicate event/hello
-  // re-upserts onto the (already _finished) model rather than a fresh one.
-  r.logLines = [];
-  r.el = null;
+  // Evict heavy fields ONLY for non-lingerers; lingerers keep el/logLines so the
+  // card persists without a duplicate (paintRunList tolerates either case).
+  if (!willLinger) { r.logLines = []; r.el = null; }
 }
 
 function onDone(r, msg) {
@@ -3110,6 +3153,43 @@ async function collectExtras() {
 // Project registry: dropdown + inline add-form + delete.
 // ---------------------------------------------------------------------------
 const LAST_PROJECT_KEY = 'maestro.lastProject';
+
+// --- Pipeline-tab lifecycle state (client-only; see plan §2 fact 2) ---
+const ACK_RUNS_KEY = 'maestro.ackRuns';        // runIds the user has seen post-finish
+const LINGER_RUNS_KEY = 'maestro.lingerRuns';  // runIds that finished LIVE and are not yet acknowledged
+
+function loadIdSet(key) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || '[]');
+    return new Set(Array.isArray(v) ? v : []);
+  } catch { return new Set(); }
+}
+const acknowledged = loadIdSet(ACK_RUNS_KEY);
+const lingering = loadIdSet(LINGER_RUNS_KEY);
+
+function persistIdSet(key, set) {
+  try { localStorage.setItem(key, JSON.stringify([...set])); } catch { /* private mode */ }
+}
+
+// First `hello` of THIS session guard (Step 7). Not reset on reconnect.
+let helloSeeded = false;
+
+function markLingering(runId) {
+  if (!runId || acknowledged.has(runId) || lingering.has(runId)) return;
+  lingering.add(runId);
+  persistIdSet(LINGER_RUNS_KEY, lingering);
+}
+
+function acknowledgeRun(runId) {
+  if (!runId || acknowledged.has(runId)) return;
+  acknowledged.add(runId);
+  persistIdSet(ACK_RUNS_KEY, acknowledged);
+  if (lingering.delete(runId)) persistIdSet(LINGER_RUNS_KEY, lingering);
+  // Drop the now-acknowledged row from tabs + Overview; History will now surface it.
+  renderPipelineTabs();
+  if (currentView() === 'running' && !state.selectedRunId) renderRunningView();
+  if (currentView() === 'history') renderHistory();
+}
 
 function selectedProjectPath() {
   const v = el.projectSelect.value;
@@ -4884,6 +4964,7 @@ function beginRun(runId, projectDir, title, opts = {}) {
     projectDir: projectDir || '',
     status: 'starting',
     local: true,
+    kind: opts.workspaceId ? 'workspace-run' : 'run',
     workspaceId: opts.workspaceId || undefined,
     workspaceName: opts.workspaceName || undefined,
   });
@@ -5362,8 +5443,18 @@ function renderHistory() {
   const host = el.history;
   host.innerHTML = '';
   const all = Array.isArray(state.historyAll) ? state.historyAll : [];
+
+  // Q&A #2: a finished-but-unacknowledged pipeline lives ONLY as a Running child
+  // row; suppress it from History until acknowledged.
+  const lingerPids = new Set(
+    [...runs.values()]
+      .filter((r) => isLingering(r) && r.pipelineId)
+      .map((r) => r.pipelineId)
+  );
+  const visible = lingerPids.size ? all.filter((p) => !lingerPids.has(p.id)) : all;
+
   const filter = state.historyFilter;
-  const records = filter ? all.filter((p) => p && p.projectKey === filter) : all;
+  const records = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
 
   // Sidebar count is the TOTAL across all projects, independent of the in-view project
   // filter (product decision): a filter pill changes the list, not the badge. `all` is
@@ -6083,6 +6174,61 @@ function liveRuns() {
   );
 }
 
+// Orchestration pipelines only (Q&A #1). 'run' covers a missing kind (server default).
+function isPipelineRun(r) {
+  return r.kind === 'run' || r.kind === 'workspace-run' || r.kind == null;
+}
+
+// Single source of truth for "is this run live". liveRuns() keeps its own inline
+// copy for the badge; keep the two predicates identical if either changes.
+function isLive(r) {
+  return !r._finished && !isTerminalStatus(r.status) &&
+    (r.status === 'starting' || r.status === 'running' || r.status === 'pausing' || r.pendingQuestion != null);
+}
+
+// A finished PIPELINE lingers iff it finished live (in `lingering`) and is unacknowledged.
+function isLingering(r) {
+  return isPipelineRun(r) && !isLive(r) && lingering.has(r.runId) && !acknowledged.has(r.runId);
+}
+
+// Drives child tabs + the roll-up dot (pipeline-only, Q&A #1).
+function pipelineTabRuns() {
+  return [...runs.values()]
+    .filter((r) => isPipelineRun(r) && (isLive(r) || isLingering(r)))
+    .sort(cmpTabRuns);
+}
+
+// Drives the Overview #run-list. KIND-AGNOSTIC for live runs (preserves today's
+// behavior: live scans/agentgen/workspace-runs still render as cards — Q&A #3),
+// PLUS lingering pipelines (the new linger feature). Deduped via the Map values
+// being unique objects; sorted by the same group ordering.
+function overviewRuns() {
+  return [...runs.values()]
+    .filter((r) => isLive(r) || isLingering(r))
+    .sort(cmpTabRuns);
+}
+
+// Ordering (spec): needs-attention → running/starting → finished-unread;
+// most-recently-active first within a group.
+function tabGroupRank(r) {
+  if (r.pendingQuestion != null) return 0;
+  if (isLive(r)) return 1;
+  return 2; // lingering finished
+}
+function cmpTabRuns(a, b) {
+  const g = tabGroupRank(a) - tabGroupRank(b);
+  if (g) return g;
+  return (b.lastActivityAt || 0) - (a.lastActivityAt || 0);
+}
+
+// Status dot family for a child row (left edge). Reuses existing color tokens.
+function runDotClass(r) {
+  if (r.pendingQuestion != null) return 'amber';
+  if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
+  if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
+  return 'blue'; // running
+}
+
 // Project basename for display (e.g. "/a/b/proj" -> "proj").
 function projectName(dir) {
   if (!dir) return '(no project)';
@@ -6476,52 +6622,54 @@ function questionCount(pq) {
 }
 
 function renderRunningView() {
-  const list = $('#run-list');
-  if (!list) return;
-  const live = liveRuns();
-  // The empty-state placeholder below (set via list.innerHTML) carries no data-run-id,
-  // so the stale-card cleanup loop won't remove it. Drop it up front whenever runs
-  // exist, else it lingers ABOVE the live cards on a 0 -> 1 transition. renderRunningView
-  // re-runs on every run frame and on hello, so this covers this-tab, other-tab, and
-  // reconnect starts.
-  if (live.length > 0) {
-    const stale = list.querySelector('.run-empty');
-    if (stale) stale.remove();
+  if (state.selectedRunId) return renderFocusView(state.selectedRunId);
+  renderOverview();
+}
+
+// Shared #run-list reconcile. Builds/reuses one card per run, orders to match,
+// removes stale cards. Tolerates r.el === null (finishRun evicts non-lingerers,
+// and buildRunCard only sets r.el when pendingQuestion != null — app.js:6075).
+// buildRunCard RETURNS the node; assign its return to r.el.
+function paintRunList(list, rlist, emptyMsg) {
+  if (rlist.length) {
+    const empty = list.querySelector('.run-empty');
+    if (empty) empty.remove();
   }
   const seen = new Set();
-
-  for (const r of live) {
+  for (const r of rlist) {
     seen.add(r.runId);
-    if (!r.el) {
-      r.el = buildRunCard(r);
-      list.append(r.el);
-    }
+    if (!r.el || r.el.dataset.runId !== r.runId) r.el = buildRunCard(r);
+    list.appendChild(r.el);   // appendChild MOVES existing nodes → enforces order
     paintRunCard(r);
   }
-
-  // Remove cards whose run is no longer live.
   [...list.children].forEach((c) => {
     if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
   });
+  if (!rlist.length) list.innerHTML = `<div class="run-empty">${emptyMsg}</div>`;
+}
 
-  // Empty state.
-  if (live.length === 0) {
-    list.innerHTML = '<div class="run-empty">No pipelines running — start one from New.</div>';
-  }
+function renderOverview() {
+  const list = $('#run-list');
+  if (!list) return;
+  const rows = overviewRuns();
+  // Overview is kind-agnostic (live scans/agentgen included), so the empty copy
+  // must not claim "pipelines" specifically.
+  paintRunList(list, rows, 'No active runs — start one from New.');
 
-  // Header counts.
+  // "N pipelines executing" counts LIVE PIPELINES (the sub-text is pipeline-framed);
+  // "needs input" counts live runs with a pending question.
+  const live = rows.filter(isLive);
+  const livePipes = live.filter(isPipelineRun);
   const needs = live.filter((r) => r.pendingQuestion).length;
   const sub = $('#running-sub');
-  if (sub) {
-    sub.textContent =
-      `${live.length} pipeline${live.length === 1 ? '' : 's'} executing · ${needs} need${needs === 1 ? 's' : ''} your input`;
-  }
+  if (sub) sub.textContent =
+    `${livePipes.length} pipeline${livePipes.length === 1 ? '' : 's'} executing · ${needs} need${needs === 1 ? 's' : ''} your input`;
   const pill = $('#running-status-pill');
   if (pill) {
     pill.classList.toggle('hidden', needs === 0);
-    const txt = pill.querySelector('.pill-text');
     const label = `${needs} need${needs === 1 ? 's' : ''} input`;
-    if (txt) txt.textContent = label;
+    const txt = pill.querySelector('.pill-text');
+    if (txt) { txt.textContent = label; }
     else {
       // Preserve a leading .pdot if present; replace only the trailing text.
       const dot = pill.querySelector('.pdot');
@@ -6529,6 +6677,61 @@ function renderRunningView() {
       if (dot) pill.appendChild(dot);
       pill.append(document.createTextNode(' ' + label));
     }
+  }
+}
+
+function renderFocusView(runId) {
+  const list = $('#run-list');
+  if (!list) return;
+  const r = runs.get(runId);
+  // Unknown run (bad deep-link / never existed) → bounce to Overview.
+  if (!r) { location.hash = 'running'; return; }
+  paintRunList(list, [r], 'Run not found.');   // others hidden — the core "separate visually" fix
+}
+
+let runningCollapsed = false; // in-memory only; auto-expanded whenever ≥1 child exists
+
+function renderPipelineTabs() {
+  const rows = pipelineTabRuns();
+
+  // Roll-up amber dot = ANY child needs input. Visible from every view.
+  const needs = rows.some((r) => r.pendingQuestion != null);
+  for (const id of ['#nav-running-rollup', '#topnav-running-rollup']) {
+    const dot = $(id); if (dot) dot.hidden = !needs;
+  }
+
+  const host = $('#nav-running-children');
+  if (!host) return;
+  if (rows.length === 0) { host.innerHTML = ''; host.classList.add('hidden'); return; }
+
+  host.classList.remove('hidden');
+  host.classList.toggle('collapsed', runningCollapsed);  // auto-expanded: default false
+  host.innerHTML = '';
+  for (const r of rows) {
+    const row = document.createElement('a');
+    row.className = 'nav-child';
+    row.href = `#running/${r.runId}`;
+    // NB: a distinct dataset key (NOT data-run-id) — `data-run-id` is the run-card's
+    // unique identifier queried unscoped across the suite; reusing it here would make
+    // a child row shadow its card in document-order lookups.
+    row.dataset.childRunId = r.runId;
+    row.classList.toggle('active', r.runId === state.selectedRunId);
+    if (isLingering(r)) row.classList.add('lingering'); // greyed
+
+    const dot = document.createElement('span');
+    dot.className = `child-dot ${runDotClass(r)}`;
+
+    const title = document.createElement('span');
+    title.className = 'child-title';
+    title.textContent = r.title;
+
+    const hint = document.createElement('span');
+    hint.className = 'child-proj';
+    hint.textContent = projectName(r.projectDir);
+
+    row.append(dot, title, hint);
+    row.addEventListener('click', (e) => { e.preventDefault(); location.hash = `running/${r.runId}`; });
+    host.appendChild(row);
   }
 }
 
@@ -6545,6 +6748,7 @@ function updateNavCounts() {
 // each *-changed broadcast) without drift. Never throws.
 async function refreshAllCounts() {
   updateNavCounts();                                     // Running (in-memory, synchronous)
+  renderPipelineTabs();   // sidebar tabs + roll-up update on every view switch / hello / broadcast
   let data;
   try {
     const res = await fetch('/api/counts');
@@ -6567,7 +6771,7 @@ const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
-function showView(name) {
+function showView(name, param = '') {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
   // scan + resets wizard state (addresses orphaned-background-request risk).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
@@ -6580,6 +6784,10 @@ function showView(name) {
     resetAgentWizard();
   }
   currentShownView = name;
+
+  // Focus selection lives only while on the Running view.
+  state.selectedRunId = (name === 'running') ? (param || '') : '';
+
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -6587,7 +6795,11 @@ function showView(name) {
   // Toggle a body flag so CSS can drop .main's top padding for the History view,
   // letting the sticky pills toolbar + project headers pin flush to the top.
   document.body.classList.toggle('view-history', name === 'history');
-  if (name === 'running') renderRunningView();
+  if (name === 'running') {
+    renderRunningView();
+    // Opening a run's focus view acknowledges it (linger → drops on next render).
+    if (state.selectedRunId) acknowledgeRun(state.selectedRunId);
+  }
   if (name === 'history') loadHistoryView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
@@ -6609,9 +6821,22 @@ navLinks.forEach((a) =>
   })
 );
 
+// Overview card → focus (spec: "Click a card → that run's focus view"). Delegated,
+// restricted to the card header so existing buttons / the question panel keep working;
+// only active in Overview.
+$('#run-list')?.addEventListener('click', (e) => {
+  if (state.selectedRunId) return;                 // already in focus
+  if (e.target.closest('button, a, input, textarea, .qpanel, .subs-bar')) return;
+  const top = e.target.closest('.run-top');
+  if (!top) return;
+  const card = top.closest('.run-card');
+  const id = card && card.dataset.runId;
+  if (id) location.hash = `running/${id}`;
+});
+
 window.addEventListener('hashchange', () => {
-  const h = location.hash.slice(1);
-  if (VIEW_NAMES.includes(h)) showView(h);
+  const [view, param] = parseHash();
+  if (VIEW_NAMES.includes(view)) showView(view, param);
 });
 
 // ---------------------------------------------------------------------------

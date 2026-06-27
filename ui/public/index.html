@@ -28,8 +28,10 @@
           <a href="#running" data-nav="running">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
+            <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
             <span class="nav-count n-amber" id="nav-running-count">0</span>
           </a>
+          <div class="nav-children" id="nav-running-children"></div>
           <a href="#history" data-nav="history">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
             <span>History</span>
@@ -72,7 +74,7 @@
         <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
         <nav class="topnav">
           <a href="#new" data-nav="new" class="active">New</a>
-          <a href="#running" data-nav="running">Running</a>
+          <a href="#running" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></a>
           <a href="#history" data-nav="history">History</a>
           <a href="#workspaces" data-nav="workspaces">Workspaces</a>
           <a href="#agents" data-nav="agents">Agents</a>
