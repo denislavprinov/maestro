@@ -163,10 +163,13 @@
                 <!-- Branch fields -->
                 <div class="field">
                   <label for="sourceBranch">Source branch</label>
-                  <div class="select-wrap" id="sourceBranchWrap">
-                    <select id="sourceBranch" class="select"></select>
+                  <div class="combo-wrap" id="sourceBranchWrap">
+                    <input id="sourceBranch" class="input branch-combo" list="sourceBranchList"
+                           type="text" autocomplete="off" spellcheck="false"
+                           placeholder="current branch (auto)" />
+                    <datalist id="sourceBranchList"></datalist>
                   </div>
-                  <!-- Workspace mode: one source-branch dropdown per member project. -->
+                  <!-- Workspace mode: one source-branch combobox per member project. -->
                   <div class="ws-source-branches hidden" id="ws-source-branches"></div>
                   <small class="hint" id="sourceBranchHint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
                 </div>
