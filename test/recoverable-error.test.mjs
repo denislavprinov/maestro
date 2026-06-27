@@ -29,6 +29,17 @@ test('classifies connectivity failures as network', () => {
   assert.equal(classifyError(new Error('socket hang up')), 'network');
 });
 
+test('classifies the Claude CLI mid-response disconnect as network', () => {
+  // The exact strings the headless CLI folds into its reject when the connection
+  // drops mid-stream (the reported "stopped my internet" repro).
+  assert.equal(
+    classifyError(new Error('claude exited with code 1: API Error: Connection closed mid-response. The response above may be incomplete.')),
+    'network',
+  );
+  assert.equal(classifyError(new Error('API Error: Connection closed mid-response.')), 'network');
+  assert.equal(classifyError(new Error('Connection error.')), 'network');
+});
+
 test('returns null for a plain bug and accepts a raw string / nullish', () => {
   assert.equal(classifyError(new Error('TypeError: x is not a function')), null);
   assert.equal(classifyError('401 Invalid authentication credentials'), 'auth');

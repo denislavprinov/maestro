@@ -19,6 +19,6 @@ export function classifyError(err) {
   if (/\b401\b|invalid authentication|authentication_error|please run .*login|not logged in/i.test(msg)) return 'auth';
   if (/\b429\b|\b529\b|rate.?limit|overloaded/i.test(msg)) return 'rate_limit';
   if (/credit balance|usage limit|quota|insufficient_quota|billing/i.test(msg)) return 'quota';
-  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network|connection (refused|reset)/i.test(msg)) return 'network';
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network|connection (refused|reset|closed|error)|closed mid-response|response above may be incomplete/i.test(msg)) return 'network';
   return null;
 }
