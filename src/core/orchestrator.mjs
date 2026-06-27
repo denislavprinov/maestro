@@ -38,7 +38,10 @@ import {
   writeDecomposition,
   updateTaskStatus,
   updatePhaseStatus,
+  readPipelineExtras,
 } from './artifacts.mjs';
+import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
+import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
@@ -513,6 +516,7 @@ class Orchestrator extends EventEmitter {
       this._phase('done', 0, 'done');
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      await this._buildResults();          // refs + worktree still live here
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -682,6 +686,7 @@ class Orchestrator extends EventEmitter {
       this._phase('done', 0, 'done');
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      await this._buildResults();          // refs + worktree still live here
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -2278,6 +2283,47 @@ class Orchestrator extends EventEmitter {
     }
     const ref = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
     return ref.ok ? ref.stdout.trim() : null;
+  }
+
+  /**
+   * Layer 1: build + persist the deterministic results view while the worktree(s)
+   * and checkpoint refs are still live. Best-effort: never throws into run().
+   */
+  async _buildResults() {
+    if (!this.pipeline) return;
+    try {
+      const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
+      if (this.isWorkspace) {
+        const members = [];
+        const patches = [];
+        for (const [projectKey, dir] of this.workDirs.entries()) {
+          const base = this.checkpointRefs[projectKey];
+          if (!base) continue;
+          const [ns, num, patch] = await Promise.all([
+            diffNameStatus(dir, base), diffNumstat(dir, base), diffPatch(dir, base),
+          ]);
+          const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
+          members.push({ projectKey, results });
+          patches.push(`# ${projectKey}\n${patch}`);
+        }
+        const perProject = buildPerProject(members);
+        const results = { summary: rollupSummary(perProject), perProject };
+        await persistResults(this.pipeline.dir, results);
+        await persistDiffPatch(this.pipeline.dir, patches.join('\n\n'));
+      } else {
+        const base = this.checkpointRef;
+        if (!base) return;
+        const dir = this.workDir || this.projectDir;
+        const [ns, num, patch] = await Promise.all([
+          diffNameStatus(dir, base), diffNumstat(dir, base), diffPatch(dir, base),
+        ]);
+        const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
+        await persistResults(this.pipeline.dir, results);
+        await persistDiffPatch(this.pipeline.dir, patch);
+      }
+    } catch (err) {
+      this._log('results', 'warn', `results build failed: ${err.message}`);
+    }
   }
 
   /** Single-project checkpoint: own repo + commit, record the scalar ref + state. */

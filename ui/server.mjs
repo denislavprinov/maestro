@@ -45,6 +45,7 @@ import {
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
 } from '../src/core/workspaces.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
+import { generateOverview } from '../src/core/overview-agent.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
@@ -921,6 +922,30 @@ app.get('/api/runs/:id', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
+// Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
+// ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500.
+// ---------------------------------------------------------------------------
+app.post('/api/runs/:id/overview', async (req, res) => {
+  const id = req.params.id;
+  let key = typeof req.query.key === 'string' ? req.query.key : null;
+  if (!key) {
+    const projectDir = resolveProjectDir(req.query.projectDir);
+    if (!projectDir) return badRequest(res, 'key or projectDir is required');
+    key = projectKey(projectDir);
+  }
+  const force = req.query.force === '1' || req.query.force === 'true';
+  try {
+    const overview = await generateOverview(key, id, { force });
+    res.json({ overview });
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const code = msg === 'pipeline not found' ? 404 : 500;
+    res.status(code).json({ error: msg });
   }
 });
 

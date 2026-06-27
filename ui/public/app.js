@@ -54,6 +54,7 @@ import {
   groupPaletteByDomain,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
+import { summaryChips, mergeFindings } from './results-view.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -5951,6 +5952,118 @@ function historyLogUrl(id, record) {
   return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/log`;
 }
 
+// Render the Layer-1 results section: summary chips, key-things-to-check (review
+// issues, reusing the .issue.sev-* gate styles), New/Changed file lists, plus the
+// Layer-2 "Generate overview" button. ctx = { id, projectKey, projectDir, overview }.
+function renderResults(host, results, ctx) {
+  host.innerHTML = '';
+  if (!results) { host.textContent = 'No results for this run.'; return; }
+
+  // Summary chips
+  const chips = document.createElement('div');
+  chips.className = 'results-chips';
+  summaryChips(results).forEach((t) => {
+    const c = document.createElement('span'); c.className = 'results-chip'; c.textContent = t; chips.appendChild(c);
+  });
+  host.appendChild(chips);
+
+  // Layer-2 overview: button + narrative/agent-findings host.
+  const hasDiff = !!(results.summary && (results.summary.filesNew || results.summary.filesChanged || results.summary.filesDeleted));
+  const ov = document.createElement('div'); ov.className = 'results-overview';
+  const btn = document.createElement('button'); btn.className = 'results-overview-btn';
+  btn.textContent = ctx.overview ? 'Regenerate overview' : 'Generate overview';
+  btn.disabled = !hasDiff; // no diff -> nothing to summarize (spec §8)
+  if (!hasDiff) btn.title = 'No file changes to summarize';
+  btn.addEventListener('click', () => loadOverview(ov, btn, ctx, results, !!ctx.overview || btn.dataset.ran === '1'));
+  host.appendChild(btn);
+  host.appendChild(ov);
+  if (ctx.overview) { btn.dataset.ran = '1'; paintOverview(ov, ctx.overview, results); }
+
+  // Key things to check (review issues) — reuse sev-* classes
+  const checks = results.keyThingsToCheck || [];
+  const checksWrap = document.createElement('div'); checksWrap.className = 'results-checks';
+  if (!checks.length) {
+    const okEl = document.createElement('div'); okEl.className = 'results-clean';
+    okEl.textContent = 'Clean — no blocking issues flagged.'; checksWrap.appendChild(okEl);
+  } else {
+    checksWrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+  }
+  host.appendChild(checksWrap);
+
+  // New + changed file lists
+  host.appendChild(fileList('New files', results.newFiles || []));
+  host.appendChild(fileList('Changed files', results.changedFiles || []));
+}
+
+// Build a <ul class="issues"> from merged check/finding rows (mirrors renderGateBody).
+function issueList(rows) {
+  const ul = document.createElement('ul'); ul.className = 'issues';
+  rows.forEach((c) => {
+    const li = document.createElement('li'); li.className = `issue sev-${c.severity}`;
+    const head = document.createElement('div'); head.className = 'issue-head';
+    const sev = document.createElement('span'); sev.className = 'issue-sev'; sev.textContent = c.severity;
+    head.appendChild(sev);
+    if (c.origin) {
+      const tag = document.createElement('span'); tag.className = `issue-origin origin-${c.origin}`;
+      tag.textContent = c.origin === 'agent' ? (c.isNew ? 'agent · new' : 'agent') : 'review';
+      head.appendChild(tag);
+    }
+    const ttl = document.createElement('span'); ttl.className = 'issue-title'; ttl.textContent = c.title;
+    head.appendChild(ttl); li.appendChild(head);
+    if (c.detail) { const d = document.createElement('div'); d.className = 'issue-detail'; d.textContent = c.detail; li.appendChild(d); }
+    if (c.location) { const l = document.createElement('div'); l.className = 'issue-loc'; l.textContent = c.location; li.appendChild(l); }
+    ul.appendChild(li);
+  });
+  return ul;
+}
+
+function fileList(title, files) {
+  const sec = document.createElement('div'); sec.className = 'results-files';
+  const h = document.createElement('div'); h.className = 'results-files-h'; h.textContent = `${title} (${files.length})`; sec.appendChild(h);
+  const ul = document.createElement('ul');
+  files.forEach((f) => {
+    const li = document.createElement('li');
+    const name = f.from ? `${f.from} → ${f.path}` : f.path;
+    const counts = f.binary ? 'binary' : (f.added != null ? `+${f.added} −${f.removed}` : '');
+    li.textContent = `${f.status}  ${name}  ${counts}`.trim();
+    ul.appendChild(li);
+  });
+  sec.appendChild(ul); return sec;
+}
+
+// Layer-2 fetch: POST /api/runs/:id/overview, then paint narrative + merged checks.
+async function loadOverview(host, btn, ctx, results, force) {
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    const qs = new URLSearchParams();
+    if (ctx.projectKey) qs.set('key', ctx.projectKey); else qs.set('projectDir', ctx.projectDir || '');
+    if (force) qs.set('force', '1');
+    const res = await fetch(`/api/runs/${encodeURIComponent(ctx.id)}/overview?${qs}`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    paintOverview(host, data.overview, results);
+    btn.dataset.ran = '1';
+    btn.textContent = 'Regenerate overview';
+  } catch (e) {
+    host.textContent = `Overview failed: ${e.message}`;
+    btn.textContent = 'Retry overview';
+  } finally { btn.disabled = false; }
+}
+
+function paintOverview(host, overview, results) {
+  host.innerHTML = '';
+  if (!overview) return;
+  if (overview.narrative) {
+    const n = document.createElement('div'); n.className = 'results-narrative'; n.textContent = overview.narrative; host.appendChild(n);
+  }
+  const merged = mergeFindings(results.keyThingsToCheck || [], overview.diffFindings || []);
+  if (merged.length) host.appendChild(issueList(merged));
+  if (overview.diffCheckTruncated) {
+    const w = document.createElement('div'); w.className = 'results-trunc';
+    w.textContent = 'Diff was large — agent saw hunk headers only.'; host.appendChild(w);
+  }
+}
+
 async function loadHistDetail(projectDir, id, detail, record) {
   try {
     const url = historyDetailUrl(projectDir, id, record);
@@ -5984,6 +6097,11 @@ async function loadHistDetail(projectDir, id, detail, record) {
     }
     // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
     paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
+    // Results view (Layer 1 instant; Layer 2 via the Generate-overview button).
+    const resHost = detail.querySelector('.results-section');
+    if (resHost) renderResults(resHost, data.results, {
+      id, projectKey: record && record.projectKey, projectDir, overview: data.overview,
+    });
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
     paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
     if (typeof data.state.totalCostUsd === 'number') {
