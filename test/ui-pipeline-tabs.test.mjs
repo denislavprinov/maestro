@@ -124,6 +124,42 @@ test('a paused run stays in Running with an amber dot and no end marker', async 
   assert.ok(row, 'opening a paused run does NOT drop it from Running');
 });
 
+// Resuming a paused run mints a NEW runId; the pre-pause log must be carried into
+// the resumed run so the live card shows ALL logs, not just the ones before pause.
+test('resuming a paused run carries the pre-pause log into the resumed run', async () => {
+  const { window, recv } = await boot();
+  const origFetch = window.fetch;
+  window.fetch = (url, opts) => {
+    const u = String(url);
+    if (u.includes('/api/resume')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, runId: 'auth-fix-2', pipelineId: 'auth-fix' }) });
+    }
+    if (u.includes('/log')) return Promise.resolve({ ok: true, status: 200, text: async () => '' });
+    return origFetch(url, opts);
+  };
+  globalThis.fetch = window.fetch;
+
+  recv({ type: 'hello', runs: [live('auth-fix', { pipelineId: 'auth-fix' })] });
+  recv({ type: 'log', runId: 'auth-fix', text: 'PRE_PAUSE_LINE', ts: 1 });
+  recv({ type: 'done', runId: 'auth-fix', status: 'paused' });
+
+  window.location.hash = 'running';                                  // Overview → paused card renders
+  window.dispatchEvent(new window.Event('hashchange'));
+  const btn = window.document.querySelector('#run-list .run-card[data-run-id="auth-fix"] .btn-resume');
+  assert.ok(btn && !btn.hidden, 'Resume button visible on the paused card');
+  btn.click();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const card = window.document.querySelector('#run-list .run-card[data-run-id="auth-fix-2"]');
+  assert.ok(card, 'resumed run (new runId) card present');
+  assert.match(card.querySelector('.log').textContent, /PRE_PAUSE_LINE/, 'pre-pause log carried into the resumed run');
+  assert.equal(
+    window.document.querySelector('#run-list .run-card[data-run-id="auth-fix"]'), null,
+    'old paused run card dropped (no split/dup)'
+  );
+});
+
 test('a run failing live shows a static red "●" end marker (error/stopped)', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix')] });

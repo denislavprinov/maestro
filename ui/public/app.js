@@ -5198,6 +5198,39 @@ async function pauseRun(runId, btn) {
 // itself over the WS. Drop the old paused run object so the pipeline doesn't
 // double-show (paused card + new live card share a pipelineId), then land on the
 // live Overview. Mirrors setupResumeButton's history-card path.
+// Carry the paused run's log into the resumed run so the live card shows ALL
+// logs continuously. Resume mints a NEW runId with a fresh buffer, so without
+// this the pre-pause lines (on the old run object, or only on disk) would be
+// split off from the post-resume stream — the symptom was "only the logs before
+// pause are visible". `prevLines` is the in-memory pre-pause log when available;
+// otherwise pass null + a `logUrl` and the persisted NDJSON is fetched (by the
+// shared pipelineId) so resume from History / after a reload still seeds.
+// Lines already streamed onto the new run are kept AFTER the seed (prepend), so
+// nothing in-flight is lost.
+async function seedResumedLog(newRunId, prevLines, logUrl) {
+  const nr = runs.get(newRunId);
+  if (!nr) return;
+  let head = Array.isArray(prevLines) ? prevLines.slice() : [];
+  if (!head.length && logUrl) {
+    try {
+      const res = await fetch(logUrl);
+      if (res.ok) {
+        for (const raw of (await res.text()).split('\n')) {
+          const t = raw.trim(); if (!t) continue;
+          try { const rec = JSON.parse(t); head.push({ source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub }); } catch { /* torn line */ }
+        }
+      }
+    } catch { /* best-effort seed */ }
+  }
+  if (!head.length) return;
+  const sep = { ts: Date.now(), source: 'ui', level: 'info', text: '── resumed — continuing below ──' };
+  const tail = Array.isArray(nr.logLines) ? nr.logLines : [];
+  nr.logLines = [...head, sep, ...tail];
+  if (nr.logLines.length > MAX_LOG_LINES) nr.logLines = nr.logLines.slice(-MAX_LOG_LINES);
+  nr.el = null;            // force paintRunList to rebuild the card from the seeded log
+  renderRunningView();
+}
+
 async function resumeRunFromCard(runId, btn) {
   const r = runs.get(runId);
   if (!r || !isPaused(r)) return;
@@ -5206,6 +5239,9 @@ async function resumeRunFromCard(runId, btn) {
     onLog(r, { source: 'ui', level: 'error', text: 'resume failed: run has no pipelineId', ts: Date.now() });
     return;
   }
+  // Snapshot the pre-pause log BEFORE the old run is dropped, to seed the resumed
+  // run for a continuous log.
+  const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
   try {
     const res = await fetch('/api/resume', {
@@ -5215,10 +5251,6 @@ async function resumeRunFromCard(runId, btn) {
     });
     const data = await safeJson(res);
     if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-    // Old paused run is superseded by the resumed live run — drop it so Running
-    // shows only the new card (same pipelineId would otherwise render twice).
-    runs.delete(runId);
-    if (state.selectedRunId === runId) state.selectedRunId = '';
     upsertRun({
       runId: data.runId,
       title: r.title || pipelineId,
@@ -5228,8 +5260,13 @@ async function resumeRunFromCard(runId, btn) {
       pipelineId,
       local: true,
     });
+    await seedResumedLog(data.runId, prevLines, null);  // in-memory pre-pause log → continuous
+    // Old paused run is superseded by the resumed live run — drop it so Running
+    // shows only the new card (same pipelineId would otherwise render twice).
+    runs.delete(runId);
+    if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
-    showView('running');
+    location.hash = `running/${data.runId}`;   // land on the continuous live card
     renderRunningView();
   } catch (err) {
     if (btn) { btn.disabled = false; btn.textContent = ' Resume'; }
@@ -5869,11 +5906,20 @@ function setupResumeButton(node, projectDir, p) {
         title: p.title || p.id,
         projectDir: p.projectDir || projectDir || '',
         status: 'starting',
+        pipelineId: p.id,
         local: true,
       });
+      // Seed the resumed run with the pre-pause log so the live card is continuous.
+      // Prefer an in-memory paused run sharing this pipelineId (exact, no fetch);
+      // otherwise fall back to the persisted NDJSON (resume from History / reload).
+      const prior = [...runs.values()].find(
+        (x) => x.runId !== data.runId && x.pipelineId === p.id && Array.isArray(x.logLines) && x.logLines.length
+      );
+      await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(p.id, p));
+      if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
       hideViewer();
       updateNavCounts();
-      showView('running');
+      location.hash = `running/${data.runId}`;   // land on the continuous live card
       renderRunningView();
     } catch (err) {
       btn.disabled = false;
