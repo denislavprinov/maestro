@@ -6222,11 +6222,22 @@ function cmpTabRuns(a, b) {
 }
 
 // Status dot family for a child row (left edge). Reuses existing color tokens.
+// For a LIVE run the dot matches the color of the current agent/phase (same
+// mapping as the status pill), so the dot reads as "who's running now". The
+// awaiting-input state is surfaced separately by the pulsing '?' end marker, so
+// it no longer hijacks the dot color.
 function runDotClass(r) {
-  if (r.pendingQuestion != null) return 'amber';
   if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
-  return 'blue'; // running
+  // running → color by current phase/agent (mirrors statusPill families)
+  switch (r.phaseKey) {
+    case 'plan': return 'violet';
+    case 'refine': return 'peach';
+    case 'implement': return 'blue';
+    case 'review': return 'peach';
+    case 'clarify': return 'red';
+    default: return 'peach';
+  }
 }
 
 // Project basename for display (e.g. "/a/b/proj" -> "proj").
@@ -6721,6 +6732,9 @@ function renderPipelineTabs() {
     const dot = document.createElement('span');
     dot.className = `child-dot ${runDotClass(r)}`;
 
+    const body = document.createElement('span');
+    body.className = 'child-body';
+
     const title = document.createElement('span');
     title.className = 'child-title';
     title.textContent = r.title;
@@ -6729,7 +6743,17 @@ function renderPipelineTabs() {
     hint.className = 'child-proj';
     hint.textContent = projectName(r.projectDir);
 
-    row.append(dot, title, hint);
+    body.append(title, hint);
+    row.append(dot, body);
+
+    // Awaiting-input marker: a pulsing yellow "?" pinned at the end of the row.
+    if (r.pendingQuestion != null) {
+      const q = document.createElement('span');
+      q.className = 'child-q';
+      q.textContent = '?';
+      q.title = 'Waiting for your input';
+      row.appendChild(q);
+    }
     row.addEventListener('click', (e) => { e.preventDefault(); location.hash = `running/${r.runId}`; });
     host.appendChild(row);
   }

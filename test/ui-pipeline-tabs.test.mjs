@@ -48,11 +48,12 @@ test('hello with two live pipelines renders two child rows + live badge', async 
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '2');
 });
 
-test('a pending question shows amber dot + parent roll-up', async () => {
+test('a pending question shows pulsing "?" marker + parent roll-up', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix', { pendingQuestion: { id: 'q1', kind: 'clarify', questions: [{ question: 'x?', options: ['a'] }] } })] });
-  const dot = window.document.querySelector('#nav-running-children .nav-child .child-dot');
-  assert.ok(dot.classList.contains('amber'));
+  const q = window.document.querySelector('#nav-running-children .nav-child .child-q');
+  assert.ok(q, 'awaiting-input "?" marker present');
+  assert.equal(q.textContent, '?');
   assert.equal(window.document.querySelector('#nav-running-rollup').hidden, false);
 });
 

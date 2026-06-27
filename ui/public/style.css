@@ -94,30 +94,65 @@ body{
 }
 .nav a.active .nav-rollup { background: #fff; }
 
-/* Child pipeline rows nested under Running */
+/* Child pipeline rows nested under Running — tree-connector style (mirrors the
+   sub-agents tree: a vertical spine on the left with a branch into each dot). */
 .nav-children { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 0; }
 .nav-children.hidden, .nav-children.collapsed { display: none; }
 .nav-child {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px 6px 26px; border-radius: 9px;
-  color: var(--ink-2); text-decoration: none; font-size: 13px; font-weight: 600;
+  position: relative;
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 10px 6px 24px; border-radius: 9px;
+  color: var(--ink-2); text-decoration: none;
   min-width: 0;
 }
+/* Rounded elbow: vertical run from the top of the row down to the dot center,
+   then curving right into the dot. */
+.nav-child::before {
+  content: ""; position: absolute;
+  left: 9px; top: -2px;
+  width: 9px; height: calc(50% + 2px);
+  border-left: 1.5px solid var(--line-2);
+  border-bottom: 1.5px solid var(--line-2);
+  border-bottom-left-radius: 7px;
+  pointer-events: none;
+}
+/* Continuation: keeps the spine unbroken between rows (not after the last). */
+.nav-child:not(:last-child)::after {
+  content: ""; position: absolute;
+  left: 9px; top: 50%; bottom: -4px;
+  width: 1.5px; background: var(--line-2);
+  pointer-events: none;
+}
 .nav-child:hover { background: var(--field); color: var(--ink); }
-.nav-child.active { background: var(--ink); color: #fff; }
+/* Selected: gentle tint + soft ring, not a heavy dark fill.
+   Scoped under .nav to outrank the global `.nav a.active` dark-fill rule. */
+.nav .nav-child.active { background: var(--field); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
 .nav-child.lingering { color: var(--ink-3); }   /* greyed finished-unread */
-.child-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.child-proj  { flex: 0 0 auto; font-size: 11px; font-weight: 500; color: var(--ink-3); }
-.nav-child.active .child-proj { color: rgba(255,255,255,.7); }
 
-/* Status dot (left). amber=needs input, blue=running, grey-pulse=starting/pausing,
-   green=done, red=error/stopped. */
-.child-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
-.child-dot.amber { background: var(--amber); animation: pulse 1.3s ease-in-out infinite; }
-.child-dot.blue  { background: var(--blue);  animation: pulse 1.3s ease-in-out infinite; }
+.child-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.child-title { font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.child-proj  { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-child.active .child-proj { color: var(--ink-3); }
+
+/* Status dot (left). Color matches the current running agent/phase
+   (violet=plan, peach=refine/review/running, blue=implement, red=clarify),
+   grey-pulse=starting/pausing, green=done, red=error/stopped. */
+.child-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.child-dot.peach  { background: var(--peach);  animation: pulse 1.3s ease-in-out infinite; }
+.child-dot.blue   { background: var(--blue);   animation: pulse 1.3s ease-in-out infinite; }
+.child-dot.violet { background: var(--violet); animation: pulse 1.3s ease-in-out infinite; }
+.child-dot.amber  { background: var(--amber);  animation: pulse 1.3s ease-in-out infinite; }
 .child-dot.grey-pulse { background: var(--ink-3); animation: pulse 1.3s ease-in-out infinite; }
 .child-dot.green { background: var(--green); }
 .child-dot.red   { background: var(--red); }
+
+/* Awaiting-input marker: a pulsing yellow "?" pinned at the end of the row. */
+.child-q {
+  flex: 0 0 auto; margin-left: 6px;
+  color: var(--amber); font-weight: 800; font-size: 15px; line-height: 1;
+  animation: pulse 1.3s ease-in-out infinite;
+}
 
 /* Overview cards are clickable to focus */
 #run-list .run-card .run-top { cursor: pointer; }
