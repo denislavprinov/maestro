@@ -105,6 +105,25 @@ test('a run finishing live shows a static green "●" end marker (done)', async 
   assert.equal(m.classList.contains('bad'), false);
 });
 
+// A PAUSED run is parked in Running (resumable), not a finished result: it stays
+// in the list with a static amber dot + no green/red end marker, and opening it
+// (to Resume) must NOT drop it into History.
+test('a paused run stays in Running with an amber dot and no end marker', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [live('auth-fix')] });
+  recv({ type: 'done', runId: 'auth-fix', status: 'paused' });      // pause routes through finishRun
+  let row = window.document.querySelector('#nav-running-children .nav-child[data-child-run-id="auth-fix"]');
+  assert.ok(row, 'paused run present in Running');
+  assert.equal(row.classList.contains('lingering'), false, 'paused is not a greyed lingerer');
+  assert.ok(row.querySelector('.child-dot.paused'), 'static amber paused dot');
+  assert.equal(row.querySelector('.child-q'), null, 'no green/red end marker for paused');
+
+  window.location.hash = 'running/auth-fix';                        // open to Resume
+  window.dispatchEvent(new window.Event('hashchange'));
+  row = window.document.querySelector('#nav-running-children .nav-child[data-child-run-id="auth-fix"]');
+  assert.ok(row, 'opening a paused run does NOT drop it from Running');
+});
+
 test('a run failing live shows a static red "●" end marker (error/stopped)', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix')] });

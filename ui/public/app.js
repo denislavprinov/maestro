@@ -3118,28 +3118,36 @@ function finishRun(r, status) {
     paintStepper(r);
   }
 
+  // A paused run is parked in Running (resumable), NOT a finished result: it does
+  // NOT linger (no green/red "seen me" marker, never acknowledged-to-drop), keeps
+  // its card + log for an in-place Resume, and keeps the user on its focus tab.
+  const paused = status === 'paused';
+
   // Orchestration pipeline finishing LIVE → it lingers (greyed) until opened once.
-  const willLinger = isPipelineRun(r);
+  const willLinger = !paused && isPipelineRun(r);
   if (willLinger) markLingering(r.runId);  // no-op if already acknowledged
 
   // Q&A #5: if the user is staring at THIS run's focus tab, drop them to Overview.
-  if (state.selectedRunId === r.runId) {
+  // A paused run keeps its focus tab (its card stays, now showing Resume).
+  if (!paused && state.selectedRunId === r.runId) {
     state.selectedRunId = '';
     if (location.hash.slice(1) !== 'running') location.hash = 'running'; // → hashchange → Overview
   }
 
   // Card drops out of the live view (liveRuns excludes terminal statuses).
-  renderRunningView();   // Overview keeps the greyed lingerer; reconcile rebuilds if needed
+  renderRunningView();   // Overview keeps the greyed lingerer / paused card; reconcile rebuilds if needed
   updateNavCounts();
   renderPipelineTabs();
   // History is machine-wide + decoupled from the project picker now; if the user
   // is looking at it, force-refetch so the just-finished pipeline surfaces with no
-  // stale-cache flash (and re-triggers Phase-2 PR enrichment).
+  // stale-cache flash (and re-triggers Phase-2 PR enrichment). A paused run is
+  // suppressed from History (it lives in Running), so refreshing is still correct.
   if (currentView() === 'history') loadHistoryView({ force: true });
 
-  // Evict heavy fields ONLY for non-lingerers; lingerers keep el/logLines so the
-  // card persists without a duplicate (paintRunList tolerates either case).
-  if (!willLinger) { r.logLines = []; r.el = null; }
+  // Evict heavy fields ONLY for non-lingerers AND non-paused; lingerers + paused
+  // keep el/logLines so the card persists without a duplicate (paintRunList
+  // tolerates either case) and Resume has the log context.
+  if (!willLinger && !paused) { r.logLines = []; r.el = null; }
 }
 
 function onDone(r, msg) {
@@ -5185,6 +5193,51 @@ async function pauseRun(runId, btn) {
   }
 }
 
+// Per-card Resume for a PAUSED run parked in Running. POST /api/resume with the
+// run's pipelineId; the server starts a fresh live run (new runId) that announces
+// itself over the WS. Drop the old paused run object so the pipeline doesn't
+// double-show (paused card + new live card share a pipelineId), then land on the
+// live Overview. Mirrors setupResumeButton's history-card path.
+async function resumeRunFromCard(runId, btn) {
+  const r = runs.get(runId);
+  if (!r || !isPaused(r)) return;
+  const pipelineId = r.pipelineId;
+  if (!pipelineId) {
+    onLog(r, { source: 'ui', level: 'error', text: 'resume failed: run has no pipelineId', ts: Date.now() });
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
+  try {
+    const res = await fetch('/api/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipelineId }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    // Old paused run is superseded by the resumed live run — drop it so Running
+    // shows only the new card (same pipelineId would otherwise render twice).
+    runs.delete(runId);
+    if (state.selectedRunId === runId) state.selectedRunId = '';
+    upsertRun({
+      runId: data.runId,
+      title: r.title || pipelineId,
+      projectDir: r.projectDir || '',
+      status: 'starting',
+      kind: r.kind || 'run',
+      pipelineId,
+      local: true,
+    });
+    updateNavCounts();
+    showView('running');
+    renderRunningView();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = ' Resume'; }
+    const rr = runs.get(runId);
+    if (rr) onLog(rr, { source: 'ui', level: 'error', text: `resume failed: ${err.message}`, ts: Date.now() });
+  }
+}
+
 // Delegated controls on the dynamic run-card list: per-card Stop/Pause + per-card
 // auto-scroll switch. Scoped to each card via closest('.run-card').
 const runListEl = $('#run-list');
@@ -5202,6 +5255,13 @@ if (runListEl) {
       const card = pauseBtn.closest('.run-card');
       const runId = card && card.dataset.runId;
       if (runId) pauseRun(runId, pauseBtn);
+      return;
+    }
+    const resumeBtn = e.target.closest && e.target.closest('.btn-resume');
+    if (resumeBtn) {
+      const card = resumeBtn.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      if (runId) resumeRunFromCard(runId, resumeBtn);
       return;
     }
     const sw = e.target.closest && e.target.closest('.switch.autoscroll');
@@ -5549,14 +5609,16 @@ function renderHistory() {
   host.innerHTML = '';
   const all = Array.isArray(state.historyAll) ? state.historyAll : [];
 
-  // Q&A #2: a finished-but-unacknowledged pipeline lives ONLY as a Running child
-  // row; suppress it from History until acknowledged.
-  const lingerPids = new Set(
+  // A finished-but-unacknowledged pipeline (lingerer) AND a paused pipeline both
+  // live ONLY in the Running list — suppress them from History by pipelineId so
+  // they don't double-show. A lingerer reappears in History once acknowledged; a
+  // paused run reappears (as the resumed/finished record) once resumed or stopped.
+  const hiddenPids = new Set(
     [...runs.values()]
-      .filter((r) => isLingering(r) && r.pipelineId)
+      .filter((r) => (isLingering(r) || isPaused(r)) && r.pipelineId)
       .map((r) => r.pipelineId)
   );
-  const visible = lingerPids.size ? all.filter((p) => !lingerPids.has(p.id)) : all;
+  const visible = hiddenPids.size ? all.filter((p) => !hiddenPids.has(p.id)) : all;
 
   const filter = state.historyFilter;
   const records = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
@@ -6413,20 +6475,28 @@ function isLingering(r) {
   return isPipelineRun(r) && !isLive(r) && lingering.has(r.runId) && !acknowledged.has(r.runId);
 }
 
+// A PAUSED run is parked in Running (resumable), NOT a finished result. It stays
+// in the Running list until resumed or stopped — never acknowledged, never moved
+// to History (suppressed there by pipelineId). Distinct from a lingerer: a
+// lingerer is a finished run awaiting a glance; a paused run is mid-flight work.
+function isPaused(r) {
+  return r.status === 'paused';
+}
+
 // Drives child tabs + the roll-up dot (pipeline-only, Q&A #1).
 function pipelineTabRuns() {
   return [...runs.values()]
-    .filter((r) => isPipelineRun(r) && (isLive(r) || isLingering(r)))
+    .filter((r) => isPipelineRun(r) && (isLive(r) || isLingering(r) || isPaused(r)))
     .sort(cmpTabRuns);
 }
 
 // Drives the Overview #run-list. KIND-AGNOSTIC for live runs (preserves today's
 // behavior: live scans/agentgen/workspace-runs still render as cards — Q&A #3),
-// PLUS lingering pipelines (the new linger feature). Deduped via the Map values
-// being unique objects; sorted by the same group ordering.
+// PLUS lingering pipelines (the linger feature) and PAUSED runs (parked, resumable).
+// Deduped via the Map values being unique objects; sorted by the same group ordering.
 function overviewRuns() {
   return [...runs.values()]
-    .filter((r) => isLive(r) || isLingering(r))
+    .filter((r) => isLive(r) || isLingering(r) || isPaused(r))
     .sort(cmpTabRuns);
 }
 
@@ -6450,6 +6520,10 @@ function cmpTabRuns(a, b) {
 // it no longer hijacks the dot color.
 function runDotClass(r) {
   if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
+  // Paused: parked + resumable. Static amber (NOT the red "did-not-complete" dot,
+  // and NOT a pulse — nothing is running). Checked before the terminal branch
+  // because a paused run is _finished.
+  if (r.status === 'paused') return 'paused';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
   // running → color by current phase/agent (mirrors statusPill families)
   switch (r.phaseKey) {
@@ -6845,6 +6919,13 @@ function paintRunCard(r) {
     totalEl.title = estTitle(r.totalCostUsd || 0);
   }
   r.el.classList.toggle('attention', r.pendingQuestion != null);
+
+  // Paused → swap Pause for Resume (Stop stays, to discard the paused run).
+  const paused = isPaused(r);
+  const pauseBtn = r.el.querySelector('.btn-pause');
+  const resumeBtn = r.el.querySelector('.btn-resume');
+  if (pauseBtn) pauseBtn.hidden = paused;
+  if (resumeBtn) resumeBtn.hidden = !paused;
 }
 
 function questionCount(pq) {
@@ -6984,6 +7065,8 @@ function renderPipelineTabs() {
       q.textContent = '?';
       q.title = 'Waiting for your input';
       row.appendChild(q);
+    } else if (isPaused(r)) {
+      // Paused: no end marker — it's parked (amber leading dot), not a result.
     } else if (r._finished || isTerminalStatus(r.status)) {
       const ok = r.status === 'done';
       const m = document.createElement('span');
@@ -7074,7 +7157,9 @@ function showView(name, param = '') {
     // opens the lingering row AFTER it finishes.
     if (state.selectedRunId) {
       const sr = runs.get(state.selectedRunId);
-      if (sr && (sr._finished || isTerminalStatus(sr.status))) acknowledgeRun(state.selectedRunId);
+      // A paused run is _finished but NOT a result to acknowledge — opening it to
+      // Resume must not drop it from Running.
+      if (sr && !isPaused(sr) && (sr._finished || isTerminalStatus(sr.status))) acknowledgeRun(state.selectedRunId);
     }
   }
   if (name === 'history') loadHistoryView();

@@ -147,6 +147,7 @@ body{
 .child-dot.grey-pulse { color: var(--ink-3); background: currentColor; animation: dotpulse 1.3s ease-in-out infinite; }
 .child-dot.green { background: var(--green); }
 .child-dot.red   { background: var(--red); }
+.child-dot.paused { background: var(--amber); } /* parked + resumable: static, no pulse */
 
 /* Awaiting-input marker: a pulsing yellow "?" pinned at the end of the row. */
 .child-q {
