@@ -84,5 +84,5 @@ test('resume() refuses a non-paused pipeline', async () => {
     projectDir: dir, claude: { mock: true }, auto: true,
     resume: { row: { id: 'x', status: 'done' }, resumePoint: { version: 1 }, steps: [] },
   });
-  await assert.rejects(() => orch.resume(), /not paused/);
+  await assert.rejects(() => orch.resume(), /not resumable/);
 });

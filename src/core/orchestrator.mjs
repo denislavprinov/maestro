@@ -39,6 +39,10 @@ import {
   updateTaskStatus,
   updatePhaseStatus,
   readPipelineExtras,
+  claimPipelineOwnership,
+  touchHeartbeat,
+  clearPipelineOwnership,
+  HEARTBEAT_INTERVAL_MS,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
 import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
@@ -451,6 +455,7 @@ class Orchestrator extends EventEmitter {
       this.state.baseName = this.baseName;
       this.state.datePrefix = this.planDatePrefix;
       await this._persist();
+      this._startHeartbeat(); // claim ownership + begin liveness heartbeat (crash detection)
       this._artifact('pipeline', this.pipeline.dir);
       await appendAudit(this.pipeline.dir, `Pipeline created (id ${this.pipeline.id}).`);
       if (tools.tool) {
@@ -513,6 +518,7 @@ class Orchestrator extends EventEmitter {
 
       // 9) Done.
       this._setStatus('done');
+      this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
       this._phase('done', 0, 'done');
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
@@ -566,6 +572,7 @@ class Orchestrator extends EventEmitter {
       });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
+      this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/error/paused)
       // C1: tear the worktree(s) down on done/stopped/error — the branch is always
       // kept (every member's, on a workspace run), only the disposable checkout is
       // removed. But NEVER on a pause: the checkout (with any uncommitted agent
@@ -587,7 +594,9 @@ class Orchestrator extends EventEmitter {
     const saved = this.resumeOpts;
     if (!saved?.row || !saved?.resumePoint) throw new Error('resume(): no saved pipeline provided');
     const { row, resumePoint: rp, steps } = saved;
-    if (row.status !== 'paused') throw new Error(`resume(): pipeline is "${row.status}", not paused`);
+    if (row.status !== 'paused' && row.status !== 'interrupted') {
+      throw new Error(`resume(): pipeline is "${row.status}", not resumable`);
+    }
     if (rp.version !== 1) throw new Error(`resume(): unsupported resume point version ${rp.version}`);
     try {
       // ── rehydrate identity + state ──
@@ -667,6 +676,7 @@ class Orchestrator extends EventEmitter {
       this.state.resumePoint = null; // consumed; cleared on the next persist
       this._setStatus('running');
       await this._persist();
+      this._startHeartbeat();
       await appendAudit(this.pipeline.dir, `Pipeline **resumed** (from ${rp.kind} at step ${rp.stepIndex}).`);
       this._emit('state', this.getState());
 
@@ -683,6 +693,7 @@ class Orchestrator extends EventEmitter {
       if (dispatched === 'paused') return await this._completePaused();
 
       this._setStatus('done');
+      this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
       this._phase('done', 0, 'done');
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
@@ -718,6 +729,7 @@ class Orchestrator extends EventEmitter {
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
+      this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/error/paused)
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
         else await this._teardownWorktree().catch(() => {});
@@ -1260,6 +1272,10 @@ class Orchestrator extends EventEmitter {
           await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
         }
         if (!rewound) i += 1;
+        // Crash-recovery trail: every completed step boundary persists a boundary resume
+        // point for the NEXT step. A hard stop now leaves a valid recovery position.
+        this.state.resumePoint = this._buildResumePoint({ plan, stepIndex: i, stepCycle, loopState, bus });
+        await this._persist();
       }
     } catch (err) {
       if (isPause(err)) {
@@ -2664,6 +2680,23 @@ class Orchestrator extends EventEmitter {
     } catch {
       /* persistence is best-effort */
     }
+  }
+
+  /** Begin owning this run's row: stamp pid/host + start the heartbeat timer. Idempotent. */
+  _startHeartbeat() {
+    if (!this.pipeline?.id) return;
+    claimPipelineOwnership(this.pipeline.id);
+    if (this._heartbeatTimer) return;
+    this._heartbeatTimer = setInterval(() => {
+      try { touchHeartbeat(this.pipeline.id); } catch { /* best-effort */ }
+    }, HEARTBEAT_INTERVAL_MS);
+    this._heartbeatTimer.unref?.(); // never hold the process open
+  }
+
+  /** Stop heartbeating and drop ownership (terminal/paused). Safe to call repeatedly. */
+  _stopHeartbeat() {
+    if (this._heartbeatTimer) { clearInterval(this._heartbeatTimer); this._heartbeatTimer = null; }
+    if (this.pipeline?.id) clearPipelineOwnership(this.pipeline.id);
   }
 
   /** Terminal bookkeeping for a pause: persist the resume point + paused status. */

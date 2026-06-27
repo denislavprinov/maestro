@@ -65,7 +65,7 @@ test('POST /api/resume: unknown pipelineId -> 404', async () => {
 test('POST /api/resume: non-paused pipeline -> 400', async () => {
   const res = await post('/api/resume', { pipelineId: doneId });
   assert.equal(res.status, 400);
-  assert.match((await res.json()).error, /not paused/i);
+  assert.match((await res.json()).error, /not resumable/i);
 });
 
 test('POST /api/resume: paused row with missing worktree -> 400', async () => {
