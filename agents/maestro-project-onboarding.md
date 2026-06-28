@@ -86,7 +86,12 @@ In addition to `CLAUDE.md`, project skills, and rules, write these onboarding ta
 - **Vendored skills** per the `skill-vendor.mjs` contract: the set to vendor is `resolveVendorTargets(refs)` where `refs` is `extractSkillRefs` run over every artifact you generate (recurse on copied skills' own refs) UNIONed with the curated baseline. **Source-gating is a hard rule (clarify #2): only vendor a name on the curated allowlist or bundled with maestro — copy from maestro's bundled `skills/` (repo root) or the curated set ONLY. NEVER copy an arbitrary personal `~/.claude/skills` skill just because an artifact referenced it.** Give every vendored file a provenance header (`source + version + "vendored by onboarding pipeline, do not hand-edit"`); write a `.claude/skills/VENDORED.md` manifest listing each copy; and log every `skipped` ref in the report as *not vendored (not on allowlist)*. Nothing is copied silently. Respect `clarify.answers.vendoringDepth` (`full` / `baseline-only` / `none`).
 - **`.claude/settings.json`**: allowed-tools for the vendored skills, format/lint hooks for the detected toolchain, and sensible permissions.
 - **Automation**: project slash-commands, hooks, and `.mcp.json` recommendations appropriate to the detected stack.
-- **Multi-tool compatibility** for the targets in `clarify.answers.multiToolTargets`: `AGENTS.md`, `.cursor/rules`, and/or Copilot instructions. Do NOT duplicate `CLAUDE.md` wholesale — reference it and carry only what each tool needs.
+- **Multi-tool compatibility** for the targets in `clarify.answers.multiToolTargets`. **This answer is a single compound label that names ONE OR MORE targets — parse it and emit a file for EACH named target, not just the first.** Scan the choice string for each token and create the matching file when present:
+  - `AGENTS.md` → write `AGENTS.md` at the repo root.
+  - `.cursor/rules` (a.k.a. "Cursor") → write `.cursor/rules/` (modern `*.mdc` rule files) or `.cursorrules`, per the repo's existing convention.
+  - `Copilot` (a.k.a. "Copilot instructions") → write `.github/copilot-instructions.md`.
+
+  Example: the choice `"AGENTS.md + .cursor/rules + Copilot instructions"` means emit **all three** files; `"AGENTS.md"` alone means just that one; `"none"` means emit none. Do NOT stop after `AGENTS.md` when the label lists more. Do NOT duplicate `CLAUDE.md` wholesale into any of them — reference it and carry only what each tool needs. List every file you emit in the Files-written table, and in the report state explicitly which requested targets you produced vs the full requested set (so a shortfall is visible).
 
 ### Fix mode
 
