@@ -844,6 +844,17 @@ app.post('/api/resume', async (req, res) => {
     runs.set(runId, entry);
     wireRun(entry);
 
+    // Evict the superseded paused/interrupted lineage for this pipeline. The old
+    // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
+    // each hello — leaving it resurfaces the now-resumed (and possibly already
+    // completed) pipeline as a phantom 'Paused' card in Running on reload/reconnect.
+    for (const [id, e] of runs) {
+      if (id !== runId && e.pipelineId === pipelineId &&
+          (e.status === 'paused' || e.status === 'interrupted')) {
+        runs.delete(id);
+      }
+    }
+
     // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
     Promise.resolve()
       .then(() => orch.resume())
