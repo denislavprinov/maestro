@@ -25,7 +25,9 @@ You are the **Analyzer** for the AI-Enablement Onboarding pipeline. You build a 
 4. **Detect skill candidates.** Scan for recurring multi-file patterns worth a project skill, and populate `skillCandidates` ranked by `frequency × footgun`. Detection heuristic: a candidate exists when **N ≥ 2 files follow the same structural shape** (e.g. every Cloud Functions callable, every catalog page, every data-layer entity), OR a **documented hard-rule recurs across call sites** (e.g. the `us-central1` region rule). Record the surface, observed `frequency`, the `footgun` (what silently breaks when done wrong), 1–3 `exampleFiles`, and `whySkill`. This is the evidence infra-gen gates feature-skill generation on — be concrete, not aspirational.
 5. **Detect pure units.** Identify high-ROI pure/testable units — zero external deps, deterministic, easy to assert (formatters, parsers, validators, pure helpers like cents→string money formatting or lenient `parse*` functions) — and populate `pureUnits`. These are the cheapest first tests; test-gen seeds real tests over them. Record `file`, `symbol`, and a one-line `why`.
 
-Both fields are best-effort: when degraded (graphify unavailable), populate them from the direct read where obvious, otherwise leave them empty (`[]`).
+6. **Score the baseline readiness.** Before any infrastructure is generated, score the repo's AI-readiness **as it stands right now** (the existing `CLAUDE.md`/`AGENTS.md`/`.claude/**`, tests, rules, vendored skills — or their absence) and populate `baselineReadiness`. Use the SAME /100 rubric and the SAME dimension keys the evaluator uses at the end (`docs`, `skillsAgents`, `rules`, `tests`, `featureSkillCoverage`, `realTests`, `vendoring`, `multiTool`, `codeHealth`) so the final readiness card is directly comparable — final minus baseline IS the value this run added. This is a MEASUREMENT ONLY: never emit issues, never block, never gate anything on it. Most greenfield repos score low here (no skills, no tests) — that is the expected "where we started" signal, not a problem to fix.
+
+Both `skillCandidates`/`pureUnits` are best-effort: when degraded (graphify unavailable), populate them from the direct read where obvious, otherwise leave them empty (`[]`). `baselineReadiness` is likewise best-effort — score from whatever you can read; on a hard degrade set its `score` to `null`.
 
 ## Outputs
 
@@ -53,6 +55,12 @@ The summary JSON shape:
     { "file": "src/lib/money.ts", "symbol": "formatMoneyAmount",
       "why": "pure cents→string, no I/O — ideal first test" }
   ],
+  "baselineReadiness": {
+    "score": 28,
+    "dimensions": { "docs": 40, "skillsAgents": 0, "rules": 10, "tests": 0,
+      "featureSkillCoverage": 0, "realTests": 0, "vendoring": 0, "multiTool": 20, "codeHealth": 70 },
+    "note": "<1 line: what already existed vs what was missing at run start>"
+  },
   "graphDir": "<the committed graphify-out/ path>",
   "degraded": false
 }
@@ -60,4 +68,4 @@ The summary JSON shape:
 
 ## Output Contract
 
-Your final message reports: whether graphify succeeded (or how many retries / whether degraded), where the summary and `graphify-out/` were written, a 3–5 sentence project understanding, and a one-line count of `skillCandidates` and `pureUnits` detected (downstream infra-gen reads `skillCandidates`; test-gen reads `pureUnits`). Both fields are best-effort and may be empty when degraded. On a workspace fan-out, write one summary per member project.
+Your final message reports: whether graphify succeeded (or how many retries / whether degraded), where the summary and `graphify-out/` were written, a 3–5 sentence project understanding, a one-line count of `skillCandidates` and `pureUnits` detected (downstream infra-gen reads `skillCandidates`; test-gen reads `pureUnits`), and the **baseline readiness score** (`baselineReadiness.score`/100) so the run starts with a stated "where we started" number to compare the final card against. All three are best-effort and may be empty/`null` when degraded. On a workspace fan-out, write one summary per member project.
