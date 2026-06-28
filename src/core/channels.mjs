@@ -104,9 +104,13 @@ export function allocate(channel, ctx) {
     case 'readiness': {
       // The evaluator's AI-readiness report card: a human-readable md + a machine
       // json sibling (score + per-dimension breakdown). publish() folds the md path.
-      const stem = Number(cycle) > 1 ? `readiness-cycle${cycle}` : 'readiness';
-      return { kind: 'artifact', path: join(pipelineDir, `${stem}.md`),
-               jsonPath: join(pipelineDir, `${stem}.json`), channel: 'readiness' };
+      // CANONICAL "latest" pointer: every cycle writes the SAME unsuffixed path
+      // (latest-writer-wins), so `readiness.json` always reflects the FINAL cycle —
+      // never frozen at cycle 1. Per-cycle history is preserved in the always-suffixed
+      // `<key>-review-cycleN.json` verdicts (which now also carry the cycle's score),
+      // so a terminal human-facing card does not need its own per-cycle archive.
+      return { kind: 'artifact', path: join(pipelineDir, 'readiness.md'),
+               jsonPath: join(pipelineDir, 'readiness.json'), channel: 'readiness' };
     }
     default: {
       // Open vocabulary: any custom channel allocates a generic pipeline-dir

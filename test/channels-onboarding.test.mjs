@@ -22,7 +22,10 @@ test('allocate(readiness) → md + json pair', () => {
   const r = allocate('readiness', { ...A, key: 'onboardingEvaluator' });
   assert.equal(r.path, '/pipe/readiness.md');
   assert.equal(r.jsonPath, '/pipe/readiness.json');
-  assert.equal(allocate('readiness', { ...A, cycle: 3 }).jsonPath, '/pipe/readiness-cycle3.json');
+  // Canonical "latest" pointer: every cycle writes the SAME unsuffixed path so the
+  // card always reflects the final cycle (never frozen at cycle 1).
+  assert.equal(allocate('readiness', { ...A, cycle: 3 }).jsonPath, '/pipe/readiness.json');
+  assert.equal(allocate('readiness', { ...A, cycle: 3 }).path, '/pipe/readiness.md');
 });
 
 test('publish folds graph summary path onto the bus', () => {
