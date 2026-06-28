@@ -436,7 +436,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .chip.qcount{background:var(--amber-bg);color:var(--amber-ink);}
 .btn-stop.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
 .btn-pause.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
+.btn-resume.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
 .btn-pause.sm + .btn-stop.sm{margin-left:0;}
+.btn-resume.sm + .btn-stop.sm{margin-left:0;}
 
 /* expand to live log */
 .btn-expand{margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:var(--field);

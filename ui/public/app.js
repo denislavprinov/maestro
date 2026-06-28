@@ -425,8 +425,12 @@ function onHello(msg) {
     }
 
     const nonTerminal =
-      r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' || (r0.pendingQuestion != null);
-    // Backfill that run's buffered events exactly once per socket. (Runs started
+      r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' ||
+      r0.status === 'paused' || (r0.pendingQuestion != null);
+    // Backfill that run's buffered events exactly once per socket. (A paused run
+    // is included so a reload replays its buffered log + last state snapshot —
+    // otherwise its card shows no logs, no branch, and no frontier until resume.)
+    // (Runs started
     // by THIS tab already stream live via broadcast and were not in any prior
     // hello, so they get subscribed here only if a reconnect re-lists them.)
     if (nonTerminal && ws && state.wsReady && !state.helloSubscribed.has(r0.runId)) {
@@ -542,6 +546,9 @@ function nodeKindFor(r, status) {
   if (r.pendingQuestion != null) return 'pause';
   if (r.status === 'stopped') return 'stop';
   if (['done', 'complete', 'passed', 'finish'].includes(status)) return 'done';
+  // A gracefully paused/pausing run leaves its frontier node mid-flight: mark it
+  // paused so the stepper shows WHERE it stopped instead of a phantom "running…".
+  if (r.status === 'paused' || r.status === 'pausing') return 'pause';
   return 'now';
 }
 
@@ -2170,6 +2177,12 @@ if (typeof window !== 'undefined') {
     buildHistCard,
     pauseRun,
     setupResumeButton,
+    nodeKindFor,
+    upsertRun,
+    buildRunCard,
+    paintRunCard,
+    onHello,
+    isPaused,
   });
 }
 
@@ -5258,6 +5271,7 @@ async function resumeRunFromCard(runId, btn) {
       status: 'starting',
       kind: r.kind || 'run',
       pipelineId,
+      branchFeature: r.branchFeature,   // carry branch so the resumed card keeps its label
       local: true,
     });
     await seedResumedLog(data.runId, prevLines, null);  // in-memory pre-pause log → continuous
@@ -5916,6 +5930,13 @@ function setupResumeButton(node, projectDir, p) {
         (x) => x.runId !== data.runId && x.pipelineId === p.id && Array.isArray(x.logLines) && x.logLines.length
       );
       await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(p.id, p));
+      // Carry the branch label onto the resumed card (prior paused run, else the
+      // history record) so it doesn't blank until the first state event lands.
+      const nr = runs.get(data.runId);
+      if (nr) {
+        const feat = (prior && prior.branchFeature) || (p.branch && p.branch.feature) || null;
+        if (feat) { nr.branchFeature = feat; paintRunCard(nr); }
+      }
       if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
       hideViewer();
       updateNavCounts();
@@ -6695,6 +6716,18 @@ function statusPill(r) {
   }
 }
 
+// Render the run-card meta line (project · started · branch). Called from
+// buildRunCard (with the freshly built node, before r.el is assigned) AND from
+// paintRunCard on every repaint, so a branch that arrives on a later `state`
+// event (or a resume) refreshes the line instead of leaving it stale.
+function renderRunMeta(r, root = r.el) {
+  if (!root) return;
+  const metaEl = root.querySelector('.rm-text');
+  if (!metaEl) return;
+  const branchTxt = r.branchFeature ? ` · ${r.branchFeature}` : '';
+  metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}${branchTxt}`;
+}
+
 function buildRunCard(r) {
   const tpl = $('#run-card-tpl');
   const node = tpl.content.firstElementChild.cloneNode(true);
@@ -6709,11 +6742,7 @@ function buildRunCard(r) {
     titleEl.textContent = r.title;
     if (r.titleProvisional) titleEl.classList.add('title-provisional');
   }
-  const metaEl = node.querySelector('.rm-text');
-  if (metaEl) {
-    const branchTxt = r.branchFeature ? ` · ${r.branchFeature}` : '';
-    metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}${branchTxt}`;
-  }
+  renderRunMeta(r, node);
 
   // Hydrate the log from any events that arrived before the card existed.
   const logEl = node.querySelector('.log');
@@ -6987,6 +7016,10 @@ function currentNodeCycles(r) {
 
 function paintRunCard(r) {
   if (!r.el) return;
+
+  // Meta line (project · started · branch) — refresh so a branch that lands on a
+  // later state/resume event appears without a full card rebuild.
+  renderRunMeta(r);
 
   // Status pill: family class + text, preserving the leading .pdot.
   const pill = r.el.querySelector('.pill-run');
