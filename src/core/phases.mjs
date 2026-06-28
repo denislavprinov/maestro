@@ -659,6 +659,7 @@ export async function runReviewer(ctx, opts) {
     'markdown AND a machine-readable review JSON. ' +
     diffInstruction +
     '\n\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
     workspaceFanOutDirective('review', ctx.workspace) +
     `Plan that was implemented: ${planPath}\n` +
     `Write the review markdown to: ${reviewMdPath}\n` +
@@ -694,6 +695,7 @@ export async function runPlanReviewer(ctx, opts) {
     '\n## What to do\n\n' +
     'Review the implementation PLAN against the original request and the real codebase. Do NOT ' +
     'rewrite the plan. Write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
+    fanOutDirective(ctxFanOut(ctx)) +
     workspaceFanOutDirective('explore', ctx.workspace) +
     `Plan to review: ${planPath}\n` +
     `Write the review markdown to: ${reviewMdPath}\n` +
