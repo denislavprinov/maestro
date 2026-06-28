@@ -927,8 +927,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
 
 /* "Sub-agents" disclosure pill + its tree panel (shared by Run + History). */
-.subs-bar,.clarify-bar,.logs-bar{margin-top:14px;}
-.subs-bar[hidden],.clarify-bar[hidden],.logs-bar[hidden]{display:none;}
+.subs-bar,.clarify-bar,.logs-bar,.diff-bar,.overview-bar{margin-top:14px;}
+.subs-bar[hidden],.clarify-bar[hidden],.logs-bar[hidden],.diff-bar[hidden],.overview-bar[hidden]{display:none;}
 /* (.subs-panel rule already covers .clarify-panel/.logs-panel via the shared class) */
 .logs-panel .log{min-height:0;max-height:340px;margin-top:8px;}
 .btn-subs{display:inline-flex;align-items:center;gap:9px;background:var(--field);border:none;border-radius:999px;padding:9px 15px 9px 13px;font-family:inherit;font-weight:600;font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:background .15s;}
