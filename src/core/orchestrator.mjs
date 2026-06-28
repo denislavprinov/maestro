@@ -20,8 +20,10 @@ import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
 
+import { generateTitle } from './title.mjs';
 import {
   createPipeline,
+  updatePipelineTitle,
   appendAudit,
   writeState,
   artifactPaths,
@@ -36,7 +38,14 @@ import {
   writeDecomposition,
   updateTaskStatus,
   updatePhaseStatus,
+  readPipelineExtras,
+  claimPipelineOwnership,
+  touchHeartbeat,
+  clearPipelineOwnership,
+  HEARTBEAT_INTERVAL_MS,
 } from './artifacts.mjs';
+import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
+import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
@@ -45,9 +54,11 @@ import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
+import { classifyError } from './recoverable-error.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { loadAgentRegistry, collectChannelDefs } from './agent-registry.mjs';
+import { collectRequiredSkills, validateSkills, injectSkills } from './skills.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
@@ -58,6 +69,7 @@ import {
  * Default location of the agent prompt markdown files, relative to this module.
  */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
+const REPO_ROOT = new URL('../../', import.meta.url).pathname; // maestro repo root; holds skills/
 
 /**
  * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
@@ -72,6 +84,12 @@ const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 const FANOUT_ELIGIBLE = new Set([
   'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer',
 ]);
+
+/** Max auto-mode retries for a recoverable error before falling back to status error. */
+const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
+  const n = Number(process.env.MAESTRO_RECOVERY_MAX_ATTEMPTS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+})();
 
 /**
  * Build the synthetic implementer node for one decomposed task. Pure (exported for
@@ -180,10 +198,14 @@ class Orchestrator extends EventEmitter {
     this.abort = new AbortController();
     this.pauseRequested = false;
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
+    this.pauseReason = null;                 // set when a session/usage limit forces the pause
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
     this.pendingQuestion = null; // { id, resolve, reject, kind }
+    this._recovery = null;      // class -> in-flight Promise<'retry'|'abort'> (same-class dedupe)
+    this._recoveryTail = null;  // serializes _ask: only one recovery prompt open at a time
+    this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
     this.toolInstruction = '';
     // Cap for the in-worktree graphify build (macOS has no timeout(1)).
@@ -417,6 +439,13 @@ class Orchestrator extends EventEmitter {
         this.state.branches = {};
       }
       if (!this.state.title) this.state.title = basename(this.pipeline.dir);
+      // The title set above (firstMeaningfulLine(prompt) or the dir basename) is
+      // PROVISIONAL: shown instantly. Kick off the real LLM title without blocking
+      // run start. Skip on a resumed run — it already carries the previously-generated
+      // row.title (loaded by resume()). this.resumeOpts (= this.opts.resume) is the
+      // resume signal; resume() never reaches this run() site anyway (belt-and-suspenders).
+      this.state.titleProvisional = true;
+      if (!this.resumeOpts) this._kickoffTitleGeneration();
       this.baseName = this._deriveBaseName(this.pipeline.promptText, this.state.title);
       // Capture the date prefix ONCE so every plan -vN and the review file share
       // the v1 date even if the run crosses midnight.
@@ -426,6 +455,7 @@ class Orchestrator extends EventEmitter {
       this.state.baseName = this.baseName;
       this.state.datePrefix = this.planDatePrefix;
       await this._persist();
+      this._startHeartbeat(); // claim ownership + begin liveness heartbeat (crash detection)
       this._artifact('pipeline', this.pipeline.dir);
       await appendAudit(this.pipeline.dir, `Pipeline created (id ${this.pipeline.id}).`);
       if (tools.tool) {
@@ -453,6 +483,27 @@ class Orchestrator extends EventEmitter {
       else await this._buildWorktreeGraph();
       this._checkAbort();
 
+      // 3d) Resolve, validate, and inject declared agent skills onto the worktree
+      //     scan path. Hard-fails the run BEFORE any node if a required skill is
+      //     unresolvable (built beside graphify's probe; does not touch it).
+      const requiredSkills = collectRequiredSkills(this.registry, plan);
+      if (requiredSkills.length) {
+        const skillCtx = { repoRoot: REPO_ROOT, projectDir: this.projectDir };
+        const resolvedSkills = validateSkills(requiredSkills, skillCtx); // throws => caught => run ends 'error'
+        // Inject ONLY into real isolated worktrees, never the main projectDir,
+        // so a copy can never pollute the user's working tree.
+        const candidates = this.isWorkspace ? [...this.workDirs.values()] : [this.workDir];
+        const worktrees = candidates.filter((d) => d && d !== this.projectDir);
+        const injected = await injectSkills(resolvedSkills, { worktrees });
+        if (injected.length) {
+          await appendAudit(
+            this.pipeline.dir,
+            `Skills: injected ${injected.join(', ')} into ${worktrees.length} worktree(s).`,
+          );
+        }
+      }
+      this._checkAbort();
+
       // 4) (Clarify now runs as the first graph node — see _runClarifyNode.)
 
       // 5) Dispatch the resolved workflow (already snapshotted into state.stepper
@@ -467,9 +518,11 @@ class Orchestrator extends EventEmitter {
 
       // 9) Done.
       this._setStatus('done');
+      this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
       this._phase('done', 0, 'done');
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      await this._buildResults();          // refs + worktree still live here
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -519,6 +572,7 @@ class Orchestrator extends EventEmitter {
       });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
+      this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/error/paused)
       // C1: tear the worktree(s) down on done/stopped/error — the branch is always
       // kept (every member's, on a workspace run), only the disposable checkout is
       // removed. But NEVER on a pause: the checkout (with any uncommitted agent
@@ -540,7 +594,9 @@ class Orchestrator extends EventEmitter {
     const saved = this.resumeOpts;
     if (!saved?.row || !saved?.resumePoint) throw new Error('resume(): no saved pipeline provided');
     const { row, resumePoint: rp, steps } = saved;
-    if (row.status !== 'paused') throw new Error(`resume(): pipeline is "${row.status}", not paused`);
+    if (row.status !== 'paused' && row.status !== 'interrupted') {
+      throw new Error(`resume(): pipeline is "${row.status}", not resumable`);
+    }
     if (rp.version !== 1) throw new Error(`resume(): unsupported resume point version ${rp.version}`);
     try {
       // ── rehydrate identity + state ──
@@ -620,6 +676,7 @@ class Orchestrator extends EventEmitter {
       this.state.resumePoint = null; // consumed; cleared on the next persist
       this._setStatus('running');
       await this._persist();
+      this._startHeartbeat();
       await appendAudit(this.pipeline.dir, `Pipeline **resumed** (from ${rp.kind} at step ${rp.stepIndex}).`);
       this._emit('state', this.getState());
 
@@ -636,9 +693,11 @@ class Orchestrator extends EventEmitter {
       if (dispatched === 'paused') return await this._completePaused();
 
       this._setStatus('done');
+      this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
       this._phase('done', 0, 'done');
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      await this._buildResults();          // refs + worktree still live here
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -670,6 +729,7 @@ class Orchestrator extends EventEmitter {
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
+      this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/error/paused)
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         if (this.isWorkspace) await this._teardownWorktreeAll().catch(() => {});
         else await this._teardownWorktree().catch(() => {});
@@ -1212,6 +1272,10 @@ class Orchestrator extends EventEmitter {
           await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
         }
         if (!rewound) i += 1;
+        // Crash-recovery trail: every completed step boundary persists a boundary resume
+        // point for the NEXT step. A hard stop now leaves a valid recovery position.
+        this.state.resumePoint = this._buildResumePoint({ plan, stepIndex: i, stepCycle, loopState, bus });
+        await this._persist();
       }
     } catch (err) {
       if (isPause(err)) {
@@ -1424,20 +1488,33 @@ class Orchestrator extends EventEmitter {
     let result;
     let endMark = 'done';
     try {
-      const runner = this._runners[node.runnerType];
-      if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
-      try {
-        result = await runner(ctx);
-      } catch (err) {
-        // Session-resume fallback (spec §7): a vanished session must not fail the
-        // run — re-run the node fresh, once, and audit the fallback.
-        if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
-          this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
-          await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
-          ctx.resumeSessionId = undefined;
-          result = await runner(ctx);
-        } else {
-          throw err;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          result = await this._runOnce(node, ctx);
+          break;
+        } catch (err) {
+          // Pause/stop always win over a recoverable error.
+          if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+            endMark = 'paused';
+            throw pauseErr();
+          }
+          if (isAbort(err) || isPause(err)) throw err;
+          const cls = classifyError(err);
+          if (!cls) throw err;                    // not recoverable -> today's path
+          if (cls === 'usage_limit') {
+            // A session/usage cap that only clears after a multi-hour reset.
+            // Retrying is futile and would burn the backoff budget then FAIL the
+            // run (discarding worktree work). Pause the whole run instead so the
+            // user resumes after the reset. pause() aborts in-flight siblings and
+            // the unwind persists a resume point (the same path as a manual pause).
+            this._pauseForLimit(node, err);
+            endMark = 'paused';
+            throw pauseErr();
+          }
+          const decision = await this._recover({ node, cls, err, attempt });
+          if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
+          this._nodeStep(node, stepIndex, cycle, 'start'); // node back to running for the retry
+          // loop -> re-run the node fresh
         }
       }
     } catch (err) {
@@ -1451,6 +1528,109 @@ class Orchestrator extends EventEmitter {
     }
     // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
     return { node, result, ctx };
+  }
+
+  /** Run a node's runner once, with the spec §7 vanished-session fresh re-run
+   *  fallback (a dead `--resume` session must not fail the run). Extracted from
+   *  _runNode verbatim so the recovery loop wraps a single clean call. */
+  async _runOnce(node, ctx) {
+    const runner = this._runners[node.runnerType];
+    if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
+    try {
+      return await runner(ctx);
+    } catch (err) {
+      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
+        await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
+        ctx.resumeSessionId = undefined;
+        return await runner(ctx);
+      }
+      throw err;
+    }
+  }
+
+  /** Pause the whole run because a node hit a session/usage cap that only clears
+   *  after a long reset. Records the cap message (surfaced on the paused row /
+   *  audit) and signals a graceful pause; the caller throws pauseErr() to unwind
+   *  this node, and pause() aborts the in-flight siblings. Idempotent: the first
+   *  limit-hit among parallel siblings wins, the rest no-op. */
+  _pauseForLimit(node, err) {
+    const reason = firstLine(err?.message || String(err));
+    if (!this.pauseReason) this.pauseReason = reason;
+    this._log(node.key, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`);
+    appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${node.key} — ${reason}. Resume after the reset.`).catch(() => {});
+    this.pause();
+  }
+
+  /** Decide how to recover from a classified error. Auto mode: bounded backoff
+   *  then give up (and abort immediately if a pause fired during backoff, so a
+   *  pause is never followed by a wasted retry). Interactive: ONE shared prompt
+   *  per error class (same-class siblings await the same answer), and distinct
+   *  classes are serialized so only one recovery prompt is open at a time (the
+   *  gate holds a single pendingQuestion). Returns 'retry' | 'abort'. */
+  async _recover({ node, cls, err, attempt }) {
+    this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`);
+    await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
+
+    if (this.auto) {
+      if (attempt > RECOVERY_MAX_AUTO_ATTEMPTS) return 'abort';
+      await this._backoff(attempt, this.pauseAbort.signal);
+      // A pause during backoff must win: abort instead of retrying. The loop's
+      // outer catch then re-classifies the thrown error under pauseRequested and
+      // unwinds as a pause (the pauseAbort signal is aborted).
+      if (this.pauseRequested || this.pauseAbort.signal.aborted) return 'abort';
+      return 'retry';
+    }
+
+    this._recovery ||= new Map();
+    if (!this._recovery.has(cls)) {
+      const p = this._enqueueRecoveryPrompt(cls, firstLine(err.message))
+        .finally(() => { if (this._recovery) this._recovery.delete(cls); });
+      this._recovery.set(cls, p);
+    }
+    return this._recovery.get(cls);
+  }
+
+  /** Open a recovery prompt for one class, serialized behind any in-flight
+   *  recovery prompt (the question gate has a single pendingQuestion slot, so
+   *  distinct classes must queue — see the clarify answer). Returns 'retry'|'abort'. */
+  _enqueueRecoveryPrompt(cls, message) {
+    const run = () =>
+      this._ask({
+        id: `recovery-${cls}-${this._recoveryNonce()}`,
+        kind: 'recovery',
+        recovery: { cls, message },
+      }).then((ans) => (ans && ans.decision === 'abort' ? 'abort' : 'retry'));
+    // Chain after the current tail (run regardless of whether the prior prompt
+    // resolved or rejected) so only one prompt is ever open.
+    const prev = this._recoveryTail || Promise.resolve();
+    const next = prev.then(run, run);
+    this._recoveryTail = next.catch(() => {}); // tail must never reject the chain
+    return next;
+  }
+
+  /** Abort-aware backoff: base * 2^(attempt-1) ms, resolving early (and still
+   *  'retry') if the pause-only signal fires so a pause is not delayed. */
+  _backoff(attempt, signal) {
+    const base = (() => {
+      const n = Number(process.env.MAESTRO_RECOVERY_BACKOFF_MS);
+      return Number.isFinite(n) && n >= 0 ? n : 1000;
+    })();
+    const ms = base * Math.pow(2, Math.max(0, attempt - 1));
+    if (!ms) return Promise.resolve();
+    return new Promise((res) => {
+      const t = setTimeout(res, ms);
+      t.unref?.();
+      if (signal) {
+        if (signal.aborted) { clearTimeout(t); res(); }
+        else signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });
+      }
+    });
+  }
+
+  /** Monotonic id source for recovery prompts (no Date.now/random — replay-safe). */
+  _recoveryNonce() {
+    return ++this._recoverySeq;
   }
 
   /**
@@ -1575,7 +1755,7 @@ class Orchestrator extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues }) {
+  async _ask({ id, kind, questions, issues, recovery }) {
     this._checkAbort();
 
     // Freeze the active-time clock while we wait on the user (active-time-only).
@@ -1587,10 +1767,15 @@ class Orchestrator extends EventEmitter {
       this._persist().catch(() => {});
     }
 
-    this._emit('question', { id, kind, questions, issues });
+    this._emit('question', { id, kind, questions, issues, recovery });
 
     try {
       if (this.auto) {
+        if (kind === 'recovery') {
+          // Auto mode handles recovery in _recover before ever calling _ask;
+          // this is a defensive fallback so an auto run can never hang.
+          return { decision: 'abort' };
+        }
         if (kind === 'clarify') {
           this._log('orchestrator', 'info', `auto-answering clarify ${id}`);
           return {
@@ -2116,6 +2301,47 @@ class Orchestrator extends EventEmitter {
     return ref.ok ? ref.stdout.trim() : null;
   }
 
+  /**
+   * Layer 1: build + persist the deterministic results view while the worktree(s)
+   * and checkpoint refs are still live. Best-effort: never throws into run().
+   */
+  async _buildResults() {
+    if (!this.pipeline) return;
+    try {
+      const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
+      if (this.isWorkspace) {
+        const members = [];
+        const patches = [];
+        for (const [projectKey, dir] of this.workDirs.entries()) {
+          const base = this.checkpointRefs[projectKey];
+          if (!base) continue;
+          const [ns, num, patch] = await Promise.all([
+            diffNameStatus(dir, base), diffNumstat(dir, base), diffPatch(dir, base),
+          ]);
+          const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
+          members.push({ projectKey, results });
+          patches.push(`# ${projectKey}\n${patch}`);
+        }
+        const perProject = buildPerProject(members);
+        const results = { summary: rollupSummary(perProject), perProject };
+        await persistResults(this.pipeline.dir, results);
+        await persistDiffPatch(this.pipeline.dir, patches.join('\n\n'));
+      } else {
+        const base = this.checkpointRef;
+        if (!base) return;
+        const dir = this.workDir || this.projectDir;
+        const [ns, num, patch] = await Promise.all([
+          diffNameStatus(dir, base), diffNumstat(dir, base), diffPatch(dir, base),
+        ]);
+        const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
+        await persistResults(this.pipeline.dir, results);
+        await persistDiffPatch(this.pipeline.dir, patch);
+      }
+    } catch (err) {
+      this._log('results', 'warn', `results build failed: ${err.message}`);
+    }
+  }
+
   /** Single-project checkpoint: own repo + commit, record the scalar ref + state. */
   async _ensureGitCheckpoint() {
     this.checkpointRef = await this._ensureGitCheckpointFor(this.projectDir);
@@ -2420,6 +2646,33 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Fire-and-forget: generate a concise LLM title and, when ready, persist + broadcast it.
+   * The promise is stored on this._titlePromise for test determinism but is NEVER awaited
+   * by run() (must not delay the run). Aborts with the run via this.abort.signal.
+   */
+  _kickoffTitleGeneration() {
+    const prompt = this.pipeline?.promptText || this.opts.prompt || '';
+    const id = this.pipeline?.id;
+    if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
+    this._titlePromise = Promise.resolve()
+      .then(() => generateTitle(prompt, {
+        cwd: this.projectDir,
+        signal: this.abort.signal,
+      }))
+      .then((real) => {
+        if (!real || real === this.state.title) return;     // empty / unchanged → keep provisional
+        if (this.abort.signal.aborted) return;
+        this.state.title = real;
+        this.state.titleProvisional = false;
+        this.state.updatedAt = new Date().toISOString();
+        updatePipelineTitle(id, real);                      // persist (dedicated UPDATE)
+        // Carry pipelineId: the client run model has no pipeline id; History patch needs it.
+        this._emit('title', { title: real, provisional: false, pipelineId: id }); // live broadcast
+      })
+      .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
+  }
+
   async _persist() {
     if (!this.pipeline) return;
     try {
@@ -2429,13 +2682,32 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /** Begin owning this run's row: stamp pid/host + start the heartbeat timer. Idempotent. */
+  _startHeartbeat() {
+    if (!this.pipeline?.id) return;
+    claimPipelineOwnership(this.pipeline.id);
+    if (this._heartbeatTimer) return;
+    this._heartbeatTimer = setInterval(() => {
+      try { touchHeartbeat(this.pipeline.id); } catch { /* best-effort */ }
+    }, HEARTBEAT_INTERVAL_MS);
+    this._heartbeatTimer.unref?.(); // never hold the process open
+  }
+
+  /** Stop heartbeating and drop ownership (terminal/paused). Safe to call repeatedly. */
+  _stopHeartbeat() {
+    if (this._heartbeatTimer) { clearInterval(this._heartbeatTimer); this._heartbeatTimer = null; }
+    if (this.pipeline?.id) clearPipelineOwnership(this.pipeline.id);
+  }
+
   /** Terminal bookkeeping for a pause: persist the resume point + paused status. */
   async _completePaused() {
     this._setStatus('paused');
     await this._persist();
-    await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
-    this._emit('done', { status: 'paused', pipelineDir: this.pipeline.dir });
-    return { status: 'paused', pipelineDir: this.pipeline.dir };
+    // A plain manual pause has no reason; only a limit-pause records one (audited
+    // already at the pause site, so don't double-log it here).
+    if (!this.pauseReason) await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
+    this._emit('done', { status: 'paused', pipelineDir: this.pipeline.dir, reason: this.pauseReason || null });
+    return { status: 'paused', pipelineDir: this.pipeline.dir, reason: this.pauseReason || null };
   }
 }
 

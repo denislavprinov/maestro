@@ -12,6 +12,7 @@ import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises'
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
@@ -850,7 +851,7 @@ export async function appendAudit(pipelineDir, markdownLine) {
 }
 
 /** Resolve the 8-hex pipeline id for a run dir: cache hit, else parse the basename. */
-function resolvePipelineId(pipelineDir) {
+export function resolvePipelineId(pipelineDir) {
   if (!pipelineDir) return null;
   const hit = _dirIdCache.get(resolve(pipelineDir));
   if (hit) return hit;
@@ -943,6 +944,26 @@ export async function writeState(pipelineDir, stateObj) {
 }
 
 /**
+ * Mutate ONLY the title of an existing pipeline row. writeState()'s UPSERT treats
+ * title as creation-immutable, so this is the single sanctioned post-creation path.
+ * Best-effort (mirrors writeReview/recordArtifact): a failure must not crash a run.
+ * @param {string} pipelineId
+ * @param {string} title
+ */
+export function updatePipelineTitle(pipelineId, title) {
+  if (!pipelineId || typeof title !== 'string' || !title.trim()) return;
+  try {
+    tx(() => {
+      getDb()
+        .prepare('UPDATE pipelines SET title = @title, updated_at = @updated_at WHERE id = @id')
+        .run({ id: pipelineId, title: title.trim(), updated_at: new Date().toISOString() });
+    });
+  } catch {
+    /* best-effort: the live state event still carries the new title */
+  }
+}
+
+/**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
  * catch/finally could write a terminal status, so the row was frozen at 'running'.
@@ -969,48 +990,161 @@ function staleRunMs() {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_STALE_RUN_MS;
 }
 
+/** Heartbeat refresh interval (ms): the running process re-stamps heartbeat_at this often. */
+export const HEARTBEAT_INTERVAL_MS = 30 * 1000;
+
 /**
- * Flip stale non-terminal pipeline rows (created/starting/running/pausing) to INTERRUPTED.
- * A row is stale when ALL hold:
- *   - status is non-terminal,
- *   - COALESCE(updated_at, started_at) is older than `staleMs` (a NULL coalesce is
- *     NOT < cutoff in SQL, so timestamp-less rows are skipped — never clobbered),
- *   - its id is not in `liveIds` (runs live in THIS process).
- * The updated_at threshold shields runs live in a CONCURRENT process; the UPDATE is
- * additionally guarded `AND status IN (non-terminal)` so a terminal status written by
- * another process between the SELECT and the UPDATE is never overwritten. The SELECT
- * runs OUTSIDE tx() (no write lock on the common no-op path); tx() wraps only the
- * UPDATE loop. Does not change updated_at (preserves History order; idempotent —
- * INTERRUPTED is terminal, so it is excluded from the filter and a re-run flips nothing).
- *
- * Uses node:sqlite (StatementSync): .all()/.run() take anonymous '?' params variadically;
- * .run() returns { changes }. Callers must NOT invoke this inside an open tx() (it opens
- * its own); the two production call sites (GET /api/history, boot) are not in a tx.
- *
- * @param {{ staleMs?:number, liveIds?:string[], now?:number }} [opts]
- * @returns {{ reconciled:number, ids:string[] }}  ids = rows actually flipped this call
+ * Heartbeat staleness window (ms). A running/pausing row whose heartbeat_at is older than
+ * this is treated as dead regardless of host — the heartbeat arm is the authoritative liveness
+ * signal and handles PID reuse (a reused pid reads "alive" from probe, but heartbeat went cold
+ * when the original process died). 90s ≫ the 30s interval, so two missed beats are tolerated.
  */
-export function reconcileStaleRunning({ staleMs = staleRunMs(), liveIds = [], now = Date.now() } = {}) {
-  const cutoff = new Date(now - staleMs).toISOString();
+const DEFAULT_HEARTBEAT_STALE_MS = 90 * 1000;
+function heartbeatStaleMs() {
+  const n = Number(process.env.MAESTRO_HEARTBEAT_STALE_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_HEARTBEAT_STALE_MS;
+}
+
+/**
+ * Default pid liveness probe. kill(pid,0) sends no signal — probes existence/permission only.
+ * EPERM => the pid exists but is owned by another user (alive). ESRCH / any other error => dead.
+ * Non-int / <=0 => dead. CALLER MUST gate this on owner_host === thisHost.
+ * @param {number} pid
+ * @returns {boolean}
+ */
+function defaultPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return !!e && e.code === 'EPERM'; }
+}
+
+/**
+ * Stamp ownership when a process starts driving a run: owner_pid/owner_host + initial heartbeat.
+ * Status-guarded so it never resurrects a terminal row. Best-effort.
+ * @param {string} pipelineId
+ * @param {{ pid?:number, host?:string, now?:number }} [opts]
+ */
+export function claimPipelineOwnership(pipelineId, { pid = process.pid, host = hostname(), now = Date.now() } = {}) {
+  if (!pipelineId) return;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        UPDATE pipelines SET owner_pid = ?, owner_host = ?, heartbeat_at = ?
+        WHERE id = ? AND status IN ('running', 'pausing')
+      `).run(pid, host, new Date(now).toISOString(), pipelineId);
+    });
+  } catch { /* liveness is best-effort; never crash a run */ }
+}
+
+/**
+ * Lightweight heartbeat tick: refresh heartbeat_at ONLY. Status-guarded so a beat that fires
+ * after a terminal write is a no-op. Returns the number of rows updated (0 or 1).
+ * @param {string} pipelineId
+ * @param {{ now?:number }} [opts]
+ * @returns {number}
+ */
+export function touchHeartbeat(pipelineId, { now = Date.now() } = {}) {
+  if (!pipelineId) return 0;
+  try {
+    return getDb().prepare(`
+      UPDATE pipelines SET heartbeat_at = ?
+      WHERE id = ? AND status IN ('running', 'pausing')
+    `).run(new Date(now).toISOString(), pipelineId).changes;
+  } catch { return 0; }
+}
+
+/**
+ * Drop ownership/heartbeat (NULL all three) when a run reaches any terminal/paused status.
+ * Unconditional by status (the run is over); best-effort.
+ * @param {string} pipelineId
+ */
+export function clearPipelineOwnership(pipelineId) {
+  if (!pipelineId) return;
+  try {
+    tx(() => {
+      getDb().prepare(
+        'UPDATE pipelines SET owner_pid = NULL, owner_host = NULL, heartbeat_at = NULL WHERE id = ?',
+      ).run(pipelineId);
+    });
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Decide whether a non-terminal row is dead. Three arms (first match wins):
+ *
+ *   Arm 1 (PID, same-host dead detection):
+ *     owner_host === thisHost && owner_pid set && pid NOT alive → dead immediately.
+ *
+ *   Arm 2 (Heartbeat — authoritative, handles PID reuse):
+ *     heartbeat_at set && older than hbStaleMs → dead.
+ *     Fires for ANY row (any host), including same-host rows where pid appears alive.
+ *     A reused pid reads "alive" from probe but the original process's heartbeat went cold.
+ *
+ *   Arm 3 (Legacy time window, ownerless rows only):
+ *     No heartbeat_at AND no owner_pid AND COALESCE(updated_at,started_at) < cutoff → dead.
+ *     Preserves today's behavior for pre-v10 rows. NULL-timestamp ownerless rows return false.
+ *
+ * @param {object} row
+ * @param {{ host:string, now:number, staleMs:number, hbStaleMs:number, pidAlive?:(pid:number)=>boolean }} ctx
+ * @returns {boolean}
+ */
+export function isDeadOwner(row, { host, now, staleMs, hbStaleMs, pidAlive = defaultPidAlive }) {
+  const ownedHere = row.owner_host === host && row.owner_pid != null;
+
+  // Arm 1: dead pid on this host → dead immediately.
+  if (ownedHere && !pidAlive(row.owner_pid)) return true;
+
+  // Arm 2: heartbeat arm — authoritative, covers cross-host and same-host PID reuse.
+  if (row.heartbeat_at != null) {
+    const beat = Date.parse(row.heartbeat_at);
+    return Number.isFinite(beat) && (now - beat) > hbStaleMs;
+  }
+
+  // Arm 3: legacy ownerless rows (both owner_pid and heartbeat_at are NULL).
+  if (row.owner_pid == null) {
+    const ts = Date.parse(row.updated_at || row.started_at || '');
+    return Number.isFinite(ts) && ts < (now - staleMs);
+  }
+
+  // owner_pid set on another host, no heartbeat: leave for that host's sweep.
+  return false;
+}
+
+/**
+ * Flip stale/crashed non-terminal pipeline rows (created/starting/running/pausing) to
+ * INTERRUPTED. Uses three-arm liveness detection (PID + heartbeat + legacy time). Rows in
+ * `liveIds` (live in THIS process) are never touched. The status-guarded UPDATE also NULLs
+ * the owner columns so a reclassified row is clean and idempotent.
+ *
+ * @param {{ host?:string, staleMs?:number, hbStaleMs?:number, liveIds?:string[], now?:number, pidAlive?:Function }} [opts]
+ * @returns {{ reconciled:number, ids:string[] }}
+ */
+export function reconcileStaleRunning({
+  host = hostname(), staleMs = staleRunMs(), hbStaleMs = heartbeatStaleMs(),
+  liveIds = [], now = Date.now(),
+  pidAlive = defaultPidAlive,
+} = {}) {
   const live = new Set(liveIds.filter(Boolean));
   const placeholders = RECONCILE_NON_TERMINAL.map(() => '?').join(', ');
 
-  // Read first — no write lock yet. NULL COALESCE is not < cutoff, so timestamp-less
-  // rows are never selected (conservative no-clobber).
+  // Read ALL non-terminal rows (no SQL time pre-filter: the PID arm must see fresh rows).
+  // In normal operation non-terminal rows are near-zero, so this is cheap.
   const rows = getDb().prepare(`
-    SELECT id FROM pipelines
+    SELECT id, status, updated_at, started_at, owner_pid, owner_host, heartbeat_at
+    FROM pipelines
     WHERE status IN (${placeholders})
-      AND COALESCE(updated_at, started_at) < ?
-  `).all(...RECONCILE_NON_TERMINAL, cutoff);
+  `).all(...RECONCILE_NON_TERMINAL);
 
-  const candidates = rows.map((r) => r.id).filter((id) => !live.has(id));
+  const candidates = rows
+    .filter((r) => !live.has(r.id) && isDeadOwner(r, { host, now, staleMs, hbStaleMs, pidAlive }))
+    .map((r) => r.id);
   if (candidates.length === 0) return { reconciled: 0, ids: [] };
 
-  // Status-guarded UPDATE: refuse to overwrite a terminal status a concurrent process
-  // may have committed since the SELECT. changes>0 => we actually flipped this row.
+  // Status-guarded UPDATE. Also NULLs owner columns so reclassified rows are clean.
   return tx(() => {
     const upd = getDb().prepare(
-      `UPDATE pipelines SET status = ? WHERE id = ? AND status IN (${placeholders})`);
+      `UPDATE pipelines SET status = ?, owner_pid = NULL, owner_host = NULL, heartbeat_at = NULL
+       WHERE id = ? AND status IN (${placeholders})`);
     const flipped = [];
     for (const id of candidates) {
       const info = upd.run(INTERRUPTED_STATUS, id, ...RECONCILE_NON_TERMINAL);
@@ -1437,7 +1571,7 @@ function buildAuditMarkdown(row) {
  * @param {string} id
  * @returns {object|null}
  */
-function lookupPipelineRow(key, id) {
+export function lookupPipelineRow(key, id) {
   const isWs = typeof key === 'string' && key.startsWith('workspaces/');
   const col = isWs ? 'workspace_key' : 'project_key';
   const val = isWs ? key.slice('workspaces/'.length) : key;
@@ -1471,12 +1605,25 @@ export async function readPipeline(projectDir, id) {
 export async function readPipelineByKey(key, id) {
   const row = lookupPipelineRow(key, id);
   if (!row) return null;
+  // Layer-1 results + (if generated) the Layer-2 overview, read from the run dir.
+  // File-name literals inlined (not imported from results.mjs) to avoid a load-order
+  // cycle: results.mjs imports recordArtifact/resolvePipelineId from this module.
+  const dir = await runDirForRow(row);
+  const results = await readJsonFile(join(dir, 'results.json'));
+  const overview = await readJsonFile(join(dir, 'overview.json'));
   return {
     state: rowToState(row),
     auditMarkdown: buildAuditMarkdown(row),
     artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
+    results,
+    overview,
     ...readPipelineExtras(row.id),
   };
+}
+
+/** Local helper: read + JSON-parse a file, null on any failure. */
+async function readJsonFile(p) {
+  try { return JSON.parse(await readFile(p, 'utf8')); } catch { return null; }
 }
 
 /**
@@ -1502,6 +1649,37 @@ export async function readRunLogText(key, id) {
   } catch {
     return null; // no log file (older run / never bound)
   }
+}
+
+/**
+ * Resolve a pipeline row's absolute on-disk run dir (mirrors readRunLogText).
+ * Workspace rows (target==='workspace') live under the workspace store namespace,
+ * keyed by workspace_key; project rows live under their project store namespace.
+ * @returns {Promise<string>}
+ */
+export async function runDirForRow(row) {
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs
+    ? workspaceStorePath(row.workspace_key)
+    : projectStorePath(row.project_key);
+  const pipelinesDir = join(storeRoot, 'pipelines');
+  const dirById = await runDirIndex(pipelinesDir);
+  return dirById.get(row.id) || join(pipelinesDir, row.id);
+}
+
+/** Read a pipeline-local artifact file as text, or null if absent. */
+export async function readRunArtifactText(key, id, relPath) {
+  const row = lookupPipelineRow(key, id);
+  if (!row) return null;
+  const dir = await runDirForRow(row);
+  try { return await readFile(join(dir, relPath), 'utf8'); } catch { return null; }
+}
+
+/** Read + JSON-parse a pipeline-local artifact, or null. */
+export async function readRunArtifactJson(key, id, relPath) {
+  const txt = await readRunArtifactText(key, id, relPath);
+  if (txt == null) return null;
+  try { return JSON.parse(txt); } catch { return null; }
 }
 
 /**

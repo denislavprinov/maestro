@@ -28,8 +28,10 @@
           <a href="#running" data-nav="running">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
+            <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
             <span class="nav-count n-amber" id="nav-running-count">0</span>
           </a>
+          <div class="nav-children" id="nav-running-children"></div>
           <a href="#history" data-nav="history">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
             <span>History</span>
@@ -72,7 +74,7 @@
         <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
         <nav class="topnav">
           <a href="#new" data-nav="new" class="active">New</a>
-          <a href="#running" data-nav="running">Running</a>
+          <a href="#running" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></a>
           <a href="#history" data-nav="history">History</a>
           <a href="#workspaces" data-nav="workspaces">Workspaces</a>
           <a href="#agents" data-nav="agents">Agents</a>
@@ -325,7 +327,7 @@
                 <span class="pill-run"><span class="pdot"></span><span class="pill-text"></span></span>
               </div>
               <div class="run-flow-wrap"><div class="run-flow"></div></div>
-              <div class="run-foot"><span class="chip"></span><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
+              <div class="run-foot"><span class="chip"></span><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
               <div class="subs-bar" hidden>
                 <button type="button" class="btn-subs" aria-expanded="false">
                   <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
@@ -380,6 +382,28 @@
               </div>
               <div class="hist-detail" hidden>
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
+                <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
+                <div class="results-section"></div>
+                <!-- Diff dropdown (New/Changed files) — collapsed by default -->
+                <div class="diff-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>
+                    Diff
+                    <span class="sb-count diff-changed grey"></span>
+                    <span class="sb-count diff-removed grey"></span>
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel diff-panel" hidden></div>
+                </div>
+                <!-- Overview dropdown (Layer-2 summary) — collapsed; Generate button built on first expand -->
+                <div class="overview-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Overview
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel overview-panel" hidden></div>
+                </div>
                 <div class="subs-bar" hidden>
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>

@@ -45,6 +45,7 @@ import {
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
 } from '../src/core/workspaces.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
+import { generateOverview } from '../src/core/overview-agent.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
@@ -114,7 +115,7 @@ function liveRunIds() {
   return ids;
 }
 
-const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills'];
+const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'title'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
@@ -355,6 +356,11 @@ function wireRun(entry) {
         // state.id after createPipeline. Guard so null in pre-createPipeline
         // snapshots cannot overwrite a previously-captured value.
         if (typeof payload.id === 'string' && payload.id) entry.pipelineId = payload.id;
+      }
+      if (name === 'title' && payload && typeof payload.title === 'string') {
+        // Keep the in-memory run fresh so a late-joining client's hello
+        // (summarizeRuns reads entry.title) sees the settled title.
+        entry.title = payload.title;
       }
 
       record(event);
@@ -777,7 +783,7 @@ app.post('/api/resume', async (req, res) => {
     if (!pipelineId || typeof pipelineId !== 'string') return badRequest(res, 'pipelineId is required');
     const saved = readPipelineForResume(pipelineId);
     if (!saved) return res.status(404).json({ error: 'pipeline not found' });
-    if (saved.row.status !== 'paused') return badRequest(res, `pipeline is "${saved.row.status}", not paused`);
+    if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') return badRequest(res, `pipeline is "${saved.row.status}", not resumable`);
     if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
 
     // Double-resume guard: any live entry already driving this pipeline id.
@@ -837,6 +843,17 @@ app.post('/api/resume', async (req, res) => {
     };
     runs.set(runId, entry);
     wireRun(entry);
+
+    // Evict the superseded paused/interrupted lineage for this pipeline. The old
+    // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
+    // each hello — leaving it resurfaces the now-resumed (and possibly already
+    // completed) pipeline as a phantom 'Paused' card in Running on reload/reconnect.
+    for (const [id, e] of runs) {
+      if (id !== runId && e.pipelineId === pipelineId &&
+          (e.status === 'paused' || e.status === 'interrupted')) {
+        runs.delete(id);
+      }
+    }
 
     // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
     Promise.resolve()
@@ -916,6 +933,30 @@ app.get('/api/runs/:id', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
+// Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
+// ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500.
+// ---------------------------------------------------------------------------
+app.post('/api/runs/:id/overview', async (req, res) => {
+  const id = req.params.id;
+  let key = typeof req.query.key === 'string' ? req.query.key : null;
+  if (!key) {
+    const projectDir = resolveProjectDir(req.query.projectDir);
+    if (!projectDir) return badRequest(res, 'key or projectDir is required');
+    key = projectKey(projectDir);
+  }
+  const force = req.query.force === '1' || req.query.force === 'true';
+  try {
+    const overview = await generateOverview(key, id, { force });
+    res.json({ overview });
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const code = msg === 'pipeline not found' ? 404 : 500;
+    res.status(code).json({ error: msg });
   }
 });
 
@@ -1625,6 +1666,7 @@ app.post('/api/workflows', async (req, res) => {
   // Build the candidate template from the editor payload (topology only).
   const tpl = {
     name: typeof body.name === 'string' ? body.name.trim() : '',
+    domain: typeof body.domain === 'string' ? body.domain : undefined, // writeWorkflow normDomain → 'general' if absent/blank/malformed
     steps: Array.isArray(body.steps) ? body.steps : [],
     feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
   };

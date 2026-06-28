@@ -305,6 +305,28 @@ async function askGate(rl, issues) {
   return { decision };
 }
 
+/**
+ * Ask the user how to handle a recoverable error (auth / rate-limit / quota /
+ * network). Shows the cause and waits for retry / abort. Returns { decision }.
+ */
+async function askRecovery(rl, recovery) {
+  const rec = recovery || {};
+  out('');
+  out(c('yellow', c('bold', `Recoverable ${String(rec.cls || 'error').replace('_', ' ')} error — the pipeline could not reach the model.`)));
+  if (rec.message) out(c('gray', `  ${rec.message}`));
+  if (rec.cls === 'auth') out(c('gray', '  Fix: re-authenticate (claude setup-token or /login) in another terminal, then retry.'));
+  else out(c('gray', '  Fix: wait out the limit / restore connectivity / top up credit, then retry.'));
+  out('  1) Retry');
+  out('  2) Abort the run');
+  let decision = '';
+  while (!decision) {
+    const raw = (await question(rl, c('cyan', 'Choose [1-2]: '))).trim();
+    if (raw === '1' || /^retry/i.test(raw)) decision = 'retry';
+    else if (raw === '2' || /^abort/i.test(raw)) decision = 'abort';
+  }
+  return { decision };
+}
+
 // ── shared drive loop ────────────────────────────────────────────────────────────
 
 /**
@@ -335,7 +357,7 @@ async function attachAndDrive(orch, flags, start) {
     process.stderr.write(c('red', `Error: ${message}`) + '\n');
   });
 
-  orch.on('question', async ({ id, kind, questions, issues }) => {
+  orch.on('question', async ({ id, kind, questions, issues, recovery }) => {
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     try {
@@ -344,6 +366,9 @@ async function attachAndDrive(orch, flags, start) {
         orch.answer(id, payload);
       } else if (kind === 'gate') {
         const payload = await askGate(rl, issues || []);
+        orch.answer(id, payload);
+      } else if (kind === 'recovery') {
+        const payload = await askRecovery(rl, recovery);
         orch.answer(id, payload);
       }
     } catch (err) {
@@ -388,7 +413,7 @@ async function attachAndDrive(orch, flags, start) {
   if (result?.status === 'done') {
     out(c('green', c('bold', 'Pipeline complete.')));
   } else if (result?.status === 'paused') {
-    out(c('yellow', 'Pipeline paused.'));
+    out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
     out(`Resume with: ${c('bold', `maestro resume ${orch.state.id}`)}`);
   } else if (result?.status === 'stopped') {
     out(c('yellow', 'Pipeline stopped.'));
@@ -511,14 +536,18 @@ async function cmdResume(argv) {
   const auto = argv.includes('--yes') || argv.includes('--non-interactive');
   if (mock) process.env.MAESTRO_MOCK = '1';
 
-  const { readPipelineForResume } = await import('../core/artifacts.mjs');
+  const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
+  try {
+    const { reconciled } = reconcileStaleRunning({ liveIds: [] }); // CLI owns no live runs
+    if (reconciled) process.stdout.write(`reaped ${reconciled} interrupted pipeline(s)\n`);
+  } catch { /* best-effort: resume still works if the sweep fails */ }
   const saved = readPipelineForResume(id);
   if (!saved) {
     process.stderr.write(`pipeline ${id} not found\n`);
     return 1;
   }
-  if (saved.row.status !== 'paused') {
-    process.stderr.write(`pipeline ${id} is "${saved.row.status}", not paused\n`);
+  if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
+    process.stderr.write(`pipeline ${id} is "${saved.row.status}", not resumable (paused/interrupted only)\n`);
     return 1;
   }
   if (!saved.resumePoint) {

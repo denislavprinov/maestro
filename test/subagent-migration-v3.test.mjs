@@ -47,6 +47,11 @@ const V1_PIPELINES = `
     PRIMARY KEY (pipeline_id, key),
     FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
   );
+  CREATE TABLE workflows (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+    steps TEXT NOT NULL DEFAULT '[]', feedbacks TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
 `;
 const V2_SUB_AGENTS = `
   CREATE TABLE sub_agents (
@@ -72,7 +77,7 @@ test('opening a user_version=2 DB forward-migrates to v3 (adds sub_agents.ui_pha
   seed.close();
 
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8, 'forward-migrated to v8');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10, 'forward-migrated to v10');
   const cols = db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name);
   assert.ok(cols.includes('ui_phase'), 'ui_phase column added by v2->v3 migration');
   assert.equal(

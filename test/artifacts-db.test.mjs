@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
-import { ensureArtifactDirs, writeState, appendAudit, createPipeline } from '../src/core/artifacts.mjs';
+import { ensureArtifactDirs, writeState, appendAudit, createPipeline, updatePipelineTitle } from '../src/core/artifacts.mjs';
 import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
 import { writeReview, readReviewRow, readPipelineExtras, readPipelineByKey, writeClarify } from '../src/core/artifacts.mjs';
 import { readRunLogText } from '../src/core/artifacts.mjs';
@@ -225,6 +225,29 @@ test('writeState with an id-less state is a no-op (returns the stamped object, i
   assert.ok(out.updatedAt, 'still returns the stamped object');
   const after = getDb().prepare('SELECT COUNT(*) c FROM pipelines').get().c;
   assert.equal(after, before, 'no row inserted for an id-less state');
+});
+
+// ── updatePipelineTitle — dedicated post-creation title UPDATE ──────────────────
+
+test('updatePipelineTitle mutates the title column (and only that)', async () => {
+  const p = await createPipeline(process.cwd(), { prompt: 'Provisional first line\nmore' });
+  const before = getDb().prepare('SELECT title, prompt, started_at FROM pipelines WHERE id=?').get(p.id);
+  assert.equal(before.title, 'Provisional first line');
+
+  updatePipelineTitle(p.id, 'Concise LLM Title');
+
+  const after = getDb().prepare('SELECT title, prompt, started_at FROM pipelines WHERE id=?').get(p.id);
+  assert.equal(after.title, 'Concise LLM Title');
+  assert.equal(after.prompt, before.prompt, 'prompt untouched');         // immutable column preserved
+  assert.equal(after.started_at, before.started_at, 'started_at untouched');
+});
+
+test('updatePipelineTitle is a no-op for blank input or unknown id', async () => {
+  const p = await createPipeline(process.cwd(), { prompt: 'Keep me' });
+  updatePipelineTitle(p.id, '');            // blank → ignored
+  updatePipelineTitle('does-not-exist', 'X');
+  const row = getDb().prepare('SELECT title FROM pipelines WHERE id=?').get(p.id);
+  assert.equal(row.title, 'Keep me');
 });
 
 // ── Task 3.4 — appendAudit -> pipeline_events ──────────────────────────────────

@@ -27,6 +27,7 @@ const V6_SEED = `
 CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_key TEXT);
 CREATE TABLE sub_agents (pipeline_id TEXT, id TEXT, skills TEXT, PRIMARY KEY (pipeline_id,id));
 CREATE TABLE pipeline_steps (pipeline_id TEXT, key TEXT, skills TEXT, PRIMARY KEY (pipeline_id,key));
+CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT, steps TEXT, feedbacks TEXT, created_at TEXT, updated_at TEXT);
 INSERT INTO pipelines (id, project_key) VALUES ('p1','proj');
 `;
 
@@ -39,7 +40,7 @@ test('opening a user_version=6 DB forward-migrates to v7 (adds subagent_type to 
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8, 'forward-migrated to v8');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10, 'forward-migrated to v10');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('subagent_type'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');
 });

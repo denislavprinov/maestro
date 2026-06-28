@@ -120,12 +120,27 @@ export function mergePalette(agentsResponse) {
       // fallback has no origin and is repo-shipped -> 'builtin' is correct.
       origin: a.origin === 'user' ? 'user' : 'builtin',
       order: typeof a.order === 'number' ? a.order : 99,
+      domain: typeof a.domain === 'string' && a.domain ? a.domain : 'general',
       connectsTo: a.connectsTo === undefined ? '*' : a.connectsTo,
       produces: Array.isArray(a.produces) ? a.produces : [],
       consumes: Array.isArray(a.consumes) ? a.consumes : [],
       optionalConsumes: Array.isArray(a.optionalConsumes) ? a.optionalConsumes : [],
     }))
     .sort((x, y) => x.order - y.order);
+}
+
+// groupPaletteByDomain(palette, domains) -> ordered [{domain, agents:[...]}].
+// Each group = that domain's own agents PLUS every `shared` agent prepended,
+// then sorted by .order. Pure: no DOM. `domains` is the ordered header list
+// (general last, shared excluded) — see collectDomains / paletteDomains.
+export function groupPaletteByDomain(palette, domains) {
+  const list = Array.isArray(palette) ? palette : [];
+  const shared = list.filter((a) => a.domain === 'shared');
+  const byOrder = (x, y) => x.order - y.order;
+  return (Array.isArray(domains) ? domains : []).map((domain) => ({
+    domain,
+    agents: [...shared, ...list.filter((a) => a.domain === domain)].sort(byOrder),
+  }));
 }
 
 // defaultTopologyFromTemplate(tpl, mk) -> canvas model {steps,feedbacks} with

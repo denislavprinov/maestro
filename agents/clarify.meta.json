@@ -1,5 +1,6 @@
 {
   "key": "clarify",
+  "domain": "coding",
   "displayName": "Clarify",
   "description": "surface open decisions before planning",
   "color": "red",

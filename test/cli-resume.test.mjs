@@ -51,7 +51,7 @@ test('resume unknown id -> exit 1 + not found', async () => {
   assert.match(r.stderr, /not found/i);
 });
 
-test('resume a non-paused pipeline -> exit 1 + not paused', async () => {
+test('resume a non-paused pipeline -> exit 1 + not resumable', async () => {
   seedPipelineRow({
     id: 'aaaa0001',
     status: 'done',
@@ -60,7 +60,7 @@ test('resume a non-paused pipeline -> exit 1 + not paused', async () => {
   });
   const r = await run(['resume', 'aaaa0001']);
   assert.equal(r.code, 1, r.stderr);
-  assert.match(r.stderr, /not paused/i);
+  assert.match(r.stderr, /not resumable/i);
 });
 
 // The CLI's default run flow needs no registration, so the `maestro resume <id>`

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
+import { loadAgentRegistry, registryToSteps, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
 test('loadAgentRegistry returns all shipped agents (9 project + 2 workspace)', () => {
@@ -18,6 +18,33 @@ test('loadAgentRegistry returns all shipped agents (9 project + 2 workspace)', (
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
     ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
+});
+
+test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
+  const base = { key: 'x', order: 1 };
+  assert.equal(normalizeMeta({ ...base }).domain, 'general');                       // absent
+  assert.equal(normalizeMeta({ ...base, domain: 'shared' }).domain, 'shared');      // sentinel
+  assert.equal(normalizeMeta({ ...base, domain: 'Marketing!' }).domain, 'general'); // malformed
+  assert.equal(normalizeMeta({ ...base, domain: 'financing' }).domain, 'financing'); // valid
+  assert.equal(normalizeMeta({ ...base, domain: 'a'.repeat(40) }).domain, 'general'); // too long (>32)
+});
+
+test('collectDomains: ordered unique, general pinned last, shared excluded from headers', () => {
+  const reg = {
+    a: { key: 'a', order: 0, domain: 'coding' },
+    b: { key: 'b', order: 1, domain: 'shared' },
+    c: { key: 'c', order: 2, domain: 'marketing' },
+    d: { key: 'd', order: 3, domain: 'general' },
+    e: { key: 'e', order: 4, domain: 'coding' },   // dup
+  };
+  assert.deepEqual(collectDomains(reg), ['coding', 'marketing', 'general']);
+});
+
+test('built-in registry tags: 9 coding + 2 shared (workspace agents)', () => {
+  const reg = loadAgentRegistry();
+  assert.equal(reg.workspaceScanner.domain, 'shared');
+  assert.equal(reg.workspaceReviewer.domain, 'shared');
+  assert.equal(reg.planner.domain, 'coding');
 });
 
 test('each entry is a well-formed AgentMeta', () => {

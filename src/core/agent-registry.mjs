@@ -20,6 +20,17 @@ const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
 const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
 
+/** Organizational-only domain tag (coding, marketing, financing, …): lowercase
+ *  kebab, ≤32 chars. 'shared' is a recognized sentinel that passes this regex and
+ *  is stored verbatim; the palette injects it into every section. */
+const DOMAIN_RE = /^[a-z][a-z0-9-]{0,31}$/;
+
+/** Coerce a raw domain to a valid tag; absent/malformed fails safe to the VISIBLE
+ *  'general' default. Does NOT trim (meta-file input is authored). */
+function normalizeDomain(raw) {
+  return typeof raw === 'string' && DOMAIN_RE.test(raw) ? raw : 'general';
+}
+
 /**
  * Built-in channel/governance spec per agent key. Used when a sidecar omits the
  * fields, so the six shipped agents behave byte-identically to today's _nodeIo
@@ -140,6 +151,25 @@ export function collectChannelDefs(registry) {
   return defs;
 }
 
+/**
+ * Ordered unique domain list for UI section headers. Registry is already sorted
+ * by .order (loadAgentRegistry sorts at line 260), so first-seen order is stable.
+ * 'general' is pinned LAST (fail-safe bucket renders last); 'shared' is EXCLUDED —
+ * it is injected into every section, never a header of its own. 'general' is always
+ * present so the fail-safe bucket is reachable.
+ * @param {Record<string, object>} registry
+ */
+export function collectDomains(registry) {
+  const seen = [];
+  for (const meta of Object.values(registry || {})) {
+    const d = meta && meta.domain;
+    if (!d || d === 'shared' || d === 'general' || seen.includes(d)) continue;
+    seen.push(d);
+  }
+  seen.push('general');   // always present, always last
+  return seen;
+}
+
 /** Agent keys become filename stems (review basenames, config keys); keep them
  *  identifier-shaped so a key can never escape a directory. */
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -179,6 +209,7 @@ export function normalizeMeta(raw) {
     agentFile: typeof raw.agentFile === 'string' && raw.agentFile.trim() ? raw.agentFile.trim() : null,
     runnerType,
     scope,
+    domain: normalizeDomain(raw.domain),   // always set; fail-safe VISIBLE default 'general'
     loopSource: !!raw.loopSource,
     fanOut: !!raw.fanOut,
     consumes,
@@ -192,6 +223,9 @@ export function normalizeMeta(raw) {
     promptHints: typeof raw.promptHints === 'string' ? raw.promptHints : '',
     version: typeof raw.version === 'string' || typeof raw.version === 'number' ? String(raw.version) : '1',
     channelDefs: normalizeChannelDefs(raw.channelDefs, key),
+    requiresSkills: Array.isArray(raw.requiresSkills)
+      ? raw.requiresSkills.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
+      : [],
   };
 }
 

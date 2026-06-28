@@ -99,14 +99,16 @@ export function seedPipelineRow(row) {
     title = null, baseName = null, datePrefix = null, status = 'done', phase = 'done',
     cycle = 0, startedAt = null, updatedAt = startedAt, totalCostUsd = 0, totalActiveMs = 0,
     prompt = null, branch = null, workspaceMeta = null, stepper = null, tools = null,
+    ownerPid = null, ownerHost = null, heartbeatAt = null, // v10 liveness
     steps = [],
   } = row;
   tx(() => {
     getDb().prepare(`
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
-        total_active_ms, prompt, branch, workspace_meta, stepper, tools)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        total_active_ms, prompt, branch, workspace_meta, stepper, tools,
+        owner_pid, owner_host, heartbeat_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       id, projectKey, workspaceKey, target, title, baseName, datePrefix, status, phase,
       cycle, startedAt, updatedAt, totalCostUsd, totalActiveMs, prompt,
@@ -114,6 +116,7 @@ export function seedPipelineRow(row) {
       workspaceMeta == null ? null : JSON.stringify(workspaceMeta),
       stepper == null ? null : JSON.stringify(stepper),
       tools == null ? null : JSON.stringify(tools),
+      ownerPid, ownerHost, heartbeatAt,
     );
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,

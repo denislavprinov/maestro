@@ -43,6 +43,62 @@ export async function diffShortstat(projectDir, source, feature) {
   return parseShortstat(r.stdout);
 }
 
+/**
+ * Parse `git diff --name-status -M` rows. `head` omitted -> diff base vs working tree.
+ * Rename/copy rows look like `R100\told\tnew`; status letter is the first char.
+ * @returns {Promise<Array<{status:string, path:string, from?:string}>>}
+ */
+export async function diffNameStatus(projectDir, base, head) {
+  if (!projectDir || !base) return [];
+  const args = ['diff', '--name-status', '-M', base, ...(head ? [head] : []), '--'];
+  const r = await _run('git', args, { cwd: projectDir });
+  if (!r.ok) return [];
+  const out = [];
+  for (const line of r.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    const status = parts[0][0]; // R100 -> R, C75 -> C
+    if (status === 'R' || status === 'C') {
+      out.push({ status, from: parts[1], path: parts[2] });
+    } else {
+      out.push({ status, path: parts[1] });
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse `git diff --numstat -M` into a Map keyed by path. Binary files report
+ * `-`/`-` and are flagged `binary:true` with zero counts.
+ * @returns {Promise<Map<string,{added:number, removed:number, binary:boolean}>>}
+ */
+export async function diffNumstat(projectDir, base, head) {
+  const m = new Map();
+  if (!projectDir || !base) return m;
+  const args = ['diff', '--numstat', '-M', base, ...(head ? [head] : []), '--'];
+  const r = await _run('git', args, { cwd: projectDir });
+  if (!r.ok) return m;
+  for (const line of r.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    const [a, d, ...rest] = line.split('\t');
+    const path = rest[rest.length - 1]; // for renames the last col is the new path
+    const binary = a === '-' || d === '-';
+    m.set(path, { added: binary ? 0 : Number(a) || 0, removed: binary ? 0 : Number(d) || 0, binary });
+  }
+  return m;
+}
+
+/**
+ * Full unified diff (`git diff -M base [head]`). Empty string on failure.
+ * @returns {Promise<string>}
+ */
+export async function diffPatch(projectDir, base, head) {
+  if (!projectDir || !base) return '';
+  const args = ['diff', '-M', base, ...(head ? [head] : []), '--'];
+  const r = await _run('git', args, { cwd: projectDir });
+  return r.ok ? r.stdout : '';
+}
+
 /** True iff `branch` exists locally in `projectDir`. False on a missing repo/branch. */
 export async function branchExists(projectDir, branch) {
   if (!projectDir || !branch) return false;
