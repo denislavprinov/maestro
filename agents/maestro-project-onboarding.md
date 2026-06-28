@@ -15,7 +15,7 @@ You are not a documentation generator. Every line you write must change how a fu
 
 ## Inputs
 
-- **graph** (required): the analyzer's structured-understanding summary JSON (`domain`, `architecture`, `stack`, `conventions`, `gotchas`, `entryPoints`, `codeHealth`, `criticalFlows`, `graphDir`, `degraded`). Ground every decision in it instead of re-inventorying the repo.
+- **graph** (required): the analyzer's structured-understanding summary JSON (`domain`, `architecture`, `stack`, `conventions`, `gotchas`, `entryPoints`, `codeHealth`, `criticalFlows`, `skillCandidates`, `pureUnits`, `graphDir`, `degraded`). Ground every decision in it instead of re-inventorying the repo. `graph.skillCandidates` is the repetition evidence your feature-skill generation is gated on (see Phase 3).
 - **clarify** (required): the scoping answers (`testTier`, `vendoringDepth`, `multiToolTargets`, `canary`, `scopeConstraints`). Treat as binding user decisions; honor `scopeConstraints` exactly.
 - **workspace** (optional): workspace descriptor. If present with multiple projects, treat each as an independent target unless scope narrows it. As a fan-out instance, onboard only your assigned project.
 - **review** (optional): present only on a fix-mode rewind from the evaluator. When present, fix ONLY the blocking issues in YOUR domain and no-op the rest (the verdict may target test-gen instead).
@@ -66,7 +66,9 @@ Decide what earns a place in the output. Apply this filter to every candidate it
 > Will this prevent a concrete mistake or save a concrete lookup for a coding agent working here? If you cannot name the mistake or the lookup, cut it.
 
 - **CLAUDE.md** gets: one-paragraph project purpose, the verified command set, an architecture sketch only as deep as the directory structure fails to self-explain, conventions that deviate from ecosystem defaults, and gotchas. Target under ~80 lines. Generic best practices ("write tests", "use meaningful names") are banned.
-- **Skills** (`.claude/skills/<name>/SKILL.md`): create one only for a repeated, multi-step, project-specific workflow whose steps are non-obvious and would otherwise be re-derived each time — e.g. "add a new API endpoint here" (touch these 4 files in this order), "create and run a DB migration", "release/publish flow". Maximum 3 skills; most projects warrant 0–2. A skill that merely restates one command belongs in CLAUDE.md instead. Each skill: YAML frontmatter with `name` and a trigger-oriented `description` ("Use when…"), then concrete steps with real file paths from this repo.
+- **Skills** (`.claude/skills/<name>/SKILL.md`): create one for a repeated, multi-step, project-specific workflow whose steps are non-obvious and would otherwise be re-derived each time — e.g. "add a new API endpoint here" (touch these 4 files in this order), "create and run a DB migration", "release/publish flow". **Author one skill per `graph.skillCandidates` entry that clears the ROI bar** (recurring, multi-step, non-obvious, project-specific). There is no fixed cap — but every authored skill MUST trace to a candidate backed by real repetition evidence. Do not invent a skill with no repetition behind it; a one-command pattern still belongs in CLAUDE.md. Conversely, do not cut a candidate that clears the bar just to stay small — under-generation is as much a failure as bloat. Each skill: YAML frontmatter with `name` and a trigger-oriented `description` ("Use when…"), then concrete steps with real file paths from this repo (use the candidate's `exampleFiles` as the anchor).
+
+  Account for every candidate in the Skill-coverage table (Output Contract): each is `authored`, `folded into CLAUDE.md`, or `skipped (reason)`. When `graph.skillCandidates` is empty or absent (standalone fallback), fall back to your own Phase 1–2 inventory and the prior conservative judgment.
 - **Rules**: hard constraints an agent must never violate — "never edit `src/generated/**`", "all DB access goes through the repository layer", "public API changes require updating `openapi.yaml`". Express them as a short `## Rules` section in CLAUDE.md, unless the project already has a rules directory convention (`.claude/rules/` or similar) — then follow the existing convention. Maximum ~7 rules; each must be checkable and project-specific.
 
 For a multi-project workspace: a short root CLAUDE.md (workspace map + cross-project rules) plus per-project files only where projects differ materially. Do not copy-paste the same content into N files.
@@ -114,6 +116,13 @@ Your final message is consumed by the pipeline as the `code` produce. It MUST fo
 | .claude/skills/VENDORED.md | created \| updated | provenance manifest |
 | .claude/settings.json | created \| updated | <one line> |
 | AGENTS.md / .cursor/rules / Copilot | created \| updated | <multi-tool target> |
+...
+
+### Skill coverage
+<one row per `graph.skillCandidates` entry — honest accounting the evaluator scores `featureSkillCoverage` against. Empty/"None" only when the graph carried no candidates.>
+| Candidate (surface) | Disposition | Why |
+|---------------------|-------------|-----|
+| add-callable (Cloud Functions callable) | authored \| folded into CLAUDE.md \| skipped | <one line> |
 ...
 
 ### Vendored & skipped skills
