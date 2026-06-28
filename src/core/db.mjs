@@ -487,6 +487,73 @@ ALTER TABLE pipelines ADD COLUMN heartbeat_at TEXT;
 `;
 
 /**
+ * Every column added by an INCREMENTAL migration (the SCHEMA_Vn `ALTER ... ADD COLUMN`
+ * steps), keyed by table. The version ladder in migrate() gates each step on
+ * `current < n`, so a DB whose user_version is already past step n SKIPS that ALTER.
+ * That is silently wrong when the DB was stamped to version n by a DIVERGENT ladder —
+ * e.g. a second checkout sharing one ~/.maestro/maestro.db whose Vn step differed, or
+ * had the columns renumbered. The skipped column then never exists, and reads/writes
+ * against it fail ("table workflows has no column named domain"). reconcileColumns()
+ * re-asserts this table against the live schema independent of user_version so such a
+ * DB self-heals. Append the matching entry here whenever a new ALTER...ADD COLUMN step
+ * is added to the ladder.
+ */
+const INCREMENTAL_COLUMNS = {
+  pipelines:      { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT' },
+  pipeline_steps: { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
+  sub_agents:     { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
+  workflows:      { domain: 'TEXT' },
+};
+
+/**
+ * Return [{table, col, type}] for every INCREMENTAL_COLUMNS entry absent from the live
+ * schema. Cheap and read-only: one PRAGMA table_info per known table, no writes. A table
+ * that does not exist yet (table_info returns []) is skipped — a missing TABLE is a
+ * different repair than a missing column and is left to the version ladder's CREATE steps.
+ */
+function missingIncrementalColumns(db) {
+  const missing = [];
+  for (const [table, cols] of Object.entries(INCREMENTAL_COLUMNS)) {
+    const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    if (have.size === 0) continue; // table absent entirely — not our repair
+    for (const [col, type] of Object.entries(cols)) {
+      if (!have.has(col)) missing.push({ table, col, type });
+    }
+  }
+  return missing;
+}
+
+/** Apply the missing-column ALTERs with NO transaction control of its own — the caller
+ *  owns the transaction. Used inside migrate()'s ladder tx, after the gated ALTER steps
+ *  and before any step (e.g. seedBuiltinWorkflows) that reads/writes those columns. */
+function addMissingIncrementalColumns(db) {
+  for (const { table, col, type } of missingIncrementalColumns(db)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
+}
+
+/**
+ * Version-independent self-heal for a DB whose user_version is already >= SCHEMA_VERSION
+ * (so the version ladder no-ops) but is missing an INCREMENTAL_COLUMNS column because a
+ * divergent ladder stamped it. Reads first and returns WITHOUT taking a lock when nothing
+ * is missing — the common every-open case, so there is no contention on a healthy DB. When
+ * repairs are needed it takes the write lock (BEGIN IMMEDIATE) and RE-CHECKS under the lock,
+ * so a colliding process that already added the column is a no-op, not a duplicate-column error.
+ * @param {DatabaseSync} db
+ */
+export function reconcileColumns(db) {
+  if (missingIncrementalColumns(db).length === 0) return; // clean — no lock
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    addMissingIncrementalColumns(db); // re-checks table_info per column, so race-safe
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -514,8 +581,13 @@ function seedBuiltinWorkflows(db) {
 }
 
 export function migrate(db) {
-  // Fast path: an already-migrated DB needs no lock (the common re-open case).
-  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) return;
+  // Fast path: an already-migrated DB needs no version ladder. It is NOT a full no-op —
+  // a DB stamped to this version by a DIVERGENT ladder (second checkout, renumbered step)
+  // can still be missing an incremental column, so reconcile before returning.
+  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) {
+    reconcileColumns(db);
+    return;
+  }
 
   // First launch may have a competing migrator. BEGIN IMMEDIATE takes the write lock
   // up front (a deferred BEGIN would not lock until the first write, letting two
@@ -524,7 +596,7 @@ export function migrate(db) {
   db.exec('BEGIN IMMEDIATE');
   try {
     const current = db.prepare('PRAGMA user_version').get().user_version; // re-check under lock
-    if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); return; }
+    if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); reconcileColumns(db); return; }
     if (current < 1) db.exec(SCHEMA_V1);
     if (current < 2) db.exec(SCHEMA_V2);
     if (current < 3) db.exec(SCHEMA_V3);
@@ -535,6 +607,9 @@ export function migrate(db) {
     if (current < 8) db.exec(SCHEMA_V8);
     if (current < 9) db.exec(SCHEMA_V9);
     if (current < 10) db.exec(SCHEMA_V10);
+    // Heal any ALTER the version gate skipped (DB stamped past a step by a divergent
+    // ladder) BEFORE the seed, which reads/writes those columns (e.g. workflows.domain).
+    addMissingIncrementalColumns(db);
     if (current < 11) seedBuiltinWorkflows(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
