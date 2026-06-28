@@ -541,6 +541,30 @@ function locateInManifest(manifest, msg) {
   return { cellIdx: -1, nodeId: null };
 }
 
+// Manifest node lookups used to resolve the agent running now (any workflow).
+function manifestNodeById(stepper, id) {
+  if (!id) return null;
+  for (const cell of manifestFor(stepper).steps) {
+    const hit = (cell.nodes || []).find((n) => n.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+function manifestNodeByPhase(stepper, phaseKey) {
+  if (!phaseKey) return null;
+  for (const cell of manifestFor(stepper).steps) {
+    const hit = (cell.nodes || []).find((n) => n.uiPhase === phaseKey);
+    if (hit) return hit;
+  }
+  return null;
+}
+// The run's currently-active manifest node — prefer the exact node id pinned by
+// the last node event, fall back to matching the scalar phaseKey.
+function currentRunNode(r) {
+  return manifestNodeById(r.stepper, r.activeNodeId)
+      || manifestNodeByPhase(r.stepper, r.phaseKey);
+}
+
 // Map a phase status string + run status to a stepper node kind.
 function nodeKindFor(r, status) {
   if (r.pendingQuestion != null) return 'pause';
@@ -563,6 +587,7 @@ function advanceRun(r, msg) {
   r.phaseStatus = msg.status || '';
   const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
   if (cellIdx < 0 || !nodeId) return;
+  r.activeNodeId = nodeId; // the agent running now — drives the dot/pill color
   if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
   if (msg.cycle) r.nodeCycle[nodeId] = Math.max(r.nodeCycle[nodeId] || 0, Number(msg.cycle) || 0);
   r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
@@ -6665,15 +6690,28 @@ function runDotClass(r) {
   // because a paused run is _finished.
   if (r.status === 'paused') return 'paused';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
-  // running → color by current phase/agent (mirrors statusPill families)
-  switch (r.phaseKey) {
-    case 'plan': return 'violet';
-    case 'refine': return 'peach';
-    case 'implement': return 'blue';
-    case 'review': return 'peach';
-    case 'clarify': return 'red';
+  // running → the actual color of the agent running now, resolved from the
+  // manifest so it works for ANY workflow (onboarding etc.), not just the default
+  // coding phases. green/red map to pulsing variants so a green/red-colored agent
+  // doesn't collide with the static green=done / red=error dots.
+  const node = currentRunNode(r);
+  return dotPulseClass(node ? runNodeAgent(node).color : null);
+}
+
+// Map an agent color token to a PULSING .child-dot class. peach/blue/violet/amber
+// already pulse under their own name; green/red need explicit -pulse variants
+// (their bare classes are reserved, static, for done/error).
+function dotPulseClass(color) {
+  switch (color) {
+    case 'green': return 'green-pulse';
+    case 'red': return 'red-pulse';
+    case 'blue': case 'violet': case 'amber': case 'peach': return color;
     default: return 'peach';
   }
+}
+// Map an agent color token to a .pill-run family (all six are supported directly).
+function pillFamily(color) {
+  return ['peach', 'blue', 'amber', 'violet', 'green', 'red'].includes(color) ? color : 'peach';
 }
 
 // Project basename for display (e.g. "/a/b/proj" -> "proj").
@@ -6705,16 +6743,24 @@ function statusPill(r) {
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
-  // running
-  switch (r.phaseKey) {
-    case 'plan': return { family: 'violet', text: 'Planning' };
-    case 'refine': return { family: 'peach', text: 'Refining' };
-    case 'implement': return { family: 'blue', text: 'Implementing' };
-    case 'review': return { family: 'peach', text: 'Reviewing' };
-    case 'plan-review': return { family: 'violet', text: 'Plan Review' };
-    default: return { family: 'peach', text: 'Running' };
-  }
+  // running — the family ALWAYS follows the agent running now (resolved from the
+  // manifest), so dot and pill agree and any workflow (onboarding etc.) is colored
+  // correctly. Known default-workflow phases keep their bespoke copy; everything
+  // else uses the agent's own label.
+  const node = currentRunNode(r);
+  const family = node ? pillFamily(runNodeAgent(node).color) : 'peach';
+  const text = PHASE_PILL_TEXT[r.phaseKey]
+    || (node && (node.label || runNodeAgent(node).label))
+    || 'Running';
+  return { family, text };
 }
+
+// Bespoke status copy for the default coding workflow's phases. Non-default
+// workflows fall back to the running agent's own label.
+const PHASE_PILL_TEXT = {
+  plan: 'Planning', refine: 'Refining', implement: 'Implementing',
+  review: 'Reviewing', 'plan-review': 'Plan Review', clarify: 'Clarifying',
+};
 
 // Render the run-card meta line (project · started · branch). Called from
 // buildRunCard (with the freshly built node, before r.el is assigned) AND from
