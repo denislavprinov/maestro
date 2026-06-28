@@ -384,6 +384,26 @@
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
                 <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
                 <div class="results-section"></div>
+                <!-- Diff dropdown (New/Changed files) — collapsed by default -->
+                <div class="diff-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>
+                    Diff
+                    <span class="sb-count diff-changed grey"></span>
+                    <span class="sb-count diff-removed grey"></span>
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel diff-panel" hidden></div>
+                </div>
+                <!-- Overview dropdown (Layer-2 summary) — collapsed; Generate button built on first expand -->
+                <div class="overview-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Overview
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel overview-panel" hidden></div>
+                </div>
                 <div class="subs-bar" hidden>
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>

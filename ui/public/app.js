@@ -54,7 +54,7 @@ import {
   groupPaletteByDomain,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
-import { summaryChips, mergeFindings } from './results-view.mjs';
+import { statusChip, diffBadges, mergeFindings } from './results-view.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -6076,31 +6076,25 @@ function historyLogUrl(id, record) {
 // Render the Layer-1 results section: summary chips, key-things-to-check (review
 // issues, reusing the .issue.sev-* gate styles), New/Changed file lists, plus the
 // Layer-2 "Generate overview" button. ctx = { id, projectKey, projectDir, overview }.
-function renderResults(host, results, ctx) {
+// Render the Layer-1 results header: the single status pill ("Clean" / "N to check")
+// and the key-things-to-check list. New/Changed file lists moved to the Diff dropdown
+// (paintDiffBar); the Layer-2 overview moved to the Overview dropdown (paintOverviewBar).
+// The "+X / −Y" line-count pill was dropped — renderHistDiff() already shows that next
+// to the Create-PR button.
+function renderResults(host, results) {
   host.innerHTML = '';
   if (!results) { host.textContent = 'No results for this run.'; return; }
 
-  // Summary chips
+  // Status pill only.
   const chips = document.createElement('div');
   chips.className = 'results-chips';
-  summaryChips(results).forEach((t) => {
-    const c = document.createElement('span'); c.className = 'results-chip'; c.textContent = t; chips.appendChild(c);
-  });
+  const status = document.createElement('span');
+  status.className = 'results-chip';
+  status.textContent = statusChip(results);
+  chips.appendChild(status);
   host.appendChild(chips);
 
-  // Layer-2 overview: button + narrative/agent-findings host.
-  const hasDiff = !!(results.summary && (results.summary.filesNew || results.summary.filesChanged || results.summary.filesDeleted));
-  const ov = document.createElement('div'); ov.className = 'results-overview';
-  const btn = document.createElement('button'); btn.className = 'results-overview-btn';
-  btn.textContent = ctx.overview ? 'Regenerate overview' : 'Generate overview';
-  btn.disabled = !hasDiff; // no diff -> nothing to summarize (spec §8)
-  if (!hasDiff) btn.title = 'No file changes to summarize';
-  btn.addEventListener('click', () => loadOverview(ov, btn, ctx, results, !!ctx.overview || btn.dataset.ran === '1'));
-  host.appendChild(btn);
-  host.appendChild(ov);
-  if (ctx.overview) { btn.dataset.ran = '1'; paintOverview(ov, ctx.overview, results); }
-
-  // Key things to check (review issues) — reuse sev-* classes
+  // Key things to check (review issues) — reuse the .issue.sev-* gate styles.
   const checks = results.keyThingsToCheck || [];
   const checksWrap = document.createElement('div'); checksWrap.className = 'results-checks';
   if (!checks.length) {
@@ -6110,10 +6104,6 @@ function renderResults(host, results, ctx) {
     checksWrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
   }
   host.appendChild(checksWrap);
-
-  // New + changed file lists
-  host.appendChild(fileList('New files', results.newFiles || []));
-  host.appendChild(fileList('Changed files', results.changedFiles || []));
 }
 
 // Build a <ul class="issues"> from merged check/finding rows (mirrors renderGateBody).
@@ -6218,11 +6208,13 @@ async function loadHistDetail(projectDir, id, detail, record) {
     }
     // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
     paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
-    // Results view (Layer 1 instant; Layer 2 via the Generate-overview button).
+    // Results header (status pill + checks). Diff + Overview are separate dropdowns.
     const resHost = detail.querySelector('.results-section');
-    if (resHost) renderResults(resHost, data.results, {
+    if (resHost) renderResults(resHost, data.results);
+    paintDiffBar(detail.querySelector('.diff-bar'), data.results);
+    paintOverviewBar(detail.querySelector('.overview-bar'), {
       id, projectKey: record && record.projectKey, projectDir, overview: data.overview,
-    });
+    }, data.results);
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
     paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
     if (typeof data.state.totalCostUsd === 'number') {
@@ -6359,6 +6351,87 @@ async function loadLiveLogs(panel, logUrl) {
     box.textContent = `Could not load logs: ${e.message}`;
     panel.dataset.loaded = ''; // allow a retry on the next open
   }
+}
+
+// Paint the Diff dropdown. Always-on "changed"/"removed" header badges (greyed at
+// zero); the New/Changed file lists render into the panel on first open (lazy, like
+// Live logs). Hidden only when the run has no assembled results.
+function paintDiffBar(barEl, results) {
+  if (!barEl) return;
+  if (!results) { barEl.hidden = true; return; }
+  barEl.hidden = false;
+  barEl._results = results;
+
+  const [changed, removed] = diffBadges(results);
+  const changedEl = barEl.querySelector('.diff-changed');
+  const removedEl = barEl.querySelector('.diff-removed');
+  if (changedEl) { changedEl.textContent = changed.text; changedEl.classList.toggle('grey', changed.n === 0); }
+  if (removedEl) { removedEl.textContent = removed.text; removedEl.classList.toggle('grey', removed.n === 0); }
+
+  const btn = barEl.querySelector('.btn-subs');
+  const panel = barEl.querySelector('.diff-panel');
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (!panel) return;
+      panel.hidden = open;
+      if (!open && panel.dataset.loaded !== '1') {
+        panel.dataset.loaded = '1';
+        renderDiffPanel(panel, barEl._results);
+      }
+    });
+  }
+}
+
+// Build the Diff panel body: the New + Changed file lists (moved out of renderResults).
+function renderDiffPanel(panel, results) {
+  panel.innerHTML = '';
+  panel.appendChild(fileList('New files', results.newFiles || []));
+  panel.appendChild(fileList('Changed files', results.changedFiles || []));
+}
+
+// Paint the Overview dropdown. Collapsed by default; the Generate/Regenerate button is
+// built into the panel on FIRST open, so when no overview exists the button only appears
+// after the user expands. A pre-generated overview is painted immediately on first open.
+function paintOverviewBar(barEl, ctx, results) {
+  if (!barEl) return;
+  if (!results) { barEl.hidden = true; return; }
+  barEl.hidden = false;
+  barEl._ctx = ctx; barEl._results = results;
+
+  const btn = barEl.querySelector('.btn-subs');
+  const panel = barEl.querySelector('.overview-panel');
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (!panel) return;
+      panel.hidden = open;
+      if (!open && panel.dataset.loaded !== '1') {
+        panel.dataset.loaded = '1';
+        buildOverviewPanel(panel, barEl._ctx, barEl._results);
+      }
+    });
+  }
+}
+
+// Build the Overview panel body (relocated from renderResults): the Generate/Regenerate
+// button + a host the narrative/findings paint into. Disabled when there is no diff.
+function buildOverviewPanel(panel, ctx, results) {
+  panel.innerHTML = '';
+  const hasDiff = !!(results.summary && (results.summary.filesNew || results.summary.filesChanged || results.summary.filesDeleted));
+  const ov = document.createElement('div'); ov.className = 'results-overview';
+  const btn = document.createElement('button'); btn.className = 'results-overview-btn';
+  btn.textContent = ctx.overview ? 'Regenerate overview' : 'Generate overview';
+  btn.disabled = !hasDiff; // no diff -> nothing to summarize
+  if (!hasDiff) btn.title = 'No file changes to summarize';
+  btn.addEventListener('click', () => loadOverview(ov, btn, ctx, results, !!ctx.overview || btn.dataset.ran === '1'));
+  panel.appendChild(btn);
+  panel.appendChild(ov);
+  if (ctx.overview) { btn.dataset.ran = '1'; paintOverview(ov, ctx.overview, results); }
 }
 
 // Per-node max cycle from a saved run's steps[] (history's loop-count source).
