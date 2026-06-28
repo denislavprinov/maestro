@@ -1,0 +1,9 @@
+{
+  "key": "onboardingEvaluator", "domain": "coding",
+  "displayName": "Onboarding Evaluate", "description": "AI-readiness score + self-eval of generated infra + code-health; loops until it passes",
+  "color": "amber", "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "maestro-onboarding-evaluator.md",
+  "runnerType": "verifier", "loopSource": true, "fanOut": true,
+  "consumes": ["code", "graph", "clarify"], "produces": ["review", "readiness"],
+  "connectsTo": ["onboardingCanary"], "order": 8.4
+}

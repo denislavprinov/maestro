@@ -156,13 +156,13 @@ test('first getDb() auto-runs the fs->db migration (DB is empty + legacy JSON pr
   const db = getDb(); // triggers migrate(db) then maybeMigrateFromFs(db)
   const n = db.prepare('SELECT COUNT(*) AS c FROM pipelines').get().c;
   assert.ok(n >= 1, 'the legacy pipeline was imported into the pipelines table');
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10, 'schema stamped');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 11, 'schema stamped');
   // every relevant table populated by the one-time importer
   const count = (t) => db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c;
   assert.equal(count('projects'), 2, 'projects.json -> projects');
   assert.equal(count('workspaces'), 1, 'workspaces.json -> workspaces');
   assert.equal(count('workspace_projects'), 2, 'ordered members imported');
-  assert.equal(count('workflows'), 1, 'workflows/<id>.json -> workflows');
+  assert.equal(count('workflows'), 2, 'workflows/<id>.json -> workflows (+ the migrate-seeded wf_onboarding built-in)');
   assert.equal(count('project_config'), 1, 'per-project config.json -> project_config');
   assert.ok(count('config_workflow_nodes') >= 1, 'normalized node overrides imported');
   assert.ok(count('config_workflow_feedbacks') >= 1, 'normalized feedback cycles imported');

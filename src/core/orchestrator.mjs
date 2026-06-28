@@ -1710,8 +1710,15 @@ class Orchestrator extends EventEmitter {
    *  publish fixes the sticky fix-mode latent bug. */
   _publishNodeIo(node, result, outputs, bus) {
     if (!result) return;
+    // Keep the verdict across a `code` publish only when THIS node was itself in fix
+    // mode (consumed the review). A multi-generator rewind (infra→tests) then keeps
+    // the evaluator's verdict alive for the downstream sibling generator; the
+    // evaluator re-publishes next cycle (latest-writer-wins), so default-pipeline
+    // behavior is unchanged. See channels.publish keepReview.
+    const consumedReview = !!bus.review &&
+      [...(node.consumes || []), ...(node.optionalConsumes || [])].includes('review');
     const beforePlan = bus.plan, beforeChecklist = bus.checklist;
-    publish(node.produces || [], result, outputs || {}, bus);
+    publish(node.produces || [], result, outputs || {}, bus, { keepReview: consumedReview });
     if (bus.plan && bus.plan !== beforePlan) this._artifact('plan', bus.plan.path);
     if (bus.checklist && bus.checklist !== beforeChecklist) this._artifact('checklist', bus.checklist.path);
     // A16(5): index a published review's md path so the Task-3.13 index-based deleter

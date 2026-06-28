@@ -75,6 +75,11 @@ function channelList(raw, key, field) {
  * A raw value of '*' is treated as "unset" so DEFAULT_SPEC can override it. */
 function normalizeConnectsTo(raw, fallback) {
   if (Array.isArray(raw)) {
+    // An explicitly empty array is a deliberate TERMINAL node (no outgoing edges),
+    // distinct from "unset" — so a sidecar can declare a terminal agent (e.g. the
+    // onboarding canary) without needing a DEFAULT_SPEC entry. A non-empty array
+    // that filters down to empty (all-blank entries) still falls back, as before.
+    if (raw.length === 0) return [];
     const out = raw.map((s) => String(s || '').trim()).filter(Boolean);
     return out.length ? out : (fallback ?? '*');
   }

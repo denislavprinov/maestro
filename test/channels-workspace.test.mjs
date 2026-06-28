@@ -14,7 +14,7 @@ const WS_KEY = 'wks-demo-1a2b3c4d';
 
 test('CHANNEL_IDS includes workspace (closed M3 set)', () => {
   assert.deepEqual([...CHANNEL_IDS].sort(),
-    ['checklist', 'clarify', 'code', 'decomposition', 'plan', 'review', 'userPrompt', 'workspace']);
+    ['checklist', 'clarify', 'code', 'decomposition', 'graph', 'plan', 'readiness', 'review', 'userPrompt', 'workspace']);
 });
 
 test('allocate(workspace): metadata handle pointing at workspace-description.md', () => {

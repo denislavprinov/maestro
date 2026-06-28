@@ -143,7 +143,8 @@ test('listWorkflows returns user templates sorted newest-first; excludes wf_defa
   const a = await writeWorkflow({ id: 'wf_a', name: 'A', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [], createdAt: '2026-01-01T00:00:00.000Z' });
   const b = await writeWorkflow({ id: 'wf_b', name: 'B', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [], createdAt: '2026-02-01T00:00:00.000Z' });
   const list = await listWorkflows();
-  assert.deepEqual(list.map((w) => w.id), ['wf_b', 'wf_a']); // newest createdAt first
+  // The seeded built-in (createdAt 1970) sorts last; assert on the user rows only.
+  assert.deepEqual(list.map((w) => w.id).filter((id) => id !== 'wf_onboarding'), ['wf_b', 'wf_a']); // newest createdAt first
   assert.ok(!list.some((w) => w.id === 'wf_default'), 'DEFAULT_WORKFLOW is not in the user store');
 });
 
@@ -154,10 +155,10 @@ test('readWorkflow returns DEFAULT_WORKFLOW for "wf_default"', async () => {
   assert.equal(got.steps.length, 5);
 });
 
-test('readWorkflow returns null for a missing id; listWorkflows is [] on an empty store', async () => {
+test('readWorkflow returns null for a missing id; a fresh store has only the seeded built-in', async () => {
   await freshHome();
   assert.equal(await readWorkflow('wf_nope'), null);
-  assert.deepEqual(await listWorkflows(), []);
+  assert.deepEqual((await listWorkflows()).map((w) => w.id), ['wf_onboarding']);
 });
 
 test('deleteWorkflow removes a saved template and returns true', async () => {

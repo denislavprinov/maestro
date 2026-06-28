@@ -133,16 +133,16 @@ test('migrate creates every required index', () => {
   }
 });
 
-test('migrate stamps user_version = 10', () => {
+test('migrate stamps user_version = 11', () => {
   const db = getDb();
   const { user_version } = db.prepare('PRAGMA user_version').get();
-  assert.equal(user_version, 10, 'schema version is 10 after migrate');
+  assert.equal(user_version, 11, 'schema version is 11 after migrate');
 });
 
-test('migrate() reaches v10 and adds workflows.domain + liveness columns', async () => {
+test('migrate() reaches v11 and adds workflows.domain + liveness columns', async () => {
   await freshHome();
   const db = getDb();                                   // triggers migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 11);
   const wfCols = db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name);
   assert.ok(wfCols.includes('domain'), 'workflows.domain column exists');
   const pipCols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
@@ -262,7 +262,7 @@ test('getDb() calls maybeMigrateFromFs(db) once after migrate()', () => {
   assert.equal(_migrateFromFsCallCount(), 1, 'hook invoked exactly once on first open');
   // The schema must already exist when the hook runs (it reads/writes rows).
   const { user_version } = db.prepare('PRAGMA user_version').get();
-  assert.equal(user_version, 10, 'migrate() ran before the hook');
+  assert.equal(user_version, 11, 'migrate() ran before the hook');
   // Cached singleton: a repeat getDb() must NOT re-run the one-shot hook.
   getDb();
   assert.equal(_migrateFromFsCallCount(), 1, 'hook not re-run on cached getDb()');
@@ -312,7 +312,7 @@ test('getDb() first-launch is concurrency-safe across N processes (no lock/exist
 
   // The shared DB is migrated exactly once: v2 stamped, exactly one projects table.
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10, 'migrated to v10');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 11, 'migrated to v11');
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='projects'").get().n,
     1, 'exactly one projects table after the race');

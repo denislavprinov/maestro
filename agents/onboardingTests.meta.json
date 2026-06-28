@@ -1,0 +1,9 @@
+{
+  "key": "onboardingTests", "domain": "coding",
+  "displayName": "Onboarding Tests", "description": "build test infra to the chosen tier (docs/scaffold/smoke/characterization)",
+  "color": "peach", "icon": "<rect x=\"6\" y=\"4\" width=\"12\" height=\"17\" rx=\"2\"/><path d=\"M9.5 4V2.8h5V4\" stroke-linejoin=\"round\"/><path d=\"M8.8 12l1.6 1.6L13.4 10\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "maestro-onboarding-tests.md",
+  "runnerType": "producer", "loopSource": false, "fanOut": true,
+  "consumes": ["graph", "clarify"], "optionalConsumes": ["review"], "produces": ["code"],
+  "connectsTo": ["onboardingEvaluator"], "order": 8.3
+}

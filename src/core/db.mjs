@@ -21,6 +21,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { maestroHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { BUILTIN_SEED_WORKFLOWS } from './builtin-workflows.mjs'; // pure, no cycle
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -51,7 +52,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -499,6 +500,19 @@ ALTER TABLE pipelines ADD COLUMN heartbeat_at TEXT;
  * literal integer (SCHEMA_VERSION is module-controlled, never user input).
  * @param {DatabaseSync} db
  */
+/** v10 → v11: seed built-in workflow templates (AI-Enablement Onboarding) into the
+ *  workflows table. INSERT OR IGNORE = idempotent and never clobbers a user edit.
+ *  Columns match writeWorkflow(): (id,name,version,domain,steps,feedbacks,created_at,updated_at). */
+function seedBuiltinWorkflows(db) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO workflows (id, name, version, domain, steps, feedbacks, created_at, updated_at)
+    VALUES (?, ?, 1, ?, ?, ?, ?, ?)`);
+  const now = '1970-01-01T00:00:00.000Z'; // fixed: migrations must be deterministic
+  for (const wf of BUILTIN_SEED_WORKFLOWS) {
+    stmt.run(wf.id, wf.name, wf.domain, JSON.stringify(wf.steps), JSON.stringify(wf.feedbacks), now, now);
+  }
+}
+
 export function migrate(db) {
   // Fast path: an already-migrated DB needs no lock (the common re-open case).
   if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) return;
@@ -521,6 +535,7 @@ export function migrate(db) {
     if (current < 8) db.exec(SCHEMA_V8);
     if (current < 9) db.exec(SCHEMA_V9);
     if (current < 10) db.exec(SCHEMA_V10);
+    if (current < 11) seedBuiltinWorkflows(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

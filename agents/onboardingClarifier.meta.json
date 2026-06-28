@@ -1,0 +1,9 @@
+{
+  "key": "onboardingClarifier", "domain": "coding",
+  "displayName": "Onboarding Clarify", "description": "scope the AI-enablement run (test tier, vendoring, multi-tool, canary)",
+  "color": "red", "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
+  "agentFile": "maestro-onboarding-clarifier.md",
+  "runnerType": "clarifier", "loopSource": false, "fanOut": false,
+  "consumes": ["userPrompt"], "optionalConsumes": ["workspace"], "produces": ["clarify"],
+  "connectsTo": ["onboardingAnalyzer"], "order": 8.1
+}

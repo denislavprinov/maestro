@@ -9,7 +9,7 @@ import { planPath, reviewPath } from './artifacts.mjs';
 /** The closed set of channel ids (single source; imported by registry + validator).
  *  `workspace` (M3) is a read-only metadata channel carrying the frozen workspace
  *  description + member set; it is seeded once and never re-published (CONV-6). */
-export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+export const CHANNEL_IDS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition', 'graph', 'readiness'];
 
 /** Channels the dispatcher pre-seeds WITH VALUES on the bus at run start
  *  (orchestrator.mjs _dispatch bus literal): userPrompt IS the prompt,
@@ -93,6 +93,21 @@ export function allocate(channel, ctx) {
       // The clarify agent writes clarify.json into the pipeline dir as scratch; the
       // DB clarify row is authoritative. Same path the legacy pre-step used.
       return { kind: 'clarify', path: join(pipelineDir, 'clarify.json') };
+    case 'graph': {
+      // graphify-out/ lives in the repo (committed-graph capability); the structured
+      // summary the downstream generators read is a pipeline-dir JSON, cycle-suffixed
+      // so a loop rewind never clobbers an earlier cycle's understanding.
+      const stem = Number(cycle) > 1 ? `graph-summary-cycle${cycle}` : 'graph-summary';
+      return { kind: 'graph', path: join(pipelineDir, `${stem}.json`),
+               graphDir: join(projectDir, 'graphify-out'), channel: 'graph' };
+    }
+    case 'readiness': {
+      // The evaluator's AI-readiness report card: a human-readable md + a machine
+      // json sibling (score + per-dimension breakdown). publish() folds the md path.
+      const stem = Number(cycle) > 1 ? `readiness-cycle${cycle}` : 'readiness';
+      return { kind: 'artifact', path: join(pipelineDir, `${stem}.md`),
+               jsonPath: join(pipelineDir, `${stem}.json`), channel: 'readiness' };
+    }
     default: {
       // Open vocabulary: any custom channel allocates a generic pipeline-dir
       // artifact. A registry channelDef (threaded via ctx.channelDefs) overrides
@@ -129,7 +144,7 @@ export function bindInputs(consumes, optionalConsumes, bus) {
  * Clearing `review` on a `code` publish fixes the sticky fix-mode bug: a later
  * implementer no longer sees a stale review.
  */
-export function publish(produces, result, outputs, bus) {
+export function publish(produces, result, outputs, bus, opts) {
   if (!result) return;
   for (const c of produces || []) {
     if (c === 'plan') {
@@ -147,7 +162,11 @@ export function publish(produces, result, outputs, bus) {
       const path = result.checklistPath || outputs.checklist?.path;
       if (path) bus.checklist = { kind: 'artifact', path };
     } else if (c === 'code') {
-      bus.review = null; // implementer superseded any pending review (fix-mode reset)
+      // A fix-mode producer (it consumed the review) must NOT wipe the verdict — a
+      // later sibling generator in the same rewind still needs it. A forward first-
+      // pass producer clears it (today's sticky-fix-mode reset). The evaluator re-
+      // publishes a fresh verdict next cycle either way (latest-writer-wins).
+      if (!(opts && opts.keepReview)) bus.review = null; // implementer superseded any pending review
     } else if (c === 'workspace') {
       // Read-only metadata: seeded once by the orchestrator, NEVER re-published
       // (CONV-6: the frozen per-step snapshot must not change mid-run). No-op.

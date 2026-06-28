@@ -2,7 +2,7 @@
 // Schema v2: optional uiPhase/channelDefs/promptHints/version fields, an OPEN
 // channel vocabulary (custom ids in produces/consumes survive normalization),
 // and collectChannelDefs() as the registry-wide channel definition collection.
-// Backward compatible: the 12 shipped sidecars normalize exactly as before.
+// Backward compatible: the 17 shipped sidecars normalize exactly as before.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -87,9 +87,9 @@ test('collectChannelDefs merges registry-wide; first definition wins on conflict
   });
 });
 
-test('the 12 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
+test('the 17 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
-  assert.equal(Object.keys(reg).length, 12);
+  assert.equal(Object.keys(reg).length, 17);
   for (const m of Object.values(reg)) {
     assert.deepEqual(m.channelDefs, [], `${m.key} has no channelDefs`);
     assert.equal(m.promptHints, '');

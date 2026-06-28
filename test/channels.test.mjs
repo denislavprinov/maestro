@@ -7,7 +7,7 @@ const ALLOC = { projectDir: '/p', pipelineDir: '/pipe', baseName: 'feat', datePr
 
 test('CHANNEL_IDS is the closed set (workspace added in M3)', () => {
   assert.deepEqual([...CHANNEL_IDS].sort(),
-    ['checklist', 'clarify', 'code', 'decomposition', 'plan', 'review', 'userPrompt', 'workspace']);
+    ['checklist', 'clarify', 'code', 'decomposition', 'graph', 'plan', 'readiness', 'review', 'userPrompt', 'workspace']);
 });
 
 test('▲ C1: allocate mints the planner plan at v1 and the refiner plan at cycle+1', () => {

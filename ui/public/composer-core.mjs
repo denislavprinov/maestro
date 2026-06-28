@@ -100,9 +100,34 @@ export const EMBEDDED_AGENTS = {
     icon: '<path d="M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z"/><path d="M15.5 15.5L21 21" stroke-linecap="round"/><path d="M7.6 10.3l2 2 3.3-3.6" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   projectOnboarding: {
-    key: 'projectOnboarding', displayName: 'Project Onboarding', description: 'onboard a repo: CLAUDE.md, skills, rules',
-    color: 'green', order: 8, connectsTo: [],
+    key: 'projectOnboarding', displayName: 'Project Onboarding', description: 'infra-gen: CLAUDE.md, skills, rules, vendoring',
+    color: 'green', order: 8, connectsTo: ['onboardingTests'],   // was []  ← PR #50 mismatch fix
     icon: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9z"/><path d="M8.5 13l2.5 2.5 4.5-5" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+  onboardingClarifier: {
+    key: 'onboardingClarifier', displayName: 'Onboarding Clarify', description: 'scope the AI-enablement run',
+    color: 'red', order: 8.1, connectsTo: ['onboardingAnalyzer'],
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6" stroke-linecap="round" fill="none"/><circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none"/>',
+  },
+  onboardingAnalyzer: {
+    key: 'onboardingAnalyzer', displayName: 'Onboarding Analyze', description: 'graphify → structured understanding',
+    color: 'blue', order: 8.2, connectsTo: ['projectOnboarding'],
+    icon: '<circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8.7 8.7l2.6 6.6M15.3 8.7l-2.6 6.6M9 7h6" stroke-linecap="round"/>',
+  },
+  onboardingTests: {
+    key: 'onboardingTests', displayName: 'Onboarding Tests', description: 'test infra to the chosen tier',
+    color: 'peach', order: 8.3, connectsTo: ['onboardingEvaluator'],
+    icon: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9.5 4V2.8h5V4" stroke-linejoin="round"/><path d="M8.8 12l1.6 1.6L13.4 10" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+  onboardingEvaluator: {
+    key: 'onboardingEvaluator', displayName: 'Onboarding Evaluate', description: 'AI-readiness gate (loops until pass)',
+    color: 'amber', order: 8.4, connectsTo: ['onboardingCanary'],
+    icon: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+  onboardingCanary: {
+    key: 'onboardingCanary', displayName: 'Onboarding Canary', description: 'one real task end-to-end, then discard',
+    color: 'green', order: 8.5, connectsTo: [],
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5V8.5Z" fill="currentColor" stroke="none"/>',
   },
 };
 

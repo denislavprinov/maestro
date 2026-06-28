@@ -585,9 +585,12 @@ test('a DB error mid-import rolls back ALL rows and leaves the legacy JSON untou
     db.exec('DROP TRIGGER _force_fail');
   }
 
-  // Atomicity: the rollback discarded EVERY table the transaction touched.
+  // Atomicity: the rollback discarded EVERY table the import transaction touched.
+  // The `workflows` table is the one exception — its single built-in row is seeded by
+  // migrate() (a prior, committed transaction), NOT by the import, so it survives.
   const counts = tableCounts(db);
   for (const [t, n] of Object.entries(counts)) {
+    if (t === 'workflows') { assert.equal(n, 1, 'only the migrate-seeded built-in workflow remains'); continue; }
     assert.equal(n, 0, `table ${t} is empty after rollback`);
   }
 

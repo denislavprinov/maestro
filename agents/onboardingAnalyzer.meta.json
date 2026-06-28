@@ -1,0 +1,10 @@
+{
+  "key": "onboardingAnalyzer", "domain": "coding",
+  "displayName": "Onboarding Analyze", "description": "graphify the repo → structured understanding for the generators",
+  "color": "blue", "icon": "<circle cx=\"7\" cy=\"7\" r=\"2.5\"/><circle cx=\"17\" cy=\"7\" r=\"2.5\"/><circle cx=\"12\" cy=\"17\" r=\"2.5\"/><path d=\"M8.7 8.7l2.6 6.6M15.3 8.7l-2.6 6.6M9 7h6\" stroke-linecap=\"round\"/>",
+  "agentFile": "maestro-onboarding-analyzer.md",
+  "runnerType": "producer", "loopSource": false, "fanOut": true,
+  "consumes": ["userPrompt", "clarify"], "optionalConsumes": ["workspace"], "produces": ["graph"],
+  "connectsTo": ["projectOnboarding"], "order": 8.2,
+  "requiresSkills": ["graphify"]
+}

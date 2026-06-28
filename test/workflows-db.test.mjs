@@ -37,9 +37,9 @@ test('readWorkflow returns the built-in DEFAULT_WORKFLOW for "wf_default" (not a
   assert.equal(row, undefined, 'default workflow is never a DB row');
 });
 
-test('readWorkflow returns null for a missing id; listWorkflows is [] on an empty store', async () => {
+test('readWorkflow returns null for a missing id; a fresh store has only the seeded built-in', async () => {
   assert.equal(await readWorkflow('wf_nope'), null);
-  assert.deepEqual(await listWorkflows(), []);
+  assert.deepEqual((await listWorkflows()).map((w) => w.id), ['wf_onboarding']);
 });
 
 test('listWorkflows reads rows newest-first by created_at and parses steps/feedbacks JSON', async () => {
@@ -50,7 +50,8 @@ test('listWorkflows reads rows newest-first by created_at and parses steps/feedb
   ins.run('wf_a', 'A', 1, JSON.stringify([[{ id: 's0_0', key: 'planner' }]]), '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
   ins.run('wf_b', 'B', 1, JSON.stringify([[{ id: 's0_0', key: 'planner' }]]), '[]', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
   const list = await listWorkflows();
-  assert.deepEqual(list.map((w) => w.id), ['wf_b', 'wf_a'], 'newest created_at first');
+  // The seeded built-in (created_at 1970) sorts last; assert on the user rows only.
+  assert.deepEqual(list.map((w) => w.id).filter((id) => id !== 'wf_onboarding'), ['wf_b', 'wf_a'], 'newest created_at first');
   assert.ok(Array.isArray(list[0].steps), 'steps parsed from JSON');
   assert.ok(!list.some((w) => w.id === 'wf_default'), 'DEFAULT_WORKFLOW never in the user store');
 });

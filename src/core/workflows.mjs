@@ -15,6 +15,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { maestroHome } from './projects.mjs';
 import { resolveRunConfig, readConfig } from './config.mjs';
 import { slugify } from './artifacts.mjs';
+import { ONBOARDING_WORKFLOW } from './builtin-workflows.mjs';
 
 /**
  * Default feedback cycle count when run-config does not override it. Matches the
@@ -198,7 +199,8 @@ export async function writeWorkflow(tpl) {
  */
 export async function readWorkflow(id) {
   if (id === DEFAULT_WORKFLOW.id) return DEFAULT_WORKFLOW;
-  return readRaw(id);
+  // Resilience: a deleted built-in row still resolves the frozen constant.
+  return readRaw(id) || (id === ONBOARDING_WORKFLOW.id ? ONBOARDING_WORKFLOW : null);
 }
 
 /**

@@ -935,6 +935,8 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
       if (h.jsonPath) outLines.push(`- Write the ${c} JSON (machine-readable verdict) to: ${h.jsonPath}`);
     } else if (h.path) {
       outLines.push(`- Write ${c} to: ${h.path}`);
+      if (h.jsonPath) outLines.push(`- Write the ${c} JSON (machine-readable) to: ${h.jsonPath}`);
+      if (h.graphDir) outLines.push(`- Persist the committed graphify-out/ directory at: ${h.graphDir}`);
     }
   }
   return (

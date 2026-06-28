@@ -1,0 +1,10 @@
+{
+  "key": "onboardingCanary", "domain": "coding",
+  "displayName": "Onboarding Canary", "description": "prove the setup works: do one tiny real task using ONLY the generated + vendored config, then discard",
+  "color": "green", "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M10 8.5l5 3.5-5 3.5V8.5Z\" fill=\"currentColor\" stroke=\"none\"/>",
+  "agentFile": "maestro-onboarding-canary.md",
+  "runnerType": "producer", "loopSource": false, "fanOut": true,
+  "consumes": ["code", "graph"], "optionalConsumes": ["clarify"], "produces": ["review"],
+  "connectsTo": [], "order": 8.5,
+  "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill, Task, Agent"
+}
