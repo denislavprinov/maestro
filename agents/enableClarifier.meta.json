@@ -1,0 +1,13 @@
+{
+  "key": "enableClarifier",
+  "domain": "coding",
+  "displayName": "Enable Set-up",
+  "description": "Deterministic clarifier: always emits the 5 fixed Enable set-up questions with stable ids.",
+  "color": "red",
+  "agentFile": "maestro-enable-clarifier.md",
+  "runnerType": "clarifier",
+  "consumes": ["userPrompt"],
+  "produces": ["clarify"],
+  "connectsTo": ["onboardingAnalyzer"],
+  "order": 8.15
+}
