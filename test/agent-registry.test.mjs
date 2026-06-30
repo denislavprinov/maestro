@@ -7,17 +7,17 @@ import { join } from 'node:path';
 import { loadAgentRegistry, registryToSteps, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns all shipped agents (15 project + 2 workspace)', () => {
+test('loadAgentRegistry returns all shipped agents (16 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
+    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 17);
+  assert.equal(Object.keys(reg).length, 18); // +1: enableClarifier (Enable app)
   // The two workspace agents are scope:'workspace-only'; the rest are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
-    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer']);
+    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer']);
 });
 
 test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
@@ -86,8 +86,8 @@ test('registry insertion order follows .order ascending', () => {
   assert.deepEqual(Object.keys(reg), [
     'clarify', 'workspaceScanner', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'workspaceReviewer',
     'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'projectOnboarding',
-    'onboardingClarifier', 'onboardingAnalyzer', 'onboardingTests', 'onboardingEvaluator', 'onboardingCanary',
-  ]);
+    'onboardingClarifier', 'enableClarifier', 'onboardingAnalyzer', 'onboardingTests', 'onboardingEvaluator', 'onboardingCanary',
+  ]); // enableClarifier (order 8.15) sorts between onboardingClarifier (8.1) and onboardingAnalyzer (8.2)
 });
 
 test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => {
@@ -110,7 +110,7 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 15);
+  assert.equal(steps.length, 16); // +1: enableClarifier (Enable app)
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true });
   assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true });
   assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });

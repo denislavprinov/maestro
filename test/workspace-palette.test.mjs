@@ -44,7 +44,7 @@ test('GET /api/agents excludes scope:"workspace-only" agents from the palette', 
   for (const k of ['clarify', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer']) {
     assert.ok(keys.includes(k), `palette must still offer ${k}`);
   }
-  assert.equal(agents.length, 15, 'exactly the 15 project agents are composable');
+  assert.equal(agents.length, 16, 'the 16 project agents are composable'); // +1: enableClarifier (Enable app)
 });
 
 test('GET /api/agents returns palette order (ascending .order)', async () => {

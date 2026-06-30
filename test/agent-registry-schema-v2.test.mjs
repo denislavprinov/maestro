@@ -87,9 +87,9 @@ test('collectChannelDefs merges registry-wide; first definition wins on conflict
   });
 });
 
-test('the 17 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
+test('the 18 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
-  assert.equal(Object.keys(reg).length, 17);
+  assert.equal(Object.keys(reg).length, 18); // +1: enableClarifier (Enable app)
   for (const m of Object.values(reg)) {
     assert.deepEqual(m.channelDefs, [], `${m.key} has no channelDefs`);
     assert.equal(m.promptHints, '');

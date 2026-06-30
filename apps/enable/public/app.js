@@ -1,0 +1,251 @@
+'use strict';
+
+const DIMENSION_LABELS = { docs: 'Documentation', skillsAgents: 'Custom skills', rules: 'Guardrails',
+  tests: 'Test setup', featureSkillCoverage: 'Key-workflow coverage', realTests: 'Working tests',
+  vendoring: 'Bundled skills', multiTool: 'Cross-tool support', codeHealth: 'Code health' };
+
+const STAGES = [
+  { node: 's_clarify', label: 'Set up',     color: '#e5484d' },
+  { node: 's_analyze', label: 'Understand', color: '#4493f8' },
+  { node: 's_infra',   label: 'Build',      color: '#46d39a' },
+  { node: 's_tests',   label: 'Add tests',  color: '#f2a25c' },
+  { node: 's_eval',    label: 'Review',     color: '#f5b833' },
+  { node: 's_canary',  label: 'Test-drive', color: '#46d39a' },
+];
+
+// The 5 fixed set-up questions. value === the choice string sent to the engine.
+const SETUP_QUESTIONS = {
+  testTier: { type: 'single', options: [
+    { value: 'scaffold', label: 'Scaffold (recommended)' }, { value: 'docs-only', label: 'Docs only' },
+    { value: 'smoke', label: 'Smoke tests' }, { value: 'characterization', label: 'Characterization' }] },
+  vendoringDepth: { type: 'single', options: [
+    { value: 'full', label: 'Full (recommended)' }, { value: 'baseline-only', label: 'Baseline only' },
+    { value: 'none', label: 'None' }] },
+  multiToolTargets: { type: 'multi', options: [
+    { value: 'claude', label: 'Claude (CLAUDE.md)', locked: true }, { value: 'cursor', label: 'Cursor' },
+    { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md' }], defaults: ['cursor', 'copilot'] },
+  canary: { type: 'single', options: [{ value: 'yes', label: 'Yes (recommended)' }, { value: 'no', label: 'No' }] },
+};
+
+let baseline = null;
+let ws = null;
+
+// ---------- screen switching ----------
+function show(id) {
+  for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === id);
+}
+
+// ---------- home / project loading ----------
+async function loadProjects() {
+  const sel = document.querySelector('#project-select');
+  try {
+    const { projects } = await (await fetch('/api/enable/projects')).json();
+    sel.innerHTML = '<option value="">Choose a project…</option>' +
+      projects.map((p) => `<option value="${p.path}">${p.name}</option>`).join('');
+    if (!projects.length) sel.innerHTML = '<option value="">No git projects found — paste a path below</option>';
+  } catch {
+    sel.innerHTML = '<option value="">Could not list projects — paste a path below</option>';
+  }
+}
+
+function chosenProjectDir() {
+  return document.querySelector('#project-path').value.trim() || document.querySelector('#project-select').value;
+}
+
+// ---------- set-up form ----------
+function buildSetupForm() {
+  for (const [id, q] of Object.entries(SETUP_QUESTIONS)) {
+    const box = document.querySelector(`.opts[data-q="${id}"]`);
+    if (!box) continue;
+    box.innerHTML = q.options.map((o, i) => {
+      const input = q.type === 'multi' ? 'checkbox' : 'radio';
+      const checked = q.type === 'multi'
+        ? (o.locked || (q.defaults || []).includes(o.value)) : i === 0;
+      const dis = o.locked ? 'disabled' : '';
+      return `<label class="opt ${o.locked ? 'locked' : ''}">
+        <input type="${input}" name="${id}" value="${o.value}" ${checked ? 'checked' : ''} ${dis} />
+        <span>${o.label}</span></label>`;
+    }).join('');
+  }
+}
+
+function collectAnswers() {
+  const a = {};
+  a.testTier = document.querySelector('input[name="testTier"]:checked')?.value;
+  a.vendoringDepth = document.querySelector('input[name="vendoringDepth"]:checked')?.value;
+  a.canary = document.querySelector('input[name="canary"]:checked')?.value;
+  // multi: array of label keys; onboarding.joinMultiToolTargets maps + locks CLAUDE.md
+  const free = document.querySelector('input[data-free="multiToolTargets"]').value.trim();
+  if (free) {
+    a.multiToolTargets = free; // free text passes through verbatim
+  } else {
+    a.multiToolTargets = [...document.querySelectorAll('input[name="multiToolTargets"]:checked')]
+      .map((el) => el.value).filter((v) => v !== 'claude'); // claude is always added server-side
+  }
+  const scope = document.querySelector('input[data-free="scopeConstraints"]').value.trim();
+  a.scopeConstraints = scope;
+  return a;
+}
+
+// ---------- run ----------
+async function start(projectDir, answers) {
+  const mock = document.querySelector('#mock-toggle').checked;
+  resetProgress();
+  show('progress');
+  let runId;
+  try {
+    const res = await fetch('/api/enable/run', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectDir, answers, mock }) });
+    if (!res.ok) { showError((await res.json().catch(() => ({}))).error || `run failed (${res.status})`); return; }
+    ({ runId } = await res.json());
+  } catch (err) { showError(String(err.message || err)); return; }
+
+  ws = new WebSocket(`ws://${location.host}/ws?runId=${runId}`);
+  ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch {} };
+  ws.onerror = () => showError('Lost connection to the Enable server.');
+}
+
+function handle(ev) {
+  switch (ev.type) {
+    case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
+    case 'log':      appendFeed(ev); break;
+    case 'readiness':
+      if (ev.kind === 'baseline') { baseline = ev.score; renderRing(ev.score, null); }
+      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) renderRing(ev.score, baseline); }
+      if (ev.kind === 'final')    renderResults(ev);
+      break;
+    case 'done':     if (ev.status === 'error') showError('The run ended with an error.'); break;
+    case 'error':    showError(ev.message); break;
+  }
+}
+
+// ---------- progress rendering ----------
+function resetProgress() {
+  baseline = null;
+  const j = document.querySelector('#journey');
+  j.innerHTML = STAGES.map((s) => `<div class="stage" data-node="${s.node}" style="--c:${s.color}">
+    <span class="stage-dot"></span><span class="stage-label">${s.label}</span></div>`).join('');
+  document.querySelector('#feed').innerHTML = '';
+  document.querySelector('#raw-log').textContent = '';
+  document.querySelector('#ring-score').textContent = '—';
+  setPassLabel(null);
+  renderRing(null, null);
+}
+
+function activateStage(node) {
+  const stages = [...document.querySelectorAll('.stage')];
+  const idx = stages.findIndex((s) => s.dataset.node === node);
+  stages.forEach((s, i) => {
+    s.classList.toggle('done', idx >= 0 && i <= idx);
+    s.classList.toggle('active', i === idx);
+  });
+}
+
+function appendFeed(ev) {
+  const text = ev.text || ev.message || ev.value;
+  if (!text) return;
+  const raw = document.querySelector('#raw-log');
+  raw.textContent += `${ev.source ? `[${ev.source}] ` : ''}${text}\n`;
+  raw.scrollTop = raw.scrollHeight;
+  // plain-English feed: only show human-meaningful lines, keep it short
+  if (typeof text === 'string' && text.length < 160) {
+    const feed = document.querySelector('#feed');
+    const line = document.createElement('div');
+    line.className = 'feed-line';
+    line.textContent = text;
+    feed.append(line);
+    while (feed.children.length > 6) feed.firstChild.remove();
+  }
+}
+
+function setPassLabel(cycle) {
+  const el = document.querySelector('#pass-label');
+  el.textContent = cycle == null ? 'working…' : `pass ${cycle}`;
+}
+
+function renderRing(score, base) {
+  const R = 74, C = 2 * Math.PI * R;
+  const fill = document.querySelector('#ring-fill');
+  const pct = Math.max(0, Math.min(100, score || 0)) / 100;
+  fill.setAttribute('stroke-dasharray', `${pct * C} ${C}`);
+  const ghost = document.querySelector('#ring-ghost');
+  if (base == null) ghost.style.display = 'none';
+  else { ghost.style.display = ''; ghost.setAttribute('stroke-dasharray', `${(base / 100) * C} ${C}`); }
+  document.querySelector('#ring-score').textContent = score == null ? '—' : Math.round(score);
+}
+
+// ---------- results ----------
+function renderResults(r) {
+  show('results');
+  const hero = document.querySelector('#hero');
+  if (r.score == null) hero.textContent = 'Done';
+  else if (r.baselineScore == null) hero.textContent = `${Math.round(r.score)}`;
+  else hero.textContent = `${Math.round(r.baselineScore)} → ${Math.round(r.score)} (${r.delta >= 0 ? '+' : ''}${Math.round(r.delta)})`;
+
+  const bars = document.querySelector('#bars');
+  bars.innerHTML = '';
+  for (const [key, label] of Object.entries(DIMENSION_LABELS)) {
+    const v = (r.dimensions || {})[key];
+    const w = typeof v === 'number' ? Math.max(0, Math.min(100, v)) : 0;
+    const color = w >= 80 ? '#46d39a' : w >= 50 ? '#f5b833' : '#e5484d';
+    bars.insertAdjacentHTML('beforeend',
+      `<div class="bar"><span class="bar-label">${label}</span>
+        <span class="bar-track"><i style="width:${w}%;background:${color}"></i></span>
+        <span class="bar-val">${typeof v === 'number' ? Math.round(v) : '—'}</span></div>`);
+  }
+
+  const gaps = r.gaps || [];
+  document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
+  document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
+  document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
+}
+
+function showError(detail) {
+  document.querySelector('#error-detail').textContent = detail || '';
+  show('errored');
+}
+
+// ---------- theme ----------
+function initTheme() {
+  const saved = localStorage.getItem('enable-theme');
+  if (saved) document.documentElement.dataset.theme = saved;
+  document.querySelector('#theme-toggle').addEventListener('click', () => {
+    const cur = document.documentElement.dataset.theme
+      || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('enable-theme', next);
+  });
+}
+
+// ---------- wiring ----------
+function init() {
+  initTheme();
+  loadProjects();
+  buildSetupForm();
+
+  document.querySelector('#go-setup').addEventListener('click', () => {
+    const dir = chosenProjectDir();
+    const err = document.querySelector('#home-error');
+    if (!dir) { err.textContent = 'Pick a project or paste a path first.'; err.hidden = false; return; }
+    err.hidden = true;
+    show('setup');
+  });
+
+  document.querySelector('#setup-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    start(chosenProjectDir(), collectAnswers());
+  });
+
+  for (const b of document.querySelectorAll('[data-back]')) {
+    b.addEventListener('click', () => { if (ws) { try { ws.close(); } catch {} } show(b.dataset.back); });
+  }
+
+  document.querySelector('#details-toggle').addEventListener('click', () => {
+    const raw = document.querySelector('#raw-log');
+    raw.hidden = !raw.hidden;
+    document.querySelector('#details-toggle').textContent = raw.hidden ? 'Show details' : 'Hide details';
+  });
+}
+
+document.addEventListener('DOMContentLoaded', init);
