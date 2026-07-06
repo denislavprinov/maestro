@@ -91,7 +91,15 @@ In addition to `CLAUDE.md`, project skills, and rules, write these onboarding ta
   - `.cursor/rules` (a.k.a. "Cursor") → write `.cursor/rules/` (modern `*.mdc` rule files) or `.cursorrules`, per the repo's existing convention.
   - `Copilot` (a.k.a. "Copilot instructions") → write `.github/copilot-instructions.md`.
 
-  Example: the choice `"AGENTS.md + .cursor/rules + Copilot instructions"` means emit **all three** files; `"AGENTS.md"` alone means just that one; `"none"` means emit none. Do NOT stop after `AGENTS.md` when the label lists more. Do NOT duplicate `CLAUDE.md` wholesale into any of them — reference it and carry only what each tool needs. List every file you emit in the Files-written table, and in the report state explicitly which requested targets you produced vs the full requested set (so a shortfall is visible).
+  Example: the choice `"AGENTS.md + .cursor/rules + Copilot instructions"` means emit **all three** files; `"AGENTS.md"` alone means just that one; `"none"` means emit none. Do NOT stop after `AGENTS.md` when the label lists more.
+
+  **Parity contract — every emitted tool file must be SELF-SUFFICIENT.** The tools are not symmetric (Copilot and Codex cannot follow a "see CLAUDE.md" pointer the way Claude follows its own config, and they have no skills/sub-agents), but the resulting AI readiness must be: a fresh session of ANY requested tool has to land on equivalent core guidance. Concretely, each tool file must itself carry:
+  1. the verified build / test / lint commands,
+  2. the architecture map (entry points, module boundaries, where things live),
+  3. the conventions and guardrails (what to never touch, style rules),
+  4. a **Key workflows** section mirroring the substance of every feature skill you wrote under `.claude/skills/` — the step-by-step knowledge, in plain prose, since these tools cannot load skills.
+
+  A pointer-only stub ("see CLAUDE.md") counts as NOT emitted — the evaluator treats it as a missing target. Generate all tool files from the same core facts so they cannot drift apart, adapt each to its tool's native format (Cursor `*.mdc` frontmatter, Copilot's terse instruction style, AGENTS.md plain markdown), and skip only what a tool genuinely cannot use (e.g. Claude-only tool-permission settings). List every file you emit in the Files-written table, and in the report state explicitly which requested targets you produced vs the full requested set (so a shortfall is visible).
 
 ### Fix mode
 

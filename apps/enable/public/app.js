@@ -23,7 +23,8 @@ const SETUP_QUESTIONS = {
     { value: 'none', label: 'None' }] },
   multiToolTargets: { type: 'multi', options: [
     { value: 'claude', label: 'Claude (CLAUDE.md)', locked: true }, { value: 'cursor', label: 'Cursor' },
-    { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md' }], defaults: ['cursor', 'copilot'] },
+    { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md (Codex & others)' }],
+    defaults: ['cursor', 'copilot', 'agents'] },
   canary: { type: 'single', options: [{ value: 'yes', label: 'Yes (recommended)' }, { value: 'no', label: 'No' }] },
 };
 
