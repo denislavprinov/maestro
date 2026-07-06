@@ -4,7 +4,8 @@ import { WebSocketServer } from 'ws';
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runOnboarding } from '../../src/core/onboarding.mjs';
+import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
+import { listAllPipelines } from '../../src/core/artifacts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -100,6 +101,27 @@ app.get('/api/enable/runs/:runId/changes', (req, res) => {
   const dir = entry?.orch?.getState()?.pipelineDir;
   if (!entry || !dir) return res.status(404).json({ error: 'unknown runId' });
   res.json(readChanges(dir));
+});
+
+// past Enable runs, newest first (filtered on the pinned run title). Each entry
+// carries its final readiness (null while unwritten) so the list can show scores.
+async function enableHistory() {
+  const all = await listAllPipelines();
+  return all.filter((p) => p.title === ENABLE_TITLE)
+    .map((p) => ({ ...p, readiness: p.dir ? readFinalReadiness(p.dir) : null }));
+}
+
+app.get('/api/enable/history', async (_req, res) => {
+  try { res.json({ runs: await enableHistory() }); }
+  catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+});
+
+app.get('/api/enable/history/:id', async (req, res) => {
+  try {
+    const entry = (await enableHistory()).find((p) => p.id === req.params.id);
+    if (!entry || !entry.dir) return res.status(404).json({ error: 'unknown run' });
+    res.json({ entry, readiness: entry.readiness, changes: readChanges(entry.dir) });
+  } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
 // kept for completeness/future interactive gates; happy path answers up front (D8)

@@ -27,8 +27,20 @@ async function bootEnable() {
     nitpicks: [],
     patch: 'diff --git a/CLAUDE.md b/CLAUDE.md\n+hello\n',
   };
+  const HISTORY_ENTRY = {
+    id: 'ab12cd34', dir: '/store/p/ab12cd34', title: 'Enable project for AI',
+    status: 'done', startedAt: '2026-07-06T15:00:00Z', branch: 'maestro/enable-project-for-ai-ab12cd34',
+    projectName: 'tinytool', readiness: { score: 91, baselineScore: 30, delta: 61, dimensions: {}, gaps: [] },
+  };
   window.fetch = (url, opts) => {
     const u = String(url);
+    if (u.includes('/api/enable/history/ab12cd34')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () =>
+        ({ entry: HISTORY_ENTRY, readiness: HISTORY_ENTRY.readiness, changes: CHANGES_FIXTURE }) });
+    }
+    if (u.includes('/api/enable/history')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ runs: [HISTORY_ENTRY] }) });
+    }
     if (u.includes('/changes')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => CHANGES_FIXTURE });
     }
@@ -106,6 +118,24 @@ test('results screen renders the What-changed panel from the changes route', asy
   toggle.click();
   assert.equal(view.hidden, false);
   assert.match(view.textContent, /diff --git a\/CLAUDE\.md/);
+});
+
+test('home lists past runs; clicking one opens the results view from disk', async () => {
+  const { document } = await bootEnable();
+  const wrap = document.querySelector('#history-wrap');
+  assert.ok(wrap, '#history-wrap must exist on the home screen');
+  assert.equal(wrap.hidden, false);
+  const item = document.querySelector('#history-list li');
+  assert.ok(item, 'one history row');
+  assert.match(item.textContent, /tinytool/);
+  assert.match(item.textContent, /91/);
+
+  item.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(document.querySelector('#results').classList.contains('active'), true);
+  assert.match(document.querySelector('#hero').textContent, /30 → 91 \(\+61\)/);
+  assert.match(document.querySelector('#result-branch').textContent, /enable-project-for-ai-ab12cd34/);
+  assert.match(document.querySelector('#changes-summary').textContent, /2 new files/);
 });
 
 test('starting a new run closes the previous run socket', async () => {

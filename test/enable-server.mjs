@@ -131,6 +131,47 @@ test('GET /api/enable/runs/:runId/changes -> 404 for unknown runId', async () =>
   assert.equal(res.status, 404);
 });
 
+test('GET /api/enable/history lists finished Enable runs with readiness', async () => {
+  const ANSWERS = { testTier: 'scaffold', vendoringDepth: 'full',
+    multiToolTargets: ['cursor', 'copilot'], canary: 'yes', scopeConstraints: '' };
+  const { json } = await post('/api/enable/run', { projectDir: freshRepo(), answers: ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const dir = entry.orch.getState().pipelineDir;
+  writeFileSync(join(dir, 'readiness.json'),
+    JSON.stringify({ score: 91, baselineScore: 30, delta: 61, dimensions: {}, gaps: [] }));
+
+  const res = await fetch(`http://${base}/api/enable/history`);
+  assert.equal(res.status, 200);
+  const { runs: hist } = await res.json();
+  assert.ok(Array.isArray(hist) && hist.length >= 1, 'at least the run just finished');
+  const mine = hist.find((h) => h.dir === dir);
+  assert.ok(mine, 'the finished run must be listed');
+  assert.equal(mine.title, 'Enable project for AI');
+  assert.equal(mine.readiness?.score, 91);
+  assert.ok(mine.id && mine.startedAt, 'id + startedAt present');
+});
+
+test('GET /api/enable/history/:id returns entry + readiness + changes; 404 unknown', async () => {
+  const list = await (await fetch(`http://${base}/api/enable/history`)).json();
+  const first = list.runs[0];
+  assert.ok(first, 'history must have an entry from the previous test');
+  writeFileSync(join(first.dir, 'results.json'), JSON.stringify({
+    summary: { filesNew: 1, filesChanged: 0, filesDeleted: 0, linesAdded: 5, linesRemoved: 0 },
+    newFiles: [{ path: 'CLAUDE.md', status: 'A', added: 5, removed: 0 }], changedFiles: [], nitpicks: [],
+  }));
+
+  const res = await fetch(`http://${base}/api/enable/history/${first.id}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.entry.id, first.id);
+  assert.ok(body.readiness, 'readiness present');
+  assert.equal(body.changes.summary.filesNew, 1);
+
+  const missing = await fetch(`http://${base}/api/enable/history/ffffffff`);
+  assert.equal(missing.status, 404);
+});
+
 test('POST /api/enable/answer with unknown runId -> 400', async () => {
   const { status, json } = await post('/api/enable/answer', { runId: 'nope', id: 'x', payload: {} });
   assert.equal(status, 400);

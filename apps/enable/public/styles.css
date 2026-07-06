@@ -167,3 +167,15 @@ select:focus, input[type='text']:focus { outline: none; border-color: var(--acce
 .changes-files .file-status { color: var(--accent); width: 12px; flex: none; }
 .changes-files .file-counts { margin-left: auto; color: var(--dim); flex: none; }
 .changes-files .file-more { color: var(--dim); }
+
+/* history */
+.history-card { margin-top: 18px; }
+.history-list { list-style: none; display: flex; flex-direction: column; }
+.history-list li {
+  display: flex; gap: 12px; align-items: baseline; padding: 9px 6px; cursor: pointer;
+  border-radius: 8px; font-size: 14px;
+}
+.history-list li:hover { background: var(--surface-2); }
+.history-list .hist-project { color: var(--text); }
+.history-list .hist-when { color: var(--dim); font-size: 12px; }
+.history-list .hist-score { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--accent); }

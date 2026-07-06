@@ -202,7 +202,7 @@ function renderResults(r) {
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
-  loadChanges(`/api/enable/runs/${currentRunId}/changes`);
+  if (currentRunId) loadChanges(`/api/enable/runs/${currentRunId}/changes`);
 }
 
 // ---------- what changed ----------
@@ -223,6 +223,13 @@ async function loadChanges(url) {
     if (!res.ok) return;
     c = await res.json();
   } catch { return; }
+  renderChanges(c);
+}
+
+function renderChanges(c) {
+  const wrap = document.querySelector('#changes-wrap');
+  wrap.hidden = true;
+  if (!c) return;
   const s = c.summary;
   if (!s && !c.patch) return;   // nothing to show (mock / mid-run)
 
@@ -243,6 +250,47 @@ async function loadChanges(url) {
   toggle.hidden = !c.patch;
   toggle.textContent = 'Show patch';
   wrap.hidden = false;
+}
+
+// ---------- history ----------
+async function loadHistory() {
+  const wrap = document.querySelector('#history-wrap');
+  let hist;
+  try {
+    const res = await fetch('/api/enable/history');
+    if (!res.ok) return;
+    hist = (await res.json()).runs || [];
+  } catch { return; }
+  if (!hist.length) { wrap.hidden = true; return; }
+
+  const list = document.querySelector('#history-list');
+  list.innerHTML = '';
+  for (const h of hist.slice(0, 20)) {
+    const li = document.createElement('li');
+    const when = h.startedAt ? new Date(h.startedAt).toLocaleDateString() : '';
+    const r = h.readiness;
+    const score = r && r.score != null
+      ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
+      : h.status;
+    li.innerHTML = `<span class="hist-project">${h.projectName || h.title}</span>
+      <span class="hist-when">${when}</span><span class="hist-score">${score}</span>`;
+    li.addEventListener('click', () => showHistoryDetail(h.id));
+    list.append(li);
+  }
+  wrap.hidden = false;
+}
+
+async function showHistoryDetail(id) {
+  let d;
+  try {
+    const res = await fetch(`/api/enable/history/${id}`);
+    if (!res.ok) return;
+    d = await res.json();
+  } catch { return; }
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  currentRunId = null;                       // disk view, no live socket
+  renderResults({ ...(d.readiness || {}), branch: d.entry?.branch ?? null });
+  renderChanges(d.changes);
 }
 
 function showError(detail) {
@@ -267,6 +315,7 @@ function initTheme() {
 function init() {
   initTheme();
   loadProjects();
+  loadHistory();
   buildSetupForm();
 
   document.querySelector('#go-setup').addEventListener('click', () => {
@@ -283,7 +332,11 @@ function init() {
   });
 
   for (const b of document.querySelectorAll('[data-back]')) {
-    b.addEventListener('click', () => { if (ws) { try { ws.close(); } catch {} } show(b.dataset.back); });
+    b.addEventListener('click', () => {
+      if (ws) { try { ws.close(); } catch {} }
+      if (b.dataset.back === 'home') loadHistory();   // pick up the run that just finished
+      show(b.dataset.back);
+    });
   }
 
   document.querySelector('#patch-toggle').addEventListener('click', () => {
