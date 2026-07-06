@@ -926,6 +926,15 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
     const p = h.path || h.mdPath
       || (h.kind === 'worktree' ? '(the working tree — inspect with `git diff` / `git status` in your cwd)' : null);
     if (p) inLines.push(`- ${c}: ${p}`);
+    // clarify.json on disk holds only the questions (agent scratch); the user's
+    // answers live in the DB clarify row and ride the bus handle — inline them
+    // here or generic producers never see them.
+    if (c === 'clarify' && Array.isArray(h.answers) && h.answers.length) {
+      inLines.push('  The user answered these set-up questions (follow them exactly):');
+      for (const a of h.answers) {
+        inLines.push(`  - **Q:** ${String(a.question || a.id || '').trim()} — **A:** ${String(a.choice || '').trim()}`);
+      }
+    }
   }
   const outLines = [];
   for (const [c, h] of Object.entries(outputs || {})) {
