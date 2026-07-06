@@ -5,17 +5,28 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
-import { WebSocket } from 'ws';
+import { WebSocket as RawWebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
 
-let app, server, base, runs;
+let app, server, base, runs, cookie;
+
+// every request/socket in this file carries the session cookie the server
+// issues with the UI (auth is exercised on its own in enable-auth.test.mjs)
+const realFetch = globalThis.fetch;
+globalThis.fetch = (url, opts = {}) =>
+  realFetch(url, { ...opts, headers: { ...(opts.headers || {}), cookie } });
+class WebSocket extends RawWebSocket {
+  constructor(url) { super(url, { headers: { cookie } }); }
+}
 
 before(async () => {
   ({ app, server, runs } = await import('../apps/enable/server.mjs'));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `127.0.0.1:${server.address().port}`;
+  const res = await realFetch(`http://${base}/`);
+  cookie = (res.headers.get('set-cookie') || '').split(';')[0];
 });
 
 after(async () => { if (server) await new Promise((r) => server.close(r)); });

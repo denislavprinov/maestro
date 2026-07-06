@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -13,10 +14,36 @@ const PROJECTS_ROOT = process.env.MAESTRO_ENABLE_PROJECTS_ROOT || process.cwd();
 const PORT = Number(process.env.PORT) || 4319;
 const HOST = process.env.HOST || '127.0.0.1';
 
+// Per-boot session token, issued as a SameSite=Strict HttpOnly cookie with the
+// UI and required on /api/* and the WS handshake. This shields the localhost
+// server from cross-origin browser pages (they can neither read nor send the
+// cookie); it is NOT a defense against other processes of the same OS user.
+const AUTH_TOKEN = process.env.ENABLE_AUTH_TOKEN || randomBytes(32).toString('hex');
+
+function hasAuthCookie(req) {
+  const m = /(?:^|;\s*)enable_auth=([^;]+)/.exec(req.headers.cookie || '');
+  if (!m) return false;
+  const got = Buffer.from(m[1]);
+  const want = Buffer.from(AUTH_TOKEN);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+app.use('/api', (req, res, next) => {
+  if (hasAuthCookie(req)) return next();
+  res.status(401).json({ error: 'unauthorized' });
+});
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  if (new URL(req.url, 'http://x').pathname !== '/ws' || !hasAuthCookie(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+});
 
 const runs = new Map();           // runId -> { orch, events, done, status, buffer[] }
 const sockets = new Set();
@@ -141,7 +168,10 @@ app.post('/api/enable/answer', (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+app.use((req, res, next) => {   // static UI responses carry the session cookie
+  res.setHeader('Set-Cookie', `enable_auth=${AUTH_TOKEN}; Path=/; SameSite=Strict; HttpOnly`);
+  next();
+}, express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isMain) server.listen(PORT, HOST, () => console.log(`[enable] http://${HOST}:${PORT}`));
