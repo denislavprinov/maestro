@@ -1,7 +1,7 @@
 import express from 'express';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnboarding } from '../../src/core/onboarding.mjs';
@@ -74,6 +74,32 @@ app.post('/api/enable/run', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: String(err && err.message || err) });
   }
+});
+
+function readJsonSafe(p) {
+  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; }
+}
+
+// what the run changed: evaluator's results.json + the raw diff, both written
+// into the pipeline dir. Either may be absent (mid-run, mock) -> null fields.
+function readChanges(dir) {
+  const r = readJsonSafe(path.join(dir, 'results.json'));
+  let patch = null;
+  try { patch = readFileSync(path.join(dir, 'diff-patch.patch'), 'utf8'); } catch {}
+  return {
+    summary: r?.summary ?? null,
+    newFiles: r?.newFiles ?? [],
+    changedFiles: r?.changedFiles ?? [],
+    nitpicks: r?.nitpicks ?? [],
+    patch,
+  };
+}
+
+app.get('/api/enable/runs/:runId/changes', (req, res) => {
+  const entry = runs.get(req.params.runId);
+  const dir = entry?.orch?.getState()?.pipelineDir;
+  if (!entry || !dir) return res.status(404).json({ error: 'unknown runId' });
+  res.json(readChanges(dir));
 });
 
 // kept for completeness/future interactive gates; happy path answers up front (D8)

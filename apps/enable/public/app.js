@@ -202,6 +202,47 @@ function renderResults(r) {
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
+  loadChanges(`/api/enable/runs/${currentRunId}/changes`);
+}
+
+// ---------- what changed ----------
+const MAX_FILE_ROWS = 12;
+
+function fileRow(f) {
+  const sign = f.status === 'M' ? '±' : f.status === 'D' ? '−' : '+';
+  return `<li><span class="file-status">${sign}</span> ${f.path}
+    <span class="file-counts">+${f.added || 0}/−${f.removed || 0}</span></li>`;
+}
+
+async function loadChanges(url) {
+  const wrap = document.querySelector('#changes-wrap');
+  wrap.hidden = true;
+  let c;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return;
+    c = await res.json();
+  } catch { return; }
+  const s = c.summary;
+  if (!s && !c.patch) return;   // nothing to show (mock / mid-run)
+
+  document.querySelector('#changes-summary').textContent = s
+    ? `${s.filesNew || 0} new files, ${s.filesChanged || 0} changed, ${s.filesDeleted || 0} deleted` +
+      ` (+${s.linesAdded || 0} / −${s.linesRemoved || 0} lines)`
+    : '';
+
+  const files = [...(c.newFiles || []), ...(c.changedFiles || [])];
+  const list = document.querySelector('#changes-files');
+  list.innerHTML = files.slice(0, MAX_FILE_ROWS).map(fileRow).join('') +
+    (files.length > MAX_FILE_ROWS ? `<li class="file-more">…and ${files.length - MAX_FILE_ROWS} more</li>` : '');
+
+  const toggle = document.querySelector('#patch-toggle');
+  const view = document.querySelector('#patch-view');
+  view.textContent = c.patch || '';
+  view.hidden = true;
+  toggle.hidden = !c.patch;
+  toggle.textContent = 'Show patch';
+  wrap.hidden = false;
 }
 
 function showError(detail) {
@@ -244,6 +285,12 @@ function init() {
   for (const b of document.querySelectorAll('[data-back]')) {
     b.addEventListener('click', () => { if (ws) { try { ws.close(); } catch {} } show(b.dataset.back); });
   }
+
+  document.querySelector('#patch-toggle').addEventListener('click', () => {
+    const view = document.querySelector('#patch-view');
+    view.hidden = !view.hidden;
+    document.querySelector('#patch-toggle').textContent = view.hidden ? 'Show patch' : 'Hide patch';
+  });
 
   document.querySelector('#details-toggle').addEventListener('click', () => {
     const raw = document.querySelector('#raw-log');

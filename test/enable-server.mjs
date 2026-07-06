@@ -1,7 +1,7 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -10,10 +10,10 @@ import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
 
-let app, server, base;
+let app, server, base, runs;
 
 before(async () => {
-  ({ app, server } = await import('../apps/enable/server.mjs'));
+  ({ app, server, runs } = await import('../apps/enable/server.mjs'));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `127.0.0.1:${server.address().port}`;
 });
@@ -98,6 +98,37 @@ test('POST /api/enable/run without projectDir -> 400', async () => {
   const { status, json } = await post('/api/enable/run', { answers: {} });
   assert.equal(status, 400);
   assert.match(json.error, /projectDir/);
+});
+
+test('GET /api/enable/runs/:runId/changes serves results.json + patch from the run dir', async () => {
+  const ANSWERS = { testTier: 'scaffold', vendoringDepth: 'full',
+    multiToolTargets: ['cursor', 'copilot'], canary: 'yes', scopeConstraints: '' };
+  const { json } = await post('/api/enable/run', { projectDir: freshRepo(), answers: ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+
+  const dir = entry.orch.getState().pipelineDir;
+  assert.ok(dir, 'mock run must have a pipelineDir');
+  const summary = { filesNew: 2, filesChanged: 1, filesDeleted: 0, linesAdded: 10, linesRemoved: 1 };
+  writeFileSync(join(dir, 'results.json'), JSON.stringify({
+    summary, newFiles: [{ path: 'CLAUDE.md', status: 'A', added: 9, removed: 0 }],
+    changedFiles: [{ path: 'package.json', status: 'M', added: 1, removed: 1 }],
+    nitpicks: [],
+  }));
+  writeFileSync(join(dir, 'diff-patch.patch'), 'diff --git a/CLAUDE.md b/CLAUDE.md\n+hello\n');
+
+  const res = await fetch(`http://${base}/api/enable/runs/${json.runId}/changes`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.summary, summary);
+  assert.equal(body.newFiles.length, 1);
+  assert.equal(body.changedFiles.length, 1);
+  assert.match(body.patch, /diff --git a\/CLAUDE\.md/);
+});
+
+test('GET /api/enable/runs/:runId/changes -> 404 for unknown runId', async () => {
+  const res = await fetch(`http://${base}/api/enable/runs/nope/changes`);
+  assert.equal(res.status, 404);
 });
 
 test('POST /api/enable/answer with unknown runId -> 400', async () => {

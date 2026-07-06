@@ -19,8 +19,19 @@ async function bootEnable() {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' });
   const { window } = dom;
   window.WebSocket = FakeWS;
+  const CHANGES_FIXTURE = {
+    summary: { filesNew: 2, filesChanged: 1, filesDeleted: 0, linesAdded: 10, linesRemoved: 1 },
+    newFiles: [{ path: 'CLAUDE.md', status: 'A', added: 9, removed: 0 },
+               { path: '.cursor/rules/x.mdc', status: 'A', added: 1, removed: 0 }],
+    changedFiles: [{ path: 'package.json', status: 'M', added: 1, removed: 1 }],
+    nitpicks: [],
+    patch: 'diff --git a/CLAUDE.md b/CLAUDE.md\n+hello\n',
+  };
   window.fetch = (url, opts) => {
     const u = String(url);
+    if (u.includes('/changes')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => CHANGES_FIXTURE });
+    }
     if (u.includes('/api/enable/run')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'run-A' }) });
     }
@@ -72,6 +83,29 @@ test('final readiness frame shows the branch on the results screen', async () =>
   assert.equal(document.querySelector('#result-branch').textContent,
     'Branch: maestro/enable-project-for-ai-ab12cd34');
   assert.match(document.querySelector('#hero').textContent, /28 → 93 \(\+65\)/);
+});
+
+test('results screen renders the What-changed panel from the changes route', async () => {
+  const { document } = await bootEnable();
+  const ws = await startRun(document);
+  frame(ws, { type: 'readiness', kind: 'final', score: 93, baselineScore: 28, delta: 65,
+    dimensions: {}, gaps: [], branch: 'maestro/x', runId: 'run-A' });
+  await new Promise((r) => setTimeout(r, 0));   // let the changes fetch resolve
+
+  const wrap = document.querySelector('#changes-wrap');
+  assert.ok(wrap, '#changes-wrap must exist in the results screen');
+  assert.equal(wrap.hidden, false);
+  assert.match(document.querySelector('#changes-summary').textContent, /2 new files/);
+  assert.match(document.querySelector('#changes-summary').textContent, /1 changed/);
+  assert.match(document.querySelector('#changes-files').textContent, /CLAUDE\.md/);
+  assert.match(document.querySelector('#changes-files').textContent, /package\.json/);
+
+  const toggle = document.querySelector('#patch-toggle');
+  const view = document.querySelector('#patch-view');
+  assert.equal(view.hidden, true);
+  toggle.click();
+  assert.equal(view.hidden, false);
+  assert.match(view.textContent, /diff --git a\/CLAUDE\.md/);
 });
 
 test('starting a new run closes the previous run socket', async () => {
