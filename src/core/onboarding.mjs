@@ -172,6 +172,7 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
     const result = await orch.run();
     const dir = result.pipelineDir;
     const readiness = dir ? readFinalReadiness(dir) : null;
+    const feature = orch.getState().branch?.feature ?? null;
     events.emit('readiness', {
       kind: 'final',
       score: readiness?.score ?? null,
@@ -179,8 +180,9 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
       delta: readiness?.delta ?? null,
       dimensions: readiness?.dimensions ?? {},
       gaps: readiness?.gaps ?? [],
+      branch: feature,                     // results screen renders this
     });
-    return { status: result.status, branch: orch.getState().branch?.feature ?? null, readiness };
+    return { status: result.status, branch: feature, readiness };
   })();
 
   return { runId, events, done, orch };               // orch exposed for the server's answer route

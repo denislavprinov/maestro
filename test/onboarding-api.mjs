@@ -78,6 +78,17 @@ test('readiness events fire: baseline, >=1 cycle, final', async () => {
   assert.ok(kinds.includes('final'));
 });
 
+// 4c. the final readiness event itself carries the branch — the renderer's
+//     results screen only sees this event, never the done summary.
+test('readiness final event carries the Enable branch', async () => {
+  const { events, done } = await runOnboarding({ projectDir: freshRepo(), answers: ANSWERS, mock: true });
+  let final = null;
+  events.on('readiness', (r) => { if (r.kind === 'final') final = r; });
+  await done;
+  assert.ok(final, 'final readiness event must fire');
+  assert.match(String(final.branch), /^maestro\/enable-project-for-ai-[0-9a-f]{8}$/);
+});
+
 // 5. done resolves {status, branch, readiness}; branch matches the Enable slug.
 //    A supplied title is slugified VERBATIM — the title path never strips
 //    stopwords (worktree.mjs:91-94), so "for" is kept: enable-project-for-ai.

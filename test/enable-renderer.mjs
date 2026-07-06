@@ -63,6 +63,17 @@ test('renderer ignores frames from a different runId', async () => {
   assert.equal(score(), '40');
 });
 
+test('final readiness frame shows the branch on the results screen', async () => {
+  const { document } = await bootEnable();
+  const ws = await startRun(document);
+  frame(ws, { type: 'readiness', kind: 'final', score: 93, baselineScore: 28, delta: 65,
+    dimensions: {}, gaps: [], branch: 'maestro/enable-project-for-ai-ab12cd34', runId: 'run-A' });
+  assert.equal(document.querySelector('#results').classList.contains('active'), true);
+  assert.equal(document.querySelector('#result-branch').textContent,
+    'Branch: maestro/enable-project-for-ai-ab12cd34');
+  assert.match(document.querySelector('#hero').textContent, /28 → 93 \(\+65\)/);
+});
+
 test('starting a new run closes the previous run socket', async () => {
   const { document } = await bootEnable();
   const first = await startRun(document);
