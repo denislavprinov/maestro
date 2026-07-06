@@ -87,7 +87,43 @@ function matchNode(ev, nodeId, key) {
   return ev.nodeId === nodeId || ev.phase === key || ev.phase === nodeId;
 }
 
-export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_TITLE, mock = false, branch } = {}) {
+// 3. answer gates deterministically (D4). Clarify answers come from `answers`
+//    keyed by question id; engine fills any omitted id with its first option
+//    (normalizeClarifyAnswer), so unknown ids never throw. With `interactive`,
+//    gate/recovery questions are left pending for the UI (POST /api/enable/answer);
+//    clarify stays auto-answered — the set-up screen already collected it.
+export function wireGateAnswers(orch, events, { answers = {}, interactive = false } = {}) {
+  const supplied = { ...answers };
+  if (supplied.multiToolTargets != null) {
+    supplied.multiToolTargets = joinMultiToolTargets(supplied.multiToolTargets);
+  }
+  orch.on('question', (q) => {
+    // _ask emits 'question' BEFORE it sets this.pendingQuestion (orchestrator.mjs
+    // :1777 vs :1799). _emit is synchronous, so answering inline would hit a null
+    // pendingQuestion and be ignored, hanging the run. Defer to a microtask: by
+    // the time it runs, the synchronous _ask body has set pendingQuestion.
+    queueMicrotask(() => {
+      try {
+        if (q.kind === 'clarify') {
+          const ans = (q.questions || [])
+            .map((qq) => ({ id: qq.id, choice: supplied[qq.id] }))
+            .filter((a) => a.choice != null && a.choice !== '');
+          orch.answer(q.id, { answers: ans });
+        } else if (interactive) {
+          // user decides in the UI
+        } else if (q.kind === 'gate') {
+          orch.answer(q.id, { decision: 'continue' });   // refine unattended
+        } else if (q.kind === 'recovery') {
+          orch.answer(q.id, { decision: 'abort' });       // surface terminal error
+        }
+      } catch (err) {
+        events.emit('log', { source: 'onboarding', level: 'warn', text: `answer failed: ${err.message}` });
+      }
+    });
+  });
+}
+
+export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_TITLE, mock = false, branch, interactive = false } = {}) {
   if (!projectDir) throw new Error('runOnboarding: projectDir is required');
 
   // 1. validate + seed wf_enable (idempotent). reg mirrors
@@ -114,35 +150,7 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
     orch.on(name, (p) => events.emit(name, p));
   }
 
-  // 3. answer every gate deterministically (D4). Clarify answers come from
-  //    `answers` keyed by question id; engine fills any omitted id with its
-  //    first option (normalizeClarifyAnswer), so unknown ids never throw.
-  const supplied = { ...answers };
-  if (supplied.multiToolTargets != null) {
-    supplied.multiToolTargets = joinMultiToolTargets(supplied.multiToolTargets);
-  }
-  orch.on('question', (q) => {
-    // _ask emits 'question' BEFORE it sets this.pendingQuestion (orchestrator.mjs
-    // :1777 vs :1799). _emit is synchronous, so answering inline would hit a null
-    // pendingQuestion and be ignored, hanging the run. Defer to a microtask: by
-    // the time it runs, the synchronous _ask body has set pendingQuestion.
-    queueMicrotask(() => {
-      try {
-        if (q.kind === 'clarify') {
-          const ans = (q.questions || [])
-            .map((qq) => ({ id: qq.id, choice: supplied[qq.id] }))
-            .filter((a) => a.choice != null && a.choice !== '');
-          orch.answer(q.id, { answers: ans });
-        } else if (q.kind === 'gate') {
-          orch.answer(q.id, { decision: 'continue' });   // refine unattended
-        } else if (q.kind === 'recovery') {
-          orch.answer(q.id, { decision: 'abort' });       // surface terminal error
-        }
-      } catch (err) {
-        events.emit('log', { source: 'onboarding', level: 'warn', text: `answer failed: ${err.message}` });
-      }
-    });
-  });
+  wireGateAnswers(orch, events, { answers, interactive });
 
   // 4. derive readiness from canonical files on phase-done boundaries (D5).
   //    pipelineDir is set on state at orchestrator.mjs:411 (before dispatch), so

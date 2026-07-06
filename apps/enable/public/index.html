@@ -70,6 +70,10 @@
             <legend>Folders to focus on or avoid? <span class="opt-note">(optional)</span></legend>
             <input class="free wide" data-free="scopeConstraints" type="text" placeholder="e.g. focus on src/, skip vendor/" />
           </fieldset>
+          <label class="check inline">
+            <input id="interactive-toggle" type="checkbox" />
+            <span>Ask me at checkpoints (review gates and errors pause for your call)</span>
+          </label>
           <div class="row">
             <button type="button" class="ghost-btn" data-back="home">Back</button>
             <button type="submit" class="primary-btn">Run Enable</button>
@@ -92,6 +96,16 @@
           <div class="ring-center">
             <div id="ring-score" class="ring-score">—</div>
             <div id="pass-label" class="ring-sub">starting…</div>
+          </div>
+        </div>
+
+        <div id="gate-wrap" class="gate-card" role="alertdialog" aria-labelledby="gate-title" hidden>
+          <h3 id="gate-title"></h3>
+          <p id="gate-detail" class="lede"></p>
+          <ul id="gate-issues" class="gate-issues"></ul>
+          <div class="row">
+            <button id="gate-secondary" class="ghost-btn" type="button"></button>
+            <button id="gate-primary" class="primary-btn" type="button"></button>
           </div>
         </div>
 

@@ -55,10 +55,11 @@ app.get('/api/enable/projects', (_req, res) => {
 });
 
 app.post('/api/enable/run', async (req, res) => {
-  const { projectDir, answers, mock } = req.body || {};
+  const { projectDir, answers, mock, interactive } = req.body || {};
   if (!projectDir) return res.status(400).json({ error: 'projectDir required' });
   try {
-    const { runId, events, done, orch } = await runOnboarding({ projectDir, answers: answers || {}, mock: !!mock });
+    const { runId, events, done, orch } = await runOnboarding({
+      projectDir, answers: answers || {}, mock: !!mock, interactive: !!interactive });
     const entry = { orch, events, done, status: 'running', buffer: [] };  // store orch (D8)
     runs.set(runId, entry);
     for (const name of EVENTS) {
@@ -124,13 +125,20 @@ app.get('/api/enable/history/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
-// kept for completeness/future interactive gates; happy path answers up front (D8)
+// answers an interactive gate/recovery question (and stays usable for any
+// future ask). On success a question-answered frame is buffered + broadcast so
+// replaying clients (page refresh, second tab) drop the stale question card.
 app.post('/api/enable/answer', (req, res) => {
   const { runId, id, payload } = req.body || {};
   const entry = runId && runs.get(runId);
   if (!entry) return res.status(400).json({ error: 'unknown runId' });
-  try { entry.orch?.answer(id, payload); res.json({ ok: true }); }
-  catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+  try {
+    entry.orch?.answer(id, payload);
+    const frame = { type: 'question-answered', id, runId };
+    entry.buffer.push(frame);
+    broadcast(frame);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));

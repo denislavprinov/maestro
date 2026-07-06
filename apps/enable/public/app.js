@@ -30,6 +30,7 @@ const SETUP_QUESTIONS = {
 let baseline = null;
 let ws = null;
 let currentRunId = null;
+let answeredQuestions = new Set();   // per-run; guards against replayed frames
 
 // ---------- screen switching ----------
 function show(id) {
@@ -95,8 +96,10 @@ async function start(projectDir, answers) {
   show('progress');
   let runId;
   try {
+    const interactive = document.querySelector('#interactive-toggle').checked;
     const res = await fetch('/api/enable/run', { method: 'POST',
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectDir, answers, mock }) });
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectDir, answers, mock, interactive }) });
     if (!res.ok) { showError((await res.json().catch(() => ({}))).error || `run failed (${res.status})`); return; }
     ({ runId } = await res.json());
   } catch (err) { showError(String(err.message || err)); return; }
@@ -120,12 +123,66 @@ function handle(ev) {
       break;
     case 'done':     if (ev.status === 'error') showError('The run ended with an error.'); break;
     case 'error':    showError(ev.message); break;
+    case 'question':          showGate(ev); break;
+    case 'question-answered': hideGate(ev.id); break;
   }
+}
+
+// ---------- interactive gates ----------
+// clarify never lands here (auto-answered from the set-up screen); gate =
+// reviewer still sees blocking issues after the automatic fix cycles; recovery
+// = a step failed repeatedly and the engine wants a retry/stop call.
+function showGate(q) {
+  if (q.kind === 'clarify' || answeredQuestions.has(q.id)) return;
+  const wrap = document.querySelector('#gate-wrap');
+  const issues = document.querySelector('#gate-issues');
+  const primary = document.querySelector('#gate-primary');
+  const secondary = document.querySelector('#gate-secondary');
+  issues.innerHTML = '';
+
+  if (q.kind === 'gate') {
+    document.querySelector('#gate-title').textContent = 'The reviewer still sees issues';
+    document.querySelector('#gate-detail').textContent =
+      'Automatic improvement passes are used up. Run one more, or accept the result as is?';
+    issues.innerHTML = (q.issues || []).slice(0, 6)
+      .map((i) => `<li>${typeof i === 'string' ? i : (i.title || i.summary || '')}</li>`).join('');
+    primary.textContent = 'Fix another round';
+    secondary.textContent = 'Accept and continue';
+    primary.onclick = () => sendAnswer(q.id, { decision: 'another' });
+    secondary.onclick = () => sendAnswer(q.id, { decision: 'continue' });
+  } else if (q.kind === 'recovery') {
+    document.querySelector('#gate-title').textContent = 'A step keeps failing';
+    document.querySelector('#gate-detail').textContent =
+      'The engine retried and it still fails. Try again, or stop the run?';
+    primary.textContent = 'Retry';
+    secondary.textContent = 'Stop the run';
+    primary.onclick = () => sendAnswer(q.id, { decision: 'retry' });
+    secondary.onclick = () => sendAnswer(q.id, { decision: 'abort' });
+  } else return;
+
+  wrap.hidden = false;
+  primary.focus();
+}
+
+function hideGate(id) {
+  if (id) answeredQuestions.add(id);
+  document.querySelector('#gate-wrap').hidden = true;
+}
+
+async function sendAnswer(id, payload) {
+  try {
+    const res = await fetch('/api/enable/answer', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runId: currentRunId, id, payload }) });
+    if (res.ok) hideGate(id);
+  } catch {}
 }
 
 // ---------- progress rendering ----------
 function resetProgress() {
   baseline = null;
+  answeredQuestions = new Set();
+  hideGate(null);
   const j = document.querySelector('#journey');
   j.innerHTML = STAGES.map((s) => `<div class="stage" data-node="${s.node}" style="--c:${s.color}">
     <span class="stage-dot"></span><span class="stage-label">${s.label}</span></div>`).join('');
