@@ -171,7 +171,14 @@ select:focus, input[type='text']:focus { outline: none; border-color: var(--acce
 /* history */
 .history-card { margin-top: 18px; }
 .history-list { list-style: none; display: flex; flex-direction: column; }
-.history-list li { display: block; }   /* rows render as .hist-btn buttons */
+.history-list li { display: flex; align-items: center; gap: 4px; }   /* row button + delete */
+.history-list .hist-delete {
+  border: none; background: transparent; color: var(--dim); cursor: pointer;
+  font-size: 13px; padding: 6px 8px; border-radius: 8px; flex: none;
+}
+.history-list .hist-delete:hover, .history-list .hist-delete:focus-visible {
+  color: var(--red); background: var(--surface-2);
+}
 .history-list .hist-project { color: var(--text); }
 .history-list .hist-when { color: var(--dim); font-size: 12px; }
 .history-list .hist-score { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--accent); }

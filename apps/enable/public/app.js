@@ -342,13 +342,31 @@ async function loadHistory() {
     const score = r && r.score != null
       ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
       : h.status;
+    const name = h.projectName || h.title;
     li.innerHTML = `<button type="button" class="hist-btn">
-      <span class="hist-project">${h.projectName || h.title}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>`;
+      <span class="hist-project">${name}</span>
+      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>
+      <button type="button" class="hist-delete" aria-label="Delete the ${name} run from ${when}" title="Delete run">✕</button>`;
     li.querySelector('.hist-btn').addEventListener('click', () => showHistoryDetail(h.id));
+    li.querySelector('.hist-delete').addEventListener('click', () => deleteHistory(h));
     list.append(li);
   }
   wrap.hidden = false;
+}
+
+// removes the run's store dir, plan/review files and local branch + worktree
+async function deleteHistory(h) {
+  const name = h.projectName || h.title;
+  if (!window.confirm(`Delete the ${name} run? This removes its files and local branch. The project itself is untouched.`)) return;
+  try {
+    const res = await fetch(`/api/enable/history/${h.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      window.alert(body.error || `Could not delete the run (${res.status}).`);
+      return;
+    }
+  } catch { return; }
+  loadHistory();
 }
 
 async function showHistoryDetail(id) {

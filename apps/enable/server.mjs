@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
 import { listAllPipelines } from '../../src/core/artifacts.mjs';
+import { deletePipeline } from '../../src/core/pipeline-delete.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -150,6 +151,24 @@ app.get('/api/enable/history/:id', async (req, res) => {
     if (!entry || !entry.dir) return res.status(404).json({ error: 'unknown run' });
     res.json({ entry, readiness: entry.readiness, changes: readChanges(entry.dir) });
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+});
+
+// remove a past run everywhere: store dir, shared plan/review markdown, local
+// branch + worktree (engine deletePipeline; refuses runs still marked running).
+app.delete('/api/enable/history/:id', async (req, res) => {
+  try {
+    const entry = (await enableHistory()).find((p) => p.id === req.params.id);
+    if (!entry) return res.status(404).json({ error: 'unknown run' });
+    const liveHere = [...runs.values()].some((r) =>
+      r.status === 'running' && r.orch?.getState()?.pipelineDir === entry.dir);
+    if (liveHere) return res.status(409).json({ error: 'cannot delete a running run' });
+    const report = await deletePipeline({ key: entry.projectKey, id: entry.id });
+    if (!report) return res.status(404).json({ error: 'unknown run' });
+    res.json({ ok: true, ...report });
+  } catch (err) {
+    if (err && err.code === 'RUNNING') return res.status(409).json({ error: err.message });
+    res.status(500).json({ error: String(err && err.message || err) });
+  }
 });
 
 // answers an interactive gate/recovery question (and stays usable for any
