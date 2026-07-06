@@ -1,16 +1,15 @@
 import { app, BrowserWindow } from 'electron';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { homedir } from 'node:os';
 import net from 'node:net';
+import { serverSpawnSpec } from './launch.mjs';
 
-// The maestro engine imports node:sqlite, which is only present in modern Node
-// (22.5+/24+). Electron bundles its own, older Node in the main process, so we
-// CANNOT import the server here — we spawn it as a child on the system `node`.
-// Override the binary with ENABLE_NODE_BIN if `node` is not on PATH.
+// The server (and the maestro engine underneath) runs as a child process on
+// this app's own binary with ELECTRON_RUN_AS_NODE — Electron 43 bundles Node 24,
+// which has node:sqlite. ENABLE_NODE_BIN overrides the binary for debugging.
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER = join(__dirname, '..', 'server.mjs');
-const NODE_BIN = process.env.ENABLE_NODE_BIN || 'node';
 const PORT = Number(process.env.PORT) || 4319;
 const HOST = '127.0.0.1';
 
@@ -33,13 +32,19 @@ function waitForServer(port, timeoutMs = 15000) {
 }
 
 function startServer() {
-  child = spawn(NODE_BIN, ['--disable-warning=ExperimentalWarning', SERVER], {
-    cwd: join(__dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), HOST },
-    stdio: 'inherit',
+  const spec = serverSpawnSpec({
+    isPackaged: app.isPackaged,
+    moduleDir: __dirname,
+    resourcesPath: process.resourcesPath,
+    execPath: process.execPath,
+    env: process.env,
+    port: PORT,
+    host: HOST,
+    home: homedir(),
   });
+  child = spawn(spec.bin, spec.args, { cwd: spec.cwd, env: spec.env, stdio: 'inherit' });
   child.on('error', (err) => {
-    console.error(`[enable] failed to spawn server via "${NODE_BIN}": ${err.message}`);
+    console.error(`[enable] failed to spawn server via "${spec.bin}": ${err.message}`);
   });
 }
 
@@ -54,9 +59,8 @@ app.whenReady().then(async () => {
       `<body style="font:16px -apple-system;background:#0c0d0f;color:#ededef;padding:40px">
         <h2>Enable could not start its server</h2>
         <p>${err.message}</p>
-        <p>The bundled launcher runs the engine with the system <code>node</code>
-        (needs Node 22.5+ for <code>node:sqlite</code>). Set <code>ENABLE_NODE_BIN</code>
-        to a modern node binary if it is not on PATH.</p></body>`));
+        <p>Set <code>ENABLE_NODE_BIN</code> to a Node 22.13+ binary to run the
+        server on an external node instead of the app's own runtime.</p></body>`));
   }
 });
 

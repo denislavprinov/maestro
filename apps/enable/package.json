@@ -3,10 +3,30 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "electron/main.mjs",
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.mjs",
-    "electron": "electron electron/main.mjs"
+    "electron": "electron electron/main.mjs",
+    "stage": "node scripts/stage.mjs",
+    "dist": "npm run stage && electron-builder --dir",
+    "dist:dmg": "npm run stage && electron-builder --mac dmg"
   },
   "dependencies": { "express": "^4.19.2", "ws": "^8.18.0" },
-  "devDependencies": { "electron": "^31.0.0" }
+  "devDependencies": { "electron": "^43.0.0", "electron-builder": "^26.0.12" },
+  "build": {
+    "appId": "app.bevup.maestro.enable",
+    "productName": "Enable",
+    "directories": { "output": "dist" },
+    "files": ["**/*", "!node_modules/**", "!public/**", "!scripts/**", "!stage/**", "!dist/**", "!server.mjs", "!package-lock.json"],
+    "extraResources": [
+      { "from": "../../src", "to": "maestro/src" },
+      { "from": "../../agents", "to": "maestro/agents" },
+      { "from": "../../skills", "to": "maestro/skills" },
+      { "from": "server.mjs", "to": "maestro/apps/enable/server.mjs" },
+      { "from": "public", "to": "maestro/apps/enable/public" },
+      { "from": "stage/node_modules", "to": "maestro/apps/enable/node_modules" }
+    ],
+    "asar": true,
+    "mac": { "identity": null }
+  }
 }

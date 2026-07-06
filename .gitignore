@@ -9,3 +9,7 @@ graphify-out/
 .maestro-test/
 .playwright-mcp/
 /*.png
+
+# enable app build output
+apps/enable/dist/
+apps/enable/stage/
