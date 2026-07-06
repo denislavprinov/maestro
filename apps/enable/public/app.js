@@ -35,6 +35,14 @@ let answeredQuestions = new Set();   // per-run; guards against replayed frames
 // ---------- screen switching ----------
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === id);
+  // move focus to the screen's heading so keyboard/SR users land in context
+  document.querySelector(`#${id} h1[tabindex], #${id} h2[tabindex]`)?.focus();
+}
+
+// screen-reader narration of run progress (the journey/ring are aria-hidden)
+function announce(text) {
+  const el = document.querySelector('#sr-status');
+  if (el) el.textContent = text;
 }
 
 // ---------- home / project loading ----------
@@ -117,8 +125,10 @@ function handle(ev) {
     case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
     case 'log':      appendFeed(ev); break;
     case 'readiness':
-      if (ev.kind === 'baseline') { baseline = ev.score; renderRing(ev.score, null); }
-      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) renderRing(ev.score, baseline); }
+      if (ev.kind === 'baseline') { baseline = ev.score; renderRing(ev.score, null);
+        if (ev.score != null) announce(`Starting readiness score: ${Math.round(ev.score)} out of 100.`); }
+      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) { renderRing(ev.score, baseline);
+        announce(`Pass ${ev.cycle}: readiness score ${Math.round(ev.score)} out of 100.`); } }
       if (ev.kind === 'final')    renderResults(ev);
       break;
     case 'done':     if (ev.status === 'error') showError('The run ended with an error.'); break;
@@ -200,6 +210,8 @@ function activateStage(node) {
     s.classList.toggle('done', idx >= 0 && i <= idx);
     s.classList.toggle('active', i === idx);
   });
+  const st = STAGES.find((s) => s.node === node);
+  if (st) announce(`Finished stage: ${st.label}.`);
 }
 
 function appendFeed(ev) {
@@ -306,6 +318,7 @@ function renderChanges(c) {
   view.hidden = true;
   toggle.hidden = !c.patch;
   toggle.textContent = 'Show patch';
+  toggle.setAttribute('aria-expanded', 'false');
   wrap.hidden = false;
 }
 
@@ -329,9 +342,10 @@ async function loadHistory() {
     const score = r && r.score != null
       ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
       : h.status;
-    li.innerHTML = `<span class="hist-project">${h.projectName || h.title}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span>`;
-    li.addEventListener('click', () => showHistoryDetail(h.id));
+    li.innerHTML = `<button type="button" class="hist-btn">
+      <span class="hist-project">${h.projectName || h.title}</span>
+      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>`;
+    li.querySelector('.hist-btn').addEventListener('click', () => showHistoryDetail(h.id));
     list.append(li);
   }
   wrap.hidden = false;
@@ -398,14 +412,18 @@ function init() {
 
   document.querySelector('#patch-toggle').addEventListener('click', () => {
     const view = document.querySelector('#patch-view');
+    const toggle = document.querySelector('#patch-toggle');
     view.hidden = !view.hidden;
-    document.querySelector('#patch-toggle').textContent = view.hidden ? 'Show patch' : 'Hide patch';
+    toggle.textContent = view.hidden ? 'Show patch' : 'Hide patch';
+    toggle.setAttribute('aria-expanded', String(!view.hidden));
   });
 
   document.querySelector('#details-toggle').addEventListener('click', () => {
     const raw = document.querySelector('#raw-log');
+    const toggle = document.querySelector('#details-toggle');
     raw.hidden = !raw.hidden;
-    document.querySelector('#details-toggle').textContent = raw.hidden ? 'Show details' : 'Hide details';
+    toggle.textContent = raw.hidden ? 'Show details' : 'Hide details';
+    toggle.setAttribute('aria-expanded', String(!raw.hidden));
   });
 }
 

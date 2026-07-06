@@ -125,8 +125,8 @@ test('home lists past runs; clicking one opens the results view from disk', asyn
   const wrap = document.querySelector('#history-wrap');
   assert.ok(wrap, '#history-wrap must exist on the home screen');
   assert.equal(wrap.hidden, false);
-  const item = document.querySelector('#history-list li');
-  assert.ok(item, 'one history row');
+  const item = document.querySelector('#history-list li .hist-btn');
+  assert.ok(item, 'one history row button (keyboard reachable)');
   assert.match(item.textContent, /tinytool/);
   assert.match(item.textContent, /91/);
 
