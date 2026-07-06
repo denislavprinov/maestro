@@ -29,6 +29,7 @@ const SETUP_QUESTIONS = {
 
 let baseline = null;
 let ws = null;
+let currentRunId = null;
 
 // ---------- screen switching ----------
 function show(id) {
@@ -100,12 +101,15 @@ async function start(projectDir, answers) {
     ({ runId } = await res.json());
   } catch (err) { showError(String(err.message || err)); return; }
 
+  if (ws) { try { ws.close(); } catch {} }   // drop the previous run's socket
+  currentRunId = runId;
   ws = new WebSocket(`ws://${location.host}/ws?runId=${runId}`);
   ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch {} };
   ws.onerror = () => showError('Lost connection to the Enable server.');
 }
 
 function handle(ev) {
+  if (ev.runId && ev.runId !== currentRunId) return; // another run's frame
   switch (ev.type) {
     case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
     case 'log':      appendFeed(ev); break;

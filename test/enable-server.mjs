@@ -63,6 +63,37 @@ test('POST /api/enable/run -> {runId}; WS streams phase/readiness/done', async (
   assert.ok(seen.has('done'), `done frame; saw ${[...seen]}`);
 });
 
+test('WS subscribed to one runId never receives another run frames', async () => {
+  const ANSWERS = { testTier: 'scaffold', vendoringDepth: 'full',
+    multiToolTargets: ['cursor', 'copilot'], canary: 'yes', scopeConstraints: '' };
+  const a = (await post('/api/enable/run', { projectDir: freshRepo(), answers: ANSWERS, mock: true })).json;
+  const b = (await post('/api/enable/run', { projectDir: freshRepo(), answers: ANSWERS, mock: true })).json;
+  assert.ok(a.runId && b.runId && a.runId !== b.runId);
+
+  const framesA = [];
+  const wsA = new WebSocket(`ws://${base}/ws?runId=${a.runId}`);
+  wsA.on('message', (data) => framesA.push(JSON.parse(data)));
+  await new Promise((r) => wsA.on('open', r));
+
+  // wait until run B is done on its own socket; broadcast is synchronous per
+  // frame, so any leak into wsA has arrived by then.
+  await new Promise((resolve, reject) => {
+    const wsB = new WebSocket(`ws://${base}/ws?runId=${b.runId}`);
+    const timer = setTimeout(() => { wsB.close(); reject(new Error('timeout waiting for run B')); }, 30000);
+    wsB.on('message', (data) => {
+      const ev = JSON.parse(data);
+      if (ev.type === 'done' && ev.runId === b.runId) { clearTimeout(timer); wsB.close(); resolve(); }
+    });
+    wsB.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  wsA.close();
+
+  const foreign = framesA.filter((ev) => ev.type !== 'hello' && ev.runId !== a.runId);
+  assert.equal(foreign.length, 0, `foreign frames leaked: ${JSON.stringify(foreign.slice(0, 3))}`);
+  assert.ok(framesA.some((ev) => ev.runId === a.runId), 'own-run frames must still arrive');
+});
+
 test('POST /api/enable/run without projectDir -> 400', async () => {
   const { status, json } = await post('/api/enable/run', { answers: {} });
   assert.equal(status, 400);

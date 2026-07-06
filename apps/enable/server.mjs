@@ -21,15 +21,22 @@ const runs = new Map();           // runId -> { orch, events, done, status, buff
 const sockets = new Set();
 const EVENTS = ['state', 'phase', 'question', 'artifact', 'log', 'done', 'error', 'readiness'];
 
+// sockets that subscribed with ?runId= only receive that run's frames;
+// sockets without a runId keep receiving everything (debug firehose).
 function broadcast(obj) {
   const text = JSON.stringify(obj);
-  for (const ws of sockets) if (ws.readyState === ws.OPEN) { try { ws.send(text); } catch {} }
+  for (const ws of sockets) {
+    if (ws.readyState !== ws.OPEN) continue;
+    if (ws.enableRunId && obj.runId && ws.enableRunId !== obj.runId) continue;
+    try { ws.send(text); } catch {}
+  }
 }
 
 wss.on('connection', (ws, req) => {
   sockets.add(ws);
   ws.on('close', () => sockets.delete(ws));
   const runId = new URL(req.url, 'http://x').searchParams.get('runId');
+  ws.enableRunId = runId || null;
   const entry = runId && runs.get(runId);
   ws.send(JSON.stringify({ type: 'hello', runId: runId || null }));
   if (entry) for (const e of entry.buffer) { try { ws.send(JSON.stringify(e)); } catch {} } // replay
