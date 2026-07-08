@@ -120,6 +120,25 @@ test('results screen renders the What-changed panel from the changes route', asy
   assert.match(view.textContent, /diff --git a\/CLAUDE\.md/);
 });
 
+test('patch view colors added/removed lines and file status glyphs', async () => {
+  const { document } = await bootEnable();
+  const ws = await startRun(document);
+  frame(ws, { type: 'readiness', kind: 'final', score: 93, baselineScore: 28, delta: 65,
+    dimensions: {}, gaps: [], branch: 'maestro/x', runId: 'run-A' });
+  await new Promise((r) => setTimeout(r, 0));
+
+  const view = document.querySelector('#patch-view');
+  assert.ok(view.querySelector('.diff-add'), 'added lines get a .diff-add span');
+  assert.match(view.querySelector('.diff-add').textContent, /\+hello/);
+  assert.ok(view.querySelector('.diff-meta'), 'diff --git header line gets a .diff-meta span');
+
+  const files = document.querySelector('#changes-files');
+  const added = files.querySelector('.file-status.status-A');
+  const changed = files.querySelector('.file-status.status-M');
+  assert.ok(added, 'new-file rows carry a status-A class for coloring');
+  assert.ok(changed, 'changed-file rows carry a status-M class for coloring');
+});
+
 test('home lists past runs; clicking one opens the results view from disk', async () => {
   const { document } = await bootEnable();
   const wrap = document.querySelector('#history-wrap');

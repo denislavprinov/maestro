@@ -208,10 +208,31 @@ function renderResults(r) {
 // ---------- what changed ----------
 const MAX_FILE_ROWS = 12;
 
+function esc(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
 function fileRow(f) {
-  const sign = f.status === 'M' ? '±' : f.status === 'D' ? '−' : '+';
-  return `<li><span class="file-status">${sign}</span> ${f.path}
+  const status = f.status === 'M' ? 'M' : f.status === 'D' ? 'D' : 'A';
+  const sign = status === 'M' ? '±' : status === 'D' ? '−' : '+';
+  return `<li><span class="file-status status-${status}">${sign}</span> ${esc(f.path)}
     <span class="file-counts">+${f.added || 0}/−${f.removed || 0}</span></li>`;
+}
+
+function diffLineClass(line) {
+  if (line.startsWith('+++') || line.startsWith('---')) return 'diff-meta';
+  if (line.startsWith('+')) return 'diff-add';
+  if (line.startsWith('-')) return 'diff-del';
+  if (line.startsWith('@@')) return 'diff-hunk';
+  if (line.startsWith('diff --git') || line.startsWith('index ')) return 'diff-meta';
+  return '';
+}
+
+function renderPatch(patch) {
+  return patch.split('\n').map((line) => {
+    const cls = diffLineClass(line);
+    return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+  }).join('\n');
 }
 
 async function loadChanges(url) {
@@ -245,7 +266,7 @@ function renderChanges(c) {
 
   const toggle = document.querySelector('#patch-toggle');
   const view = document.querySelector('#patch-view');
-  view.textContent = c.patch || '';
+  view.innerHTML = c.patch ? renderPatch(c.patch) : '';
   view.hidden = true;
   toggle.hidden = !c.patch;
   toggle.textContent = 'Show patch';

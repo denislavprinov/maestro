@@ -164,9 +164,17 @@ select:focus, input[type='text']:focus { outline: none; border-color: var(--acce
 .changes-summary { font-size: 14px; color: var(--muted); margin-bottom: 10px; }
 .changes-files { list-style: none; display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .changes-files li { font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
-.changes-files .file-status { color: var(--accent); width: 12px; flex: none; }
+.changes-files .file-status { width: 12px; flex: none; }
+.changes-files .file-status.status-A { color: var(--accent); }
+.changes-files .file-status.status-M { color: var(--amber); }
+.changes-files .file-status.status-D { color: var(--red); }
 .changes-files .file-counts { margin-left: auto; color: var(--dim); flex: none; }
 .changes-files .file-more { color: var(--dim); }
+
+.raw-log .diff-add { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); display: block; }
+.raw-log .diff-del { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); display: block; }
+.raw-log .diff-hunk { color: var(--blue); display: block; }
+.raw-log .diff-meta { color: var(--dim); display: block; }
 
 /* history */
 .history-card { margin-top: 18px; }

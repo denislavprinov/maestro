@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "maestro-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start"],
+      "port": 4317,
+      "autoPort": true
+    },
+    {
+      "name": "enable-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/enable", "run", "start"],
+      "port": 4319
+    }
+  ]
+}
