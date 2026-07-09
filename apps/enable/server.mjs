@@ -1,7 +1,9 @@
 import express from 'express';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { readdirSync, existsSync, readFileSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
@@ -54,11 +56,48 @@ app.get('/api/enable/projects', (_req, res) => {
   res.json({ root: PROJECTS_ROOT, projects: dirs });
 });
 
+// directory picker: list immediate sub-folders of `dir` (defaults to home) so the
+// UI can browse to an absolute project path. Dirs only; git repos are flagged.
+app.get('/api/enable/browse', (req, res) => {
+  const raw = typeof req.query.dir === 'string' && req.query.dir ? req.query.dir : os.homedir();
+  const dir = path.resolve(raw);
+  let ents;
+  try {
+    if (!statSync(dir).isDirectory()) throw new Error('not a directory');
+    ents = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return res.status(400).json({ error: `cannot read ${dir}` });
+  }
+  const entries = ents
+    .filter((d) => { try { return d.isDirectory(); } catch { return false; } })
+    .map((d) => ({ name: d.name, path: path.join(dir, d.name),
+      isGit: existsSync(path.join(dir, d.name, '.git')) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const parent = path.dirname(dir);
+  res.json({ dir, parent: parent === dir ? null : parent, entries });
+});
+
+// list local git branches of `dir` so the UI can pick a source branch to base off.
+app.get('/api/enable/branches', (req, res) => {
+  const dir = typeof req.query.dir === 'string' && req.query.dir ? path.resolve(req.query.dir) : '';
+  if (!dir) return res.status(400).json({ error: 'dir required' });
+  try {
+    const out = execFileSync('git', ['-C', dir, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' });
+    const branches = out.split('\n').map((s) => s.trim()).filter(Boolean);
+    let current = '';
+    try { current = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim(); } catch {}
+    res.json({ branches, current });
+  } catch {
+    return res.status(400).json({ error: `not a git repo: ${dir}` });
+  }
+});
+
 app.post('/api/enable/run', async (req, res) => {
-  const { projectDir, answers, mock } = req.body || {};
+  const { projectDir, answers, mock, sourceBranch } = req.body || {};
   if (!projectDir) return res.status(400).json({ error: 'projectDir required' });
   try {
-    const { runId, events, done, orch } = await runOnboarding({ projectDir, answers: answers || {}, mock: !!mock });
+    const branch = sourceBranch ? { source: sourceBranch, feature: null } : undefined;
+    const { runId, events, done, orch } = await runOnboarding({ projectDir, answers: answers || {}, mock: !!mock, branch });
     const entry = { orch, events, done, status: 'running', buffer: [] };  // store orch (D8)
     runs.set(runId, entry);
     for (const name of EVENTS) {

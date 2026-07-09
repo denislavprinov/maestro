@@ -1,7 +1,7 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -38,6 +38,49 @@ test('GET /api/enable/projects returns a JSON project list', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.ok('root' in body && Array.isArray(body.projects));
+});
+
+test('GET /api/enable/browse lists sub-folders with parent + git flag', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'enable-browse-'));
+  mkdirSync(join(root, 'alpha'));
+  mkdirSync(join(root, 'beta'));
+  execSync('git init -q', { cwd: join(root, 'beta') });
+  writeFileSync(join(root, 'afile.txt'), 'x');
+
+  const res = await fetch(`http://${base}/api/enable/browse?dir=${encodeURIComponent(root)}`);
+  assert.equal(res.status, 200);
+  const b = await res.json();
+  assert.equal(b.dir, root);
+  assert.ok(b.parent && b.parent !== root, 'reports a parent to climb to');
+  assert.deepEqual(b.entries.map((e) => e.name), ['alpha', 'beta'], 'dirs only, sorted; files excluded');
+  const beta = b.entries.find((e) => e.name === 'beta');
+  assert.equal(beta.path, join(root, 'beta'));
+  assert.equal(beta.isGit, true, 'git repos are flagged');
+});
+
+test('GET /api/enable/browse defaults to a dir and 400s on a bad path', async () => {
+  const ok = await fetch(`http://${base}/api/enable/browse`);
+  assert.equal(ok.status, 200);
+  assert.ok((await ok.json()).dir, 'defaults to a real directory when dir is omitted');
+
+  const bad = await fetch(`http://${base}/api/enable/browse?dir=${encodeURIComponent('/no/such/path-xyz-123')}`);
+  assert.equal(bad.status, 400);
+});
+
+test('GET /api/enable/branches lists branches with the current one flagged', async () => {
+  const dir = freshRepo();                       // one commit on main
+  execSync('git branch feature-x', { cwd: dir });
+  const res = await fetch(`http://${base}/api/enable/branches?dir=${encodeURIComponent(dir)}`);
+  assert.equal(res.status, 200);
+  const b = await res.json();
+  assert.deepEqual(b.branches.slice().sort(), ['feature-x', 'main']);
+  assert.equal(b.current, 'main');
+});
+
+test('GET /api/enable/branches 400s on a non-repo path', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'enable-nonrepo-'));
+  const res = await fetch(`http://${base}/api/enable/branches?dir=${encodeURIComponent(dir)}`);
+  assert.equal(res.status, 400);
 });
 
 test('POST /api/enable/run -> {runId}; WS streams phase/readiness/done', async () => {
