@@ -148,6 +148,7 @@ async function start(projectDir, answers) {
   const sourceBranch = document.querySelector('#source-branch')?.value || undefined;
   resetProgress();
   show('progress');
+  startLiveMeter();
   let runId;
   try {
     const res = await fetch('/api/enable/run', { method: 'POST',
@@ -166,6 +167,7 @@ async function start(projectDir, answers) {
 function handle(ev) {
   if (ev.runId && ev.runId !== currentRunId) return; // another run's frame
   switch (ev.type) {
+    case 'state':    updateLiveTotals(ev); break;
     case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
     case 'log':      appendFeed(ev); break;
     case 'readiness':
@@ -173,8 +175,8 @@ function handle(ev) {
       if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) renderRing(ev.score, baseline); }
       if (ev.kind === 'final')    renderResults(ev);
       break;
-    case 'done':     if (ev.status === 'error') showError('The run ended with an error.'); break;
-    case 'error':    showError(ev.message); break;
+    case 'done':     stopLiveMeter(); if (ev.status === 'error') showError('The run ended with an error.'); break;
+    case 'error':    stopLiveMeter(); showError(ev.message); break;
   }
 }
 
@@ -182,6 +184,11 @@ function handle(ev) {
 function resetProgress() {
   baseline = null;
   baselineDims = null;
+  stopLiveMeter();
+  runStartTs = null;
+  lastTotals = { costUsd: 0, tokens: 0, activeMs: 0 };
+  const meter = document.querySelector('#run-meter');
+  if (meter) { meter.hidden = true; meter.innerHTML = ''; }
   const j = document.querySelector('#journey');
   j.innerHTML = STAGES.map((s) => `<div class="stage" data-node="${s.node}" style="--c:${s.color}">
     <span class="stage-dot"></span><span class="stage-label">${s.label}</span></div>`).join('');
@@ -232,6 +239,114 @@ function renderRing(score, base) {
   if (base == null) ghost.style.display = 'none';
   else { ghost.style.display = ''; ghost.setAttribute('stroke-dasharray', `${(base / 100) * C} ${C}`); }
   document.querySelector('#ring-score').textContent = score == null ? '—' : Math.round(score);
+}
+
+// ---------- run stats: elapsed / cost / tokens ----------
+// Live totals arrive on `state` frames (engine's getState: totalCostUsd,
+// totalActiveMs, per-step tokens). Elapsed is wall-clock from run start, ticked
+// once a second and frozen on `done`. Past runs (history) carry cost + active time
+// from the DB; tokens aren't persisted, so they're shown live only.
+let runStartTs = null;
+let liveTimer = null;
+let lastTotals = { costUsd: 0, tokens: 0, activeMs: 0 };
+let estTimer = null;
+
+function fmtDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return `${m}m ${String(r).padStart(2, '0')}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${String(m % 60).padStart(2, '0')}m`;
+}
+const fmtUsd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+const sumTokens = (steps) => (Array.isArray(steps)
+  ? steps.reduce((a, s) => a + (Number(s && s.tokens) || 0), 0) : 0);
+const statChip = (label, value) =>
+  `<span class="stat-chip"><span class="stat-k">${label}</span><span class="stat-v">${value}</span></span>`;
+
+function renderLiveMeter() {
+  const el = document.querySelector('#run-meter');
+  if (!el || runStartTs == null) return;
+  el.hidden = false;
+  const chips = [statChip('elapsed', fmtDuration(Date.now() - runStartTs))];
+  if (lastTotals.costUsd > 0) chips.push(statChip('cost', fmtUsd(lastTotals.costUsd)));
+  if (lastTotals.tokens > 0) chips.push(statChip('tokens', fmtTokens(lastTotals.tokens)));
+  el.innerHTML = chips.join('');
+}
+function updateLiveTotals(state) {
+  lastTotals = {
+    costUsd: Number(state.totalCostUsd) || 0,
+    activeMs: Number(state.totalActiveMs) || 0,
+    tokens: sumTokens(state.steps),
+  };
+  renderLiveMeter();
+}
+function startLiveMeter() {
+  runStartTs = Date.now();
+  lastTotals = { costUsd: 0, tokens: 0, activeMs: 0 };
+  stopLiveMeter();
+  liveTimer = setInterval(renderLiveMeter, 1000);
+  renderLiveMeter();
+}
+function stopLiveMeter() {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+}
+// Stats snapshot for the live run at results time.
+function liveStats() {
+  if (runStartTs == null) return null;
+  return { elapsedMs: Date.now() - runStartTs, costUsd: lastTotals.costUsd, tokens: lastTotals.tokens };
+}
+function renderStats(stats) {
+  const el = document.querySelector('#result-stats');
+  if (!el) return;
+  const chips = [];
+  if (stats && stats.elapsedMs != null) chips.push(statChip('took', fmtDuration(stats.elapsedMs)));
+  if (stats && stats.estimated) {
+    chips.push(statChip('cost (est)', `${fmtUsd(stats.estLow)}–${fmtUsd(stats.estHigh)}`));
+  } else if (stats && stats.costUsd != null && stats.costUsd > 0) {
+    chips.push(statChip('cost', fmtUsd(stats.costUsd)));
+  }
+  if (stats && stats.tokens != null && stats.tokens > 0) chips.push(statChip('tokens', fmtTokens(stats.tokens)));
+  el.innerHTML = chips.join('');
+  el.hidden = chips.length === 0;
+}
+
+// ---------- pre-run cost estimate ----------
+async function refreshEstimate() {
+  const el = document.querySelector('#setup-estimate');
+  const dir = chosenProjectDir();
+  if (!el) return;
+  if (!dir) { el.hidden = true; return; }
+  const a = collectAnswers();
+  const targets = Array.isArray(a.multiToolTargets)
+    ? a.multiToolTargets : String(a.multiToolTargets || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const qs = new URLSearchParams({
+    dir, testTier: a.testTier || '', vendoringDepth: a.vendoringDepth || '',
+    canary: a.canary || '', multiTool: targets.join(','),
+  });
+  el.hidden = false;
+  el.textContent = 'Estimating…';
+  try {
+    const res = await fetch(`/api/enable/estimate?${qs}`);
+    if (!res.ok) { el.hidden = true; return; }
+    const e = await res.json();
+    const mock = document.querySelector('#mock-toggle')?.checked;
+    el.innerHTML = `<span class="est-label">Estimated ${mock ? 'real-run ' : ''}cost</span> ` +
+      `<strong>${fmtUsd(e.low)}–${fmtUsd(e.high)}</strong> · ~${e.minutes} min ` +
+      `<span class="est-note">· rough estimate</span>`;
+  } catch { el.hidden = true; }
+}
+function scheduleEstimate() {
+  clearTimeout(estTimer);
+  estTimer = setTimeout(refreshEstimate, 300);
 }
 
 // ---------- results ----------
@@ -292,6 +407,7 @@ function renderResults(r) {
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
+  renderStats(r._stats || (currentRunId ? liveStats() : null));
   if (currentRunId) loadChanges(`/api/enable/runs/${currentRunId}/changes`);
 }
 
@@ -483,8 +599,19 @@ async function showHistoryDetail(id) {
     d = await res.json();
   } catch { return; }
   if (ws) { try { ws.close(); } catch {} ws = null; }
+  stopLiveMeter();
   currentRunId = null;                       // disk view, no live socket
-  renderResults({ ...(d.readiness || {}), branch: d.entry?.branch ?? null });
+  const e = d.entry || {};
+  const est = e.estimatedCost;
+  const realCost = e.totalCostUsd > 0 ? e.totalCostUsd : null;
+  const _stats = {
+    elapsedMs: Number.isFinite(e.totalActiveMs) && e.totalActiveMs > 0 ? e.totalActiveMs : null,
+    costUsd: realCost,
+    estimated: realCost == null && !!est,
+    estLow: est?.low, estHigh: est?.high,
+    tokens: null,                            // not persisted for past runs
+  };
+  renderResults({ ...(d.readiness || {}), branch: e.branch ?? null, _stats });
   renderChanges(d.changes);
 }
 
@@ -519,7 +646,12 @@ function init() {
     if (!dir) { err.textContent = 'Pick a project or paste a path first.'; err.hidden = false; return; }
     err.hidden = true;
     show('setup');
+    refreshEstimate();
   });
+
+  document.querySelector('#setup-form').addEventListener('change', scheduleEstimate);
+  document.querySelector('#setup-form').addEventListener('input', scheduleEstimate);
+  document.querySelector('#mock-toggle').addEventListener('change', refreshEstimate);
 
   document.querySelector('#browse-btn').addEventListener('click', openPicker);
   const picker = document.querySelector('#picker-modal');

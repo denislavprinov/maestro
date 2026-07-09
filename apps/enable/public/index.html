@@ -78,6 +78,7 @@
             <legend>Folders to focus on or avoid? <span class="opt-note">(optional)</span></legend>
             <input class="free wide" data-free="scopeConstraints" type="text" placeholder="e.g. focus on src/, skip vendor/" />
           </fieldset>
+          <p id="setup-estimate" class="estimate-line" hidden></p>
           <div class="row">
             <button type="button" class="ghost-btn" data-back="home">Back</button>
             <button type="submit" class="primary-btn">Run Enable</button>
@@ -102,6 +103,8 @@
             <div id="pass-label" class="ring-sub">starting…</div>
           </div>
         </div>
+
+        <div id="run-meter" class="run-meter" hidden></div>
 
         <div id="feed" class="feed" aria-live="polite"></div>
 
@@ -128,6 +131,7 @@
           <ul id="changes-files" class="changes-files"></ul>
           <button id="patch-toggle" class="ghost-btn small" type="button">Show patch</button>
         </div>
+        <div id="result-stats" class="result-stats"></div>
         <div id="result-branch" class="branch-line"></div>
         <div class="row">
           <button class="primary-btn" data-back="home">Run another</button>

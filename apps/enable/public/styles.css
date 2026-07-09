@@ -352,3 +352,27 @@ body.modal-open { overflow: hidden; }
 .history-list .hist-project { color: var(--text); }
 .history-list .hist-when { color: var(--dim); font-size: 12px; }
 .history-list .hist-score { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--accent); }
+
+/* ----- cost estimate + run stats (elapsed / cost / tokens) ----- */
+.estimate-line {
+  margin-top: 20px; padding: 10px 14px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 13px; color: var(--text);
+}
+.estimate-line .est-label { color: var(--muted); }
+.estimate-line strong { color: var(--accent); font-variant-numeric: tabular-nums; }
+.estimate-line .est-note { color: var(--dim); font-size: 12px; }
+
+.run-meter, .result-stats {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+}
+.run-meter { margin: 14px 0 4px; }
+.result-stats { margin-top: 20px; }
+.stat-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 5px 11px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.stat-chip .stat-k { color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-size: 10px; }
+.stat-chip .stat-v { color: var(--text); font-family: var(--mono); font-weight: 600; }

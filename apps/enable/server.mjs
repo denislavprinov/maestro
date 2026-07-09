@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
 import { listAllPipelines } from '../../src/core/artifacts.mjs';
+import { estimateCost } from '../../src/core/costEstimate.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -92,6 +93,44 @@ app.get('/api/enable/branches', (req, res) => {
   }
 });
 
+// Cheap repo-size probe for the pre-run cost estimate. LOC is approximated from
+// tracked-file byte totals (statSync only — no content reads, so it stays fast on
+// big repos); ~40 bytes/line. A graphify-out/graph.json node count, when present,
+// overrides LOC as the size signal (better proxy for how much the agents read).
+const SIZE_SKIP = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|\.(png|jpe?g|gif|webp|ico|svg|pdf|zip|gz|woff2?|ttf|eot|mp4|mov|lock|min\.js)$/i;
+function probeRepoSize(dir) {
+  let fileCount = 0, bytes = 0, graphNodes = null;
+  try {
+    const out = execFileSync('git', ['-C', dir, 'ls-files'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    for (const rel of out.split('\n')) {
+      if (!rel || SIZE_SKIP.test(rel)) continue;
+      try { bytes += statSync(path.join(dir, rel)).size; fileCount += 1; } catch {}
+    }
+  } catch {}
+  try {
+    const g = readJsonSafe(path.join(dir, 'graphify-out', 'graph.json'));
+    if (g && Array.isArray(g.nodes) && g.nodes.length) graphNodes = g.nodes.length;
+  } catch {}
+  return { fileCount, loc: Math.round(bytes / 40), graphNodes };
+}
+
+app.get('/api/enable/estimate', (req, res) => {
+  const dir = typeof req.query.dir === 'string' && req.query.dir ? path.resolve(req.query.dir) : '';
+  if (!dir) return res.status(400).json({ error: 'dir required' });
+  try {
+    const multi = typeof req.query.multiTool === 'string' && req.query.multiTool
+      ? req.query.multiTool.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const answers = {
+      testTier: req.query.testTier, vendoringDepth: req.query.vendoringDepth,
+      canary: req.query.canary, multiToolTargets: multi,
+    };
+    const basis = probeRepoSize(dir);
+    res.json({ ...estimateCost({ ...basis, answers }), basisRaw: basis });
+  } catch (err) {
+    res.status(400).json({ error: String(err && err.message || err) });
+  }
+});
+
 app.post('/api/enable/run', async (req, res) => {
   const { projectDir, answers, mock, sourceBranch } = req.body || {};
   if (!projectDir) return res.status(400).json({ error: 'projectDir required' });
@@ -144,10 +183,19 @@ app.get('/api/enable/runs/:runId/changes', (req, res) => {
 
 // past Enable runs, newest first (filtered on the pinned run title). Each entry
 // carries its final readiness (null while unwritten) so the list can show scores.
+// Runs with no recorded spend (mock / test runs report $0) get an estimatedCost so
+// the list never reads as "free" — real spend, when present, always wins in the UI.
 async function enableHistory() {
   const all = await listAllPipelines();
   return all.filter((p) => p.title === ENABLE_TITLE)
-    .map((p) => ({ ...p, readiness: p.dir ? readFinalReadiness(p.dir) : null }));
+    .map((p) => {
+      const readiness = p.dir ? readFinalReadiness(p.dir) : null;
+      let estimatedCost = null;
+      if (!(p.totalCostUsd > 0) && p.projectDir && existsSync(p.projectDir)) {
+        try { estimatedCost = estimateCost(probeRepoSize(p.projectDir)); } catch {}
+      }
+      return { ...p, readiness, estimatedCost };
+    });
 }
 
 app.get('/api/enable/history', async (_req, res) => {
