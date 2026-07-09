@@ -193,8 +193,8 @@ test('home lists past runs; clicking one opens the results view from disk', asyn
   const wrap = document.querySelector('#history-wrap');
   assert.ok(wrap, '#history-wrap must exist on the home screen');
   assert.equal(wrap.hidden, false);
-  const item = document.querySelector('#history-list li');
-  assert.ok(item, 'one history row');
+  const item = document.querySelector('#history-list li .hist-btn');
+  assert.ok(item, 'one history row button (keyboard reachable)');
   assert.match(item.textContent, /tinytool/);
   assert.match(item.textContent, /91/);
 
@@ -360,6 +360,46 @@ test('picking a project lists its branches; the run posts the chosen sourceBranc
   await tick();
   assert.equal(globalThis.__lastRunBody.sourceBranch, 'feature-x',
     'the run posts the chosen source branch');
+});
+
+test('history rows have a delete control: confirm -> DELETE -> list reload', async () => {
+  const { window, document } = await bootEnable();
+  const calls = [];
+  const origFetch = window.fetch;
+  window.fetch = globalThis.fetch = (url, opts = {}) => {
+    calls.push({ url: String(url), method: opts.method || 'GET' });
+    if (opts.method === 'DELETE') {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+    }
+    return origFetch(url, opts);
+  };
+  window.confirm = () => true;
+
+  const del = document.querySelector('#history-list li .hist-delete');
+  assert.ok(del, 'each history row needs a delete button');
+  assert.match(del.getAttribute('aria-label') || '', /delete/i);
+  del.click();
+  await new Promise((r) => setTimeout(r, 0));
+
+  const sent = calls.find((c) => c.method === 'DELETE');
+  assert.ok(sent, 'DELETE request sent');
+  assert.match(sent.url, /\/api\/enable\/history\/ab12cd34$/);
+  assert.ok(calls.some((c) => c.method === 'GET' && /\/api\/enable\/history(?!\/)/.test(c.url)),
+    'history reloaded after delete');
+});
+
+test('history delete is a no-op when the confirm dialog is declined', async () => {
+  const { window, document } = await bootEnable();
+  const calls = [];
+  const origFetch = window.fetch;
+  window.fetch = globalThis.fetch = (url, opts = {}) => {
+    calls.push({ method: opts.method || 'GET' });
+    return origFetch(url, opts);
+  };
+  window.confirm = () => false;
+  document.querySelector('#history-list li .hist-delete').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(!calls.some((c) => c.method === 'DELETE'), 'no DELETE without confirmation');
 });
 
 test('starting a new run closes the previous run socket', async () => {

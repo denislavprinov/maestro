@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -9,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
 import { listAllPipelines } from '../../src/core/artifacts.mjs';
 import { estimateCost } from '../../src/core/costEstimate.mjs';
+import { deletePipeline } from '../../src/core/pipeline-delete.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -16,10 +18,36 @@ const PROJECTS_ROOT = process.env.MAESTRO_ENABLE_PROJECTS_ROOT || process.cwd();
 const PORT = Number(process.env.PORT) || 4319;
 const HOST = process.env.HOST || '127.0.0.1';
 
+// Per-boot session token, issued as a SameSite=Strict HttpOnly cookie with the
+// UI and required on /api/* and the WS handshake. This shields the localhost
+// server from cross-origin browser pages (they can neither read nor send the
+// cookie); it is NOT a defense against other processes of the same OS user.
+const AUTH_TOKEN = process.env.ENABLE_AUTH_TOKEN || randomBytes(32).toString('hex');
+
+function hasAuthCookie(req) {
+  const m = /(?:^|;\s*)enable_auth=([^;]+)/.exec(req.headers.cookie || '');
+  if (!m) return false;
+  const got = Buffer.from(m[1]);
+  const want = Buffer.from(AUTH_TOKEN);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+app.use('/api', (req, res, next) => {
+  if (hasAuthCookie(req)) return next();
+  res.status(401).json({ error: 'unauthorized' });
+});
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  if (new URL(req.url, 'http://x').pathname !== '/ws' || !hasAuthCookie(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+});
 
 const runs = new Map();           // runId -> { orch, events, done, status, buffer[] }
 const sockets = new Set();
@@ -132,11 +160,12 @@ app.get('/api/enable/estimate', (req, res) => {
 });
 
 app.post('/api/enable/run', async (req, res) => {
-  const { projectDir, answers, mock, sourceBranch } = req.body || {};
+  const { projectDir, answers, mock, sourceBranch, interactive } = req.body || {};
   if (!projectDir) return res.status(400).json({ error: 'projectDir required' });
   try {
     const branch = sourceBranch ? { source: sourceBranch, feature: null } : undefined;
-    const { runId, events, done, orch } = await runOnboarding({ projectDir, answers: answers || {}, mock: !!mock, branch });
+    const { runId, events, done, orch } = await runOnboarding({
+      projectDir, answers: answers || {}, mock: !!mock, interactive: !!interactive, branch });
     const entry = { orch, events, done, status: 'running', buffer: [] };  // store orch (D8)
     runs.set(runId, entry);
     for (const name of EVENTS) {
@@ -211,16 +240,44 @@ app.get('/api/enable/history/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
-// kept for completeness/future interactive gates; happy path answers up front (D8)
+// remove a past run everywhere: store dir, shared plan/review markdown, local
+// branch + worktree (engine deletePipeline; refuses runs still marked running).
+app.delete('/api/enable/history/:id', async (req, res) => {
+  try {
+    const entry = (await enableHistory()).find((p) => p.id === req.params.id);
+    if (!entry) return res.status(404).json({ error: 'unknown run' });
+    const liveHere = [...runs.values()].some((r) =>
+      r.status === 'running' && r.orch?.getState()?.pipelineDir === entry.dir);
+    if (liveHere) return res.status(409).json({ error: 'cannot delete a running run' });
+    const report = await deletePipeline({ key: entry.projectKey, id: entry.id });
+    if (!report) return res.status(404).json({ error: 'unknown run' });
+    res.json({ ok: true, ...report });
+  } catch (err) {
+    if (err && err.code === 'RUNNING') return res.status(409).json({ error: err.message });
+    res.status(500).json({ error: String(err && err.message || err) });
+  }
+});
+
+// answers an interactive gate/recovery question (and stays usable for any
+// future ask). On success a question-answered frame is buffered + broadcast so
+// replaying clients (page refresh, second tab) drop the stale question card.
 app.post('/api/enable/answer', (req, res) => {
   const { runId, id, payload } = req.body || {};
   const entry = runId && runs.get(runId);
   if (!entry) return res.status(400).json({ error: 'unknown runId' });
-  try { entry.orch?.answer(id, payload); res.json({ ok: true }); }
-  catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+  try {
+    entry.orch?.answer(id, payload);
+    const frame = { type: 'question-answered', id, runId };
+    entry.buffer.push(frame);
+    broadcast(frame);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+app.use((req, res, next) => {   // static UI responses carry the session cookie
+  res.setHeader('Set-Cookie', `enable_auth=${AUTH_TOKEN}; Path=/; SameSite=Strict; HttpOnly`);
+  next();
+}, express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isMain) server.listen(PORT, HOST, () => console.log(`[enable] http://${HOST}:${PORT}`));

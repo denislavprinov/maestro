@@ -11,9 +11,11 @@ rename, or reorder. The first option of each is the default. Free text is allowe
 For `multiToolTargets`, each option/free-text value is a comma-separated list of the
 assistant-config FILES to generate (Claude's `CLAUDE.md` is always produced and is
 not listed here). Map tool names to files: Cursor → `.cursor/rules`,
-Copilot → `.github/copilot-instructions.md`, generic → `AGENTS.md`. Downstream
-`projectOnboarding` / `onboardingTests` emit exactly the named files and the
-evaluator's `multiTool` dimension checks each exists.
+Copilot → `.github/copilot-instructions.md`, Codex/generic → `AGENTS.md`. The
+default (first option) covers all three, so readiness is tool-symmetric out of
+the box. Downstream `projectOnboarding` / `onboardingTests` emit exactly the
+named files and the evaluator's `multiTool` dimension checks each exists AND is
+self-sufficient (parity, not bare presence).
 
 ## Output Contract — write `clarify.json` with this exact JSON:
 
@@ -22,7 +24,7 @@ evaluator's `multiTool` dimension checks each exists.
   "questions": [
     { "id": "testTier", "question": "How much testing should we set up?", "options": ["scaffold", "docs-only", "smoke", "characterization"], "allowFreeText": true },
     { "id": "vendoringDepth", "question": "Bundle reusable AI skills?", "options": ["full", "baseline-only", "none"], "allowFreeText": true },
-    { "id": "multiToolTargets", "question": "Which other AI tools should we set up?", "options": [".cursor/rules, .github/copilot-instructions.md", ".cursor/rules", ".github/copilot-instructions.md", "AGENTS.md"], "allowFreeText": true },
+    { "id": "multiToolTargets", "question": "Which other AI tools should we set up?", "options": [".cursor/rules, .github/copilot-instructions.md, AGENTS.md", ".cursor/rules, .github/copilot-instructions.md", ".cursor/rules", ".github/copilot-instructions.md", "AGENTS.md"], "allowFreeText": true },
     { "id": "canary", "question": "Quick test-drive at the end?", "options": ["yes", "no"], "allowFreeText": true },
     { "id": "scopeConstraints", "question": "Folders to focus on or avoid?", "options": [], "allowFreeText": true }
   ]

@@ -16,7 +16,7 @@
     <!-- HOME -->
     <section id="home" class="screen active">
       <div class="card hero-card">
-        <h1>Make a project ready for AI</h1>
+        <h1 tabindex="-1">Make a project ready for AI</h1>
         <p class="lede">Point Enable at a local project. It reads the code, sets up docs, guardrails,
           skills and tests, then shows you how much more ready it is — before and after.</p>
 
@@ -46,7 +46,7 @@
         <p id="home-error" class="error-line" hidden></p>
       </div>
       <div class="card history-card" id="history-wrap" hidden>
-        <h3>Past runs</h3>
+        <h2 class="minor">Past runs</h2>
         <ul id="history-list" class="history-list"></ul>
       </div>
     </section>
@@ -54,7 +54,7 @@
     <!-- SET UP -->
     <section id="setup" class="screen">
       <div class="card">
-        <h2>A few quick choices</h2>
+        <h2 tabindex="-1">A few quick choices</h2>
         <p class="lede">Defaults are sensible — change only what you care about.</p>
         <form id="setup-form">
           <fieldset class="q">
@@ -68,7 +68,9 @@
           <fieldset class="q">
             <legend>Which other AI tools should we set up?</legend>
             <div class="opts multi" data-q="multiToolTargets"></div>
-            <input class="free" data-free="multiToolTargets" type="text" placeholder="Something else (comma-separated files)…" />
+            <input class="free" data-free="multiToolTargets" type="text"
+              aria-label="Other AI tool config files (comma-separated)"
+              placeholder="Something else (comma-separated files)…" />
           </fieldset>
           <fieldset class="q">
             <legend>Quick test-drive at the end?</legend>
@@ -76,8 +78,14 @@
           </fieldset>
           <fieldset class="q">
             <legend>Folders to focus on or avoid? <span class="opt-note">(optional)</span></legend>
-            <input class="free wide" data-free="scopeConstraints" type="text" placeholder="e.g. focus on src/, skip vendor/" />
+            <input class="free wide" data-free="scopeConstraints" type="text"
+              aria-label="Folders to focus on or avoid"
+              placeholder="e.g. focus on src/, skip vendor/" />
           </fieldset>
+          <label class="check inline">
+            <input id="interactive-toggle" type="checkbox" />
+            <span>Ask me at checkpoints (review gates and errors pause for your call)</span>
+          </label>
           <p id="setup-estimate" class="estimate-line" hidden></p>
           <div class="row">
             <button type="button" class="ghost-btn" data-back="home">Back</button>
@@ -90,9 +98,11 @@
     <!-- PROGRESS -->
     <section id="progress" class="screen">
       <div class="card">
-        <div class="journey" id="journey"></div>
+        <h2 class="sr-only" tabindex="-1">Run in progress</h2>
+        <p id="sr-status" class="sr-only" role="status" aria-live="polite"></p>
+        <div class="journey" id="journey" aria-hidden="true"></div>
 
-        <div class="ring-wrap">
+        <div class="ring-wrap" aria-hidden="true">
           <svg viewBox="0 0 180 180" class="ring" aria-hidden="true">
             <circle cx="90" cy="90" r="74" class="ring-track" />
             <circle id="ring-ghost" cx="90" cy="90" r="74" class="ring-ghost" />
@@ -106,9 +116,19 @@
 
         <div id="run-meter" class="run-meter" hidden></div>
 
+        <div id="gate-wrap" class="gate-card" role="alertdialog" aria-labelledby="gate-title" hidden>
+          <h3 id="gate-title"></h3>
+          <p id="gate-detail" class="lede"></p>
+          <ul id="gate-issues" class="gate-issues"></ul>
+          <div class="row">
+            <button id="gate-secondary" class="ghost-btn" type="button"></button>
+            <button id="gate-primary" class="primary-btn" type="button"></button>
+          </div>
+        </div>
+
         <div id="feed" class="feed" aria-live="polite"></div>
 
-        <button id="details-toggle" class="ghost-btn small">Show details</button>
+        <button id="details-toggle" class="ghost-btn small" aria-expanded="false" aria-controls="raw-log">Show details</button>
         <pre id="raw-log" class="raw-log" hidden></pre>
       </div>
     </section>
@@ -117,7 +137,7 @@
     <section id="results" class="screen">
       <div class="card">
         <div class="result-head">
-          <div class="result-label">Readiness</div>
+          <h2 class="result-label" tabindex="-1">Readiness</h2>
           <div id="hero" class="hero-score">—</div>
         </div>
         <div id="bars" class="bars"></div>
@@ -169,8 +189,8 @@
     <!-- ERROR -->
     <section id="errored" class="screen">
       <div class="card">
-        <h2>Something went wrong</h2>
-        <p id="error-detail" class="error-line"></p>
+        <h2 tabindex="-1">Something went wrong</h2>
+        <p id="error-detail" class="error-line" role="alert"></p>
         <button class="primary-btn" data-back="home">Try again</button>
       </div>
     </section>

@@ -9,9 +9,9 @@
       "autoPort": true
     },
     {
-      "name": "enable-web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/enable", "run", "start"],
+      "name": "enable",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--disable-warning=ExperimentalWarning", "apps/enable/server.mjs"],
       "port": 4319
     }
   ]

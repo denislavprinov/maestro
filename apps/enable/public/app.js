@@ -23,7 +23,8 @@ const SETUP_QUESTIONS = {
     { value: 'none', label: 'None' }] },
   multiToolTargets: { type: 'multi', options: [
     { value: 'claude', label: 'Claude (CLAUDE.md)', locked: true }, { value: 'cursor', label: 'Cursor' },
-    { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md' }], defaults: ['cursor', 'copilot'] },
+    { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md (Codex & others)' }],
+    defaults: ['cursor', 'copilot', 'agents'] },
   canary: { type: 'single', options: [{ value: 'yes', label: 'Yes (recommended)' }, { value: 'no', label: 'No' }] },
 };
 
@@ -31,10 +32,19 @@ let baseline = null;
 let baselineDims = null;
 let ws = null;
 let currentRunId = null;
+let answeredQuestions = new Set();   // per-run; guards against replayed frames
 
 // ---------- screen switching ----------
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === id);
+  // move focus to the screen's heading so keyboard/SR users land in context
+  document.querySelector(`#${id} h1[tabindex], #${id} h2[tabindex]`)?.focus();
+}
+
+// screen-reader narration of run progress (the journey/ring are aria-hidden)
+function announce(text) {
+  const el = document.querySelector('#sr-status');
+  if (el) el.textContent = text;
 }
 
 // ---------- home / project loading ----------
@@ -151,8 +161,10 @@ async function start(projectDir, answers) {
   startLiveMeter();
   let runId;
   try {
+    const interactive = document.querySelector('#interactive-toggle').checked;
     const res = await fetch('/api/enable/run', { method: 'POST',
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectDir, answers, mock, sourceBranch }) });
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectDir, answers, mock, sourceBranch, interactive }) });
     if (!res.ok) { showError((await res.json().catch(() => ({}))).error || `run failed (${res.status})`); return; }
     ({ runId } = await res.json());
   } catch (err) { showError(String(err.message || err)); return; }
@@ -171,19 +183,75 @@ function handle(ev) {
     case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
     case 'log':      appendFeed(ev); break;
     case 'readiness':
-      if (ev.kind === 'baseline') { baseline = ev.score; baselineDims = ev.dimensions || null; renderRing(ev.score, null); }
-      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) renderRing(ev.score, baseline); }
+      if (ev.kind === 'baseline') { baseline = ev.score; baselineDims = ev.dimensions || null; renderRing(ev.score, null);
+        if (ev.score != null) announce(`Starting readiness score: ${Math.round(ev.score)} out of 100.`); }
+      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) { renderRing(ev.score, baseline);
+        announce(`Pass ${ev.cycle}: readiness score ${Math.round(ev.score)} out of 100.`); } }
       if (ev.kind === 'final')    renderResults(ev);
       break;
     case 'done':     stopLiveMeter(); if (ev.status === 'error') showError('The run ended with an error.'); break;
     case 'error':    stopLiveMeter(); showError(ev.message); break;
+    case 'question':          showGate(ev); break;
+    case 'question-answered': hideGate(ev.id); break;
   }
+}
+
+// ---------- interactive gates ----------
+// clarify never lands here (auto-answered from the set-up screen); gate =
+// reviewer still sees blocking issues after the automatic fix cycles; recovery
+// = a step failed repeatedly and the engine wants a retry/stop call.
+function showGate(q) {
+  if (q.kind === 'clarify' || answeredQuestions.has(q.id)) return;
+  const wrap = document.querySelector('#gate-wrap');
+  const issues = document.querySelector('#gate-issues');
+  const primary = document.querySelector('#gate-primary');
+  const secondary = document.querySelector('#gate-secondary');
+  issues.innerHTML = '';
+
+  if (q.kind === 'gate') {
+    document.querySelector('#gate-title').textContent = 'The reviewer still sees issues';
+    document.querySelector('#gate-detail').textContent =
+      'Automatic improvement passes are used up. Run one more, or accept the result as is?';
+    issues.innerHTML = (q.issues || []).slice(0, 6)
+      .map((i) => `<li>${typeof i === 'string' ? i : (i.title || i.summary || '')}</li>`).join('');
+    primary.textContent = 'Fix another round';
+    secondary.textContent = 'Accept and continue';
+    primary.onclick = () => sendAnswer(q.id, { decision: 'another' });
+    secondary.onclick = () => sendAnswer(q.id, { decision: 'continue' });
+  } else if (q.kind === 'recovery') {
+    document.querySelector('#gate-title').textContent = 'A step keeps failing';
+    document.querySelector('#gate-detail').textContent =
+      'The engine retried and it still fails. Try again, or stop the run?';
+    primary.textContent = 'Retry';
+    secondary.textContent = 'Stop the run';
+    primary.onclick = () => sendAnswer(q.id, { decision: 'retry' });
+    secondary.onclick = () => sendAnswer(q.id, { decision: 'abort' });
+  } else return;
+
+  wrap.hidden = false;
+  primary.focus();
+}
+
+function hideGate(id) {
+  if (id) answeredQuestions.add(id);
+  document.querySelector('#gate-wrap').hidden = true;
+}
+
+async function sendAnswer(id, payload) {
+  try {
+    const res = await fetch('/api/enable/answer', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runId: currentRunId, id, payload }) });
+    if (res.ok) hideGate(id);
+  } catch {}
 }
 
 // ---------- progress rendering ----------
 function resetProgress() {
   baseline = null;
   baselineDims = null;
+  answeredQuestions = new Set();
+  hideGate(null);
   stopLiveMeter();
   runStartTs = null;
   lastTotals = { costUsd: 0, tokens: 0, activeMs: 0 };
@@ -206,6 +274,8 @@ function activateStage(node) {
     s.classList.toggle('done', idx >= 0 && i <= idx);
     s.classList.toggle('active', i === idx);
   });
+  const st = STAGES.find((s) => s.node === node);
+  if (st) announce(`Finished stage: ${st.label}.`);
 }
 
 function appendFeed(ev) {
@@ -560,6 +630,7 @@ function renderChanges(c) {
   const toggle = document.querySelector('#patch-toggle');
   toggle.hidden = !c.patch;
   toggle.textContent = 'Show patch';
+  toggle.setAttribute('aria-expanded', 'false');
   wrap.hidden = false;
 }
 
@@ -583,12 +654,31 @@ async function loadHistory() {
     const score = r && r.score != null
       ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
       : h.status;
-    li.innerHTML = `<span class="hist-project">${h.projectName || h.title}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span>`;
-    li.addEventListener('click', () => showHistoryDetail(h.id));
+    const name = h.projectName || h.title;
+    li.innerHTML = `<button type="button" class="hist-btn">
+      <span class="hist-project">${name}</span>
+      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>
+      <button type="button" class="hist-delete" aria-label="Delete the ${name} run from ${when}" title="Delete run">✕</button>`;
+    li.querySelector('.hist-btn').addEventListener('click', () => showHistoryDetail(h.id));
+    li.querySelector('.hist-delete').addEventListener('click', () => deleteHistory(h));
     list.append(li);
   }
   wrap.hidden = false;
+}
+
+// removes the run's store dir, plan/review files and local branch + worktree
+async function deleteHistory(h) {
+  const name = h.projectName || h.title;
+  if (!window.confirm(`Delete the ${name} run? This removes its files and local branch. The project itself is untouched.`)) return;
+  try {
+    const res = await fetch(`/api/enable/history/${h.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      window.alert(body.error || `Could not delete the run (${res.status}).`);
+      return;
+    }
+  } catch { return; }
+  loadHistory();
 }
 
 async function showHistoryDetail(id) {
@@ -711,8 +801,10 @@ function init() {
 
   document.querySelector('#details-toggle').addEventListener('click', () => {
     const raw = document.querySelector('#raw-log');
+    const toggle = document.querySelector('#details-toggle');
     raw.hidden = !raw.hidden;
-    document.querySelector('#details-toggle').textContent = raw.hidden ? 'Show details' : 'Hide details';
+    toggle.textContent = raw.hidden ? 'Show details' : 'Hide details';
+    toggle.setAttribute('aria-expanded', String(!raw.hidden));
   });
 }
 
