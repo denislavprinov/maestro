@@ -105,6 +105,14 @@
         <div class="ring-wrap" aria-hidden="true">
           <svg viewBox="0 0 180 180" class="ring" aria-hidden="true">
             <circle cx="90" cy="90" r="74" class="ring-track" />
+            <g id="spin-ambient" class="spin-ambient"><circle cx="90" cy="90" r="63" /></g>
+            <g id="spinner" class="spinner">
+              <circle id="spin-arc" class="spin-arc" cx="90" cy="90" r="74" />
+              <g id="spin-head-orbit" class="spin-head-orbit">
+                <circle class="spin-halo" cx="164" cy="90" r="11" />
+                <circle class="spin-head" cx="164" cy="90" r="5" />
+              </g>
+            </g>
             <circle id="ring-ghost" cx="90" cy="90" r="74" class="ring-ghost" />
             <circle id="ring-fill" cx="90" cy="90" r="74" class="ring-fill" />
           </svg>

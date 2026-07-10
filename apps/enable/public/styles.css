@@ -130,6 +130,44 @@ select:focus, input[type='text']:focus { outline: none; border-color: var(--acce
 .ring-ghost { stroke: var(--dim); stroke-width: 12; opacity: .5; stroke-linecap: round; }
 .ring-fill { stroke: var(--accent); stroke-linecap: round; transition: stroke-dasharray .8s cubic-bezier(.4,0,.2,1); }
 .ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+
+/* indeterminate spinner (circumference r=74 ≈ 465, r=63 ≈ 396) */
+.spinner, .spin-ambient, .spin-head-orbit { transform-box: view-box; transform-origin: 50% 50%; }
+.spinner {
+  color: var(--spin-c, var(--accent));
+  opacity: 0; visibility: hidden;
+  transition: opacity .4s ease, color .6s ease, visibility 0s .4s;
+  animation: spin-rot 1.6s linear infinite;
+}
+.ring-wrap.is-working .spinner { opacity: 1; visibility: visible; transition: opacity .4s ease, color .6s ease; }
+.spin-arc {
+  stroke: currentColor; stroke-linecap: round;
+  stroke-dasharray: 42 465;
+  animation: spin-breathe 2.4s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+.spin-head-orbit { animation: spin-head 2.4s cubic-bezier(.45, 0, .55, 1) infinite; }
+/* glow = filterless halo circle; drop-shadow on animated SVG leaves a ghost
+   copy at the untransformed position in Chrome, so it can't be used here */
+/* .ring prefix outranks the `.ring circle { fill: none }` base rule */
+.ring .spin-head { fill: currentColor; stroke: none; transition: opacity .25s ease; }
+.ring .spin-halo { fill: currentColor; stroke: none; opacity: .22; transition: opacity .25s ease; }
+:root[data-theme='light'] .spin-halo { opacity: .15; }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) .spin-halo { opacity: .15; } }
+/* resolve handoff: JS freezes the pose and drives it into the score arc */
+.spinner.resolving, .spinner.resolving .spin-arc, .spinner.resolving .spin-head-orbit { animation: none; }
+.spinner.resolving .spin-head, .spinner.resolving .spin-halo { opacity: 0; }
+.spin-ambient {
+  color: var(--spin-c, var(--accent));
+  opacity: 0;
+  transition: opacity .5s ease, color .6s ease;
+  animation: spin-rot 7s linear infinite reverse;
+}
+.ring-wrap.is-live .spin-ambient { opacity: .16; }
+.spin-ambient circle { fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 70 326; }
+@keyframes spin-rot { to { transform: rotate(360deg); } }
+@keyframes spin-breathe { 0%, 100% { stroke-dasharray: 42 465; } 50% { stroke-dasharray: 256 465; } }
+/* head angle tracks the dash end: 42/465 → 32.5deg, 256/465 → 198.2deg */
+@keyframes spin-head { 0%, 100% { transform: rotate(32.5deg); } 50% { transform: rotate(198.2deg); } }
 .ring-score { font-family: var(--mono); font-size: 44px; font-weight: 700; }
 .ring-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
@@ -406,4 +444,10 @@ h2.minor { font-size: 15px; color: var(--muted); margin-bottom: 8px; text-transf
   .screen.active, .feed-line { animation: none; opacity: 1; }
   .stage.active .stage-dot { animation: none; }
   .ring-fill, .bar-track i, .stage, .stage .stage-dot { transition: none; }
+  /* calm static fallback: quiet quarter arc from 12 o'clock, no glow, no orbit */
+  .spinner, .spin-arc, .spin-head-orbit, .spin-ambient { animation: none; }
+  .spinner { transition: none; }
+  .spin-arc { stroke-dasharray: 105 465; }
+  .spin-head, .spin-halo { display: none; }
+  .spin-ambient { display: none; }
 }

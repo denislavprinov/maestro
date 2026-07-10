@@ -183,14 +183,15 @@ function handle(ev) {
     case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
     case 'log':      appendFeed(ev); break;
     case 'readiness':
-      if (ev.kind === 'baseline') { baseline = ev.score; baselineDims = ev.dimensions || null; renderRing(ev.score, null);
-        if (ev.score != null) announce(`Starting readiness score: ${Math.round(ev.score)} out of 100.`); }
-      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) { renderRing(ev.score, baseline);
+      if (ev.kind === 'baseline') { baseline = ev.score; baselineDims = ev.dimensions || null;
+        if (ev.score != null) { resolveSpinner(ev.score, null);
+          announce(`Starting readiness score: ${Math.round(ev.score)} out of 100.`); } }
+      if (ev.kind === 'cycle')    { setPassLabel(ev.cycle); if (ev.score != null) { resolveSpinner(ev.score, baseline);
         announce(`Pass ${ev.cycle}: readiness score ${Math.round(ev.score)} out of 100.`); } }
-      if (ev.kind === 'final')    renderResults(ev);
+      if (ev.kind === 'final')    { stopSpinner(); renderResults(ev); }
       break;
-    case 'done':     stopLiveMeter(); if (ev.status === 'error') showError('The run ended with an error.'); break;
-    case 'error':    stopLiveMeter(); showError(ev.message); break;
+    case 'done':     stopLiveMeter(); stopSpinner(); if (ev.status === 'error') showError('The run ended with an error.'); break;
+    case 'error':    stopLiveMeter(); stopSpinner(); showError(ev.message); break;
     case 'question':          showGate(ev); break;
     case 'question-answered': hideGate(ev.id); break;
   }
@@ -265,6 +266,8 @@ function resetProgress() {
   document.querySelector('#ring-score').textContent = '—';
   setPassLabel(null);
   renderRing(null, null);
+  setStageAccent(null);
+  startSpinner();
 }
 
 function activateStage(node) {
@@ -275,7 +278,7 @@ function activateStage(node) {
     s.classList.toggle('active', i === idx);
   });
   const st = STAGES.find((s) => s.node === node);
-  if (st) announce(`Finished stage: ${st.label}.`);
+  if (st) { setStageAccent(st.color); announce(`Finished stage: ${st.label}.`); }
 }
 
 function appendFeed(ev) {
@@ -300,15 +303,103 @@ function setPassLabel(cycle) {
   el.textContent = cycle == null ? 'working…' : `pass ${cycle}`;
 }
 
-function renderRing(score, base) {
-  const R = 74, C = 2 * Math.PI * R;
+function renderRing(score, base, opts) {
   const fill = document.querySelector('#ring-fill');
   const pct = Math.max(0, Math.min(100, score || 0)) / 100;
-  fill.setAttribute('stroke-dasharray', `${pct * C} ${C}`);
+  // a zero-length dash still paints its round caps as a dot — hide the fill at 0
+  fill.style.opacity = pct > 0 ? '' : '0';
+  fill.setAttribute('stroke-dasharray', `${pct * RING_C} ${RING_C}`);
   const ghost = document.querySelector('#ring-ghost');
-  if (base == null) ghost.style.display = 'none';
-  else { ghost.style.display = ''; ghost.setAttribute('stroke-dasharray', `${(base / 100) * C} ${C}`); }
-  document.querySelector('#ring-score').textContent = score == null ? '—' : Math.round(score);
+  if (base == null || base <= 0) ghost.style.display = 'none';  // 0-length dash would paint a cap dot
+  else { ghost.style.display = ''; ghost.setAttribute('stroke-dasharray', `${(base / 100) * RING_C} ${RING_C}`); }
+  if (!(opts && opts.skipText)) document.querySelector('#ring-score').textContent = score == null ? '—' : Math.round(score);
+}
+
+// ---------- indeterminate "working" spinner ----------
+// Spinner shows while no score exists; on the first score it decelerates,
+// unwinds to 12 o'clock and morphs its arc length into the score fill while
+// the number counts up. The faint counter-rotating inner arc stays on for the
+// whole run as a "still thinking" cue, and stops on done/error/results.
+const RING_R = 74, RING_C = 2 * Math.PI * RING_R;
+let spinResolveRaf = 0;
+
+const reducedMotion = () => typeof matchMedia === 'function'
+  && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ringWrap = () => document.querySelector('.ring-wrap');
+
+function setStageAccent(color) {
+  if (color) ringWrap().style.setProperty('--spin-c', color);
+  else ringWrap().style.removeProperty('--spin-c');
+}
+
+function startSpinner() {
+  cancelAnimationFrame(spinResolveRaf);
+  const g = document.querySelector('#spinner');
+  g.classList.remove('resolving');
+  g.style.transform = '';
+  document.querySelector('#spin-arc').style.strokeDasharray = '';
+  document.querySelector('#spin-head-orbit').style.transform = '';
+  ringWrap().classList.add('is-working', 'is-live');
+}
+
+function stopSpinner() {  // hard stop, no handoff (done without a score / error)
+  cancelAnimationFrame(spinResolveRaf);
+  ringWrap().classList.remove('is-working', 'is-live');
+}
+
+// current rotation (deg, 0..360) from the computed transform matrix
+function currentRotationDeg(el) {
+  const t = getComputedStyle(el).transform;
+  const m = t && t !== 'none' && t.match(/matrix\(([-\d.e]+),\s*([-\d.e]+)/);
+  if (!m) return 0;
+  return (Math.atan2(parseFloat(m[2]), parseFloat(m[1])) * 180 / Math.PI + 360) % 360;
+}
+
+// set the fill without its .8s transition so the crossfade lands on an
+// identical arc instead of re-animating from zero
+function renderRingImmediate(score, base, opts) {
+  const fill = document.querySelector('#ring-fill');
+  fill.style.transition = 'none';
+  renderRing(score, base, opts);
+  void fill.getBoundingClientRect();
+  fill.style.transition = '';
+}
+
+function resolveSpinner(score, base) {
+  const wrap = ringWrap();
+  if (!wrap.classList.contains('is-working')) { renderRing(score, base); return; }
+  cancelAnimationFrame(spinResolveRaf);   // a newer score retargets a resolve in flight
+  const g = document.querySelector('#spinner');
+  const arc = document.querySelector('#spin-arc');
+  const scoreEl = document.querySelector('#ring-score');
+  if (reducedMotion()) {
+    wrap.classList.remove('is-working');
+    renderRing(score, base);
+    return;
+  }
+  // freeze the CSS animation at its current pose, then drive it home by hand
+  const a0 = currentRotationDeg(g);
+  const d0 = parseFloat(getComputedStyle(arc).strokeDasharray) || 42;
+  const orbit = document.querySelector('#spin-head-orbit');
+  orbit.style.transform = `rotate(${currentRotationDeg(orbit)}deg)`;
+  g.classList.add('resolving');
+  g.style.transform = `rotate(${a0}deg)`;
+  arc.style.strokeDasharray = `${d0} ${RING_C}`;
+  const target = clampPct(score || 0) / 100 * RING_C;
+  const dur = 700, t0 = performance.now();
+  animateCount(scoreEl, 0, Math.round(score));
+  const step = (t) => {
+    const p = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - p, 3);   // ease-out cubic: decelerate + unwind
+    g.style.transform = `rotate(${a0 + (360 - a0) * e}deg)`;
+    arc.style.strokeDasharray = `${d0 + (target - d0) * e} ${RING_C}`;
+    if (p < 1) { spinResolveRaf = requestAnimationFrame(step); return; }
+    renderRingImmediate(score, base, { skipText: true });  // count-up owns the text
+    wrap.classList.remove('is-working');                   // crossfade onto the fill
+    g.classList.remove('resolving');
+    g.style.transform = ''; arc.style.strokeDasharray = ''; orbit.style.transform = '';
+  };
+  spinResolveRaf = requestAnimationFrame(step);
 }
 
 // ---------- run stats: elapsed / cost / tokens ----------
