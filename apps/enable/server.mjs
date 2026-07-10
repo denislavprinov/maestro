@@ -282,7 +282,7 @@ async function enableHistory() {
   // become resumable; live local runs are shielded via liveIds.
   try {
     reconcileStaleRunning({
-      liveIds: [...runs.values()].map((r) => r.orch?.getState?.()?.id).filter(Boolean),
+      liveIds: [...runs.values()].map((r) => r.pipelineId ?? r.orch?.getState?.()?.id).filter(Boolean),
     });
   } catch {}
   const all = await listAllPipelines();

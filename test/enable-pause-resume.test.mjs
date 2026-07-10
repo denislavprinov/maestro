@@ -94,7 +94,7 @@ test('POST /api/enable/resume: concurrent duplicate resume -> one wins, other 40
       bus: null, stepModels: null, workflowId: 'wf_enable', plan: null, nodes: [], gate: null,
       pipelineDir: proj, pausedAt: '2026-07-10T00:00:00Z' } });
   // Start both requests at nearly the same time; the guard + synchronous claim ensures
-  // the second one sees the first's claim (via orch.getState) and 409s.
+  // the second one sees the first's claim (matched on its pipelineId tag) and 409s.
   const reqA = post('/api/enable/resume', { pipelineId: id, mock: true });
   const reqB = post('/api/enable/resume', { pipelineId: id, mock: true });
   const [a, b] = await Promise.all([reqA, reqB]);
