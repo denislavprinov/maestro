@@ -2,7 +2,7 @@ import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { WebSocket } from 'ws';
@@ -311,6 +311,24 @@ test('history surfaces a run by onboarding artifact even when the title differs'
   const hist = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs;
   assert.ok(hist.some((h) => h.dir === dir),
     'a run with a non-pinned title still appears via its onboarding artifact');
+});
+
+test('GET /api/enable/history reaps a crashed "running" orphan to interrupted', async () => {
+  const { json } = await post('/api/enable/run', { projectDir: freshRepo(), answers: FILE_ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const dir = entry.orch.getState().pipelineDir;
+  const id = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs.find((h) => h.dir === dir).id;
+
+  // simulate the owning process having died: drop it from this server's live map,
+  // then leave the row stuck "running" with a dead pid + a long-stale heartbeat.
+  runs.delete(json.runId);
+  getDb().prepare("UPDATE pipelines SET status='running', owner_pid=?, owner_host=?, heartbeat_at='2000-01-01T00:00:00Z' WHERE id=?")
+    .run(2147483646, hostname(), id);
+
+  const mine = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs.find((h) => h.id === id);
+  assert.ok(mine, 'the orphan is still listed');
+  assert.equal(mine.status, 'interrupted', 'a crashed running run is reconciled, not left "running"');
 });
 
 test('POST /api/enable/answer with unknown runId -> 400', async () => {

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
-import { listAllPipelines } from '../../src/core/artifacts.mjs';
+import { listAllPipelines, reconcileStaleRunning } from '../../src/core/artifacts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -201,8 +201,19 @@ async function enableHistory() {
     .map((p) => ({ ...p, readiness: p.dir ? readFinalReadiness(p.dir) : null, mock: looksMock(p) }));
 }
 
+// Flip crashed/killed runs (dead owner pid or a stale heartbeat) from a stuck
+// "running" to "interrupted" so the history list stops implying they're live. Runs
+// this server still owns are protected by liveIds; the reaper also skips any row
+// whose pid is genuinely alive. Best-effort — never let housekeeping fail the list.
+function reapOrphans() {
+  const liveIds = [...runs.values()]
+    .map((e) => { try { return e.orch?.getState()?.id; } catch { return null; } })
+    .filter(Boolean);
+  try { return reconcileStaleRunning({ liveIds }); } catch { return { reconciled: 0, ids: [] }; }
+}
+
 app.get('/api/enable/history', async (_req, res) => {
-  try { res.json({ runs: await enableHistory() }); }
+  try { reapOrphans(); res.json({ runs: await enableHistory() }); }
   catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
