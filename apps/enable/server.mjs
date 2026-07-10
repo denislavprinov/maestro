@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
-import { listAllPipelines } from '../../src/core/artifacts.mjs';
+import { runOnboarding, resumeOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
+import { listAllPipelines, reconcileStaleRunning } from '../../src/core/artifacts.mjs';
 import { estimateCost } from '../../src/core/costEstimate.mjs';
 import { deletePipeline } from '../../src/core/pipeline-delete.mjs';
 
@@ -159,28 +159,81 @@ app.get('/api/enable/estimate', (req, res) => {
   }
 });
 
+// register a live run handle (fresh or resumed): buffer + broadcast its events,
+// mirror the final status onto the entry. Shared by /run and /resume.
+function registerRun(runId, { orch, events, done }) {
+  const entry = { orch, events, done, status: 'running', buffer: [] };
+  runs.set(runId, entry);
+  for (const name of EVENTS) {
+    events.on(name, (payload) => {
+      const tagged = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }), runId };
+      entry.buffer.push(tagged);
+      if (entry.buffer.length > 5000) entry.buffer.shift();
+      broadcast(tagged);
+    });
+  }
+  done.then((r) => { entry.status = r.status; })
+      .catch((err) => broadcast({ type: 'error', runId, message: String(err && err.message || err) }));
+  return entry;
+}
+
 app.post('/api/enable/run', async (req, res) => {
   const { projectDir, answers, mock, sourceBranch, interactive } = req.body || {};
   if (!projectDir) return res.status(400).json({ error: 'projectDir required' });
   try {
     const branch = sourceBranch ? { source: sourceBranch, feature: null } : undefined;
-    const { runId, events, done, orch } = await runOnboarding({
+    const handle = await runOnboarding({
       projectDir, answers: answers || {}, mock: !!mock, interactive: !!interactive, branch });
-    const entry = { orch, events, done, status: 'running', buffer: [] };  // store orch (D8)
-    runs.set(runId, entry);
-    for (const name of EVENTS) {
-      events.on(name, (payload) => {
-        const tagged = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }), runId };
-        entry.buffer.push(tagged);
-        if (entry.buffer.length > 5000) entry.buffer.shift();
-        broadcast(tagged);
-      });
-    }
-    done.then((r) => { entry.status = r.status; })
-        .catch((err) => broadcast({ type: 'error', runId, message: String(err && err.message || err) }));
-    res.json({ runId });
+    registerRun(handle.runId, handle);
+    res.json({ runId: handle.runId });
   } catch (err) {
     res.status(500).json({ error: String(err && err.message || err) });
+  }
+});
+
+// gracefully pause a live run: engine kills in-flight children, persists a
+// resume point, lands on status 'paused'. The paused frame is buffered so a
+// replaying client renders the banner after refresh.
+app.post('/api/enable/pause', (req, res) => {
+  const { runId } = req.body || {};
+  const entry = runId && runs.get(runId);
+  if (!entry) return res.status(400).json({ error: 'unknown runId' });
+  try {
+    const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
+    if (!ok) return res.status(400).json({ error: 'cannot pause in the current state' });
+    entry.status = 'pausing';
+    const frame = { type: 'paused', runId };
+    entry.buffer.push(frame);
+    broadcast(frame);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+});
+
+// continue a paused/interrupted Enable pipeline as a NEW live run entry (new
+// runId, same pipeline id / history row). Works across server restarts — the
+// resume point lives in the DB, not in this process.
+app.post('/api/enable/resume', async (req, res) => {
+  const { pipelineId, interactive, mock } = req.body || {};
+  if (!pipelineId || typeof pipelineId !== 'string') return res.status(400).json({ error: 'pipelineId required' });
+  for (const e of runs.values()) {
+    if (e.orch?.getState?.()?.id === pipelineId &&
+        !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+      return res.status(409).json({ error: 'pipeline is already live' });
+    }
+  }
+  try {
+    const handle = await resumeOnboarding({ pipelineId, interactive: !!interactive, mock: !!mock });
+    // evict the superseded paused/interrupted lineage so it can't resurface as
+    // a phantom paused card next to the resumed run.
+    for (const [id, e] of runs) {
+      if (e.orch?.getState?.()?.id === pipelineId &&
+          ['paused', 'interrupted'].includes(String(e.status || ''))) runs.delete(id);
+    }
+    registerRun(handle.runId, handle);
+    res.json({ runId: handle.runId, pipelineId });
+  } catch (err) {
+    const status = err && err.code === 'NOT_FOUND' ? 404 : 400;
+    res.status(status).json({ error: String(err && err.message || err) });
   }
 });
 
@@ -215,6 +268,13 @@ app.get('/api/enable/runs/:runId/changes', (req, res) => {
 // Runs with no recorded spend (mock / test runs report $0) get an estimatedCost so
 // the list never reads as "free" — real spend, when present, always wins in the UI.
 async function enableHistory() {
+  // flip orphaned 'running' rows (crashed server) to 'interrupted' so they
+  // become resumable; live local runs are shielded via liveIds.
+  try {
+    reconcileStaleRunning({
+      liveIds: [...runs.values()].map((r) => r.orch?.getState?.()?.id).filter(Boolean),
+    });
+  } catch {}
   const all = await listAllPipelines();
   return all.filter((p) => p.title === ENABLE_TITLE)
     .map((p) => {
@@ -223,7 +283,8 @@ async function enableHistory() {
       if (!(p.totalCostUsd > 0) && p.projectDir && existsSync(p.projectDir)) {
         try { estimatedCost = estimateCost(probeRepoSize(p.projectDir)); } catch {}
       }
-      return { ...p, readiness, estimatedCost };
+      const resumable = (p.status === 'paused' || p.status === 'interrupted') && !!p.hasResumePoint;
+      return { ...p, readiness, estimatedCost, resumable };
     });
 }
 
