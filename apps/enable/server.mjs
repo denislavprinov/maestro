@@ -160,9 +160,11 @@ app.get('/api/enable/estimate', (req, res) => {
 });
 
 // register a live run handle (fresh or resumed): buffer + broadcast its events,
-// mirror the final status onto the entry. Shared by /run and /resume.
-function registerRun(runId, { orch, events, done }) {
-  const entry = { orch, events, done, status: 'running', buffer: [] };
+// mirror the final status onto the entry. Shared by /run and /resume. The
+// explicit pipelineId (resume handles carry it) makes the entry identifiable
+// BEFORE the engine starts — orch.getState().id is unset until dispatch begins.
+function registerRun(runId, { orch, events, done, pipelineId = null }) {
+  const entry = { orch, events, done, pipelineId, status: 'running', buffer: [] };
   runs.set(runId, entry);
   for (const name of EVENTS) {
     events.on(name, (payload) => {
@@ -216,25 +218,23 @@ app.post('/api/enable/resume', async (req, res) => {
   const { pipelineId, interactive, mock } = req.body || {};
   if (!pipelineId || typeof pipelineId !== 'string') return res.status(400).json({ error: 'pipelineId required' });
   for (const e of runs.values()) {
-    if (e.orch?.getState?.()?.id === pipelineId &&
+    if ((e.pipelineId ?? e.orch?.getState?.()?.id) === pipelineId &&
         !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
       return res.status(409).json({ error: 'pipeline is already live' });
     }
   }
   // Synchronous claim BEFORE the first await: a concurrent /resume for the same
   // pipeline hits the live-guard above via this placeholder and 409s instead of
-  // double-resuming. Released in finally — by then registerRun has the real entry.
+  // double-resuming. Released in finally — by then registerRun has the real entry
+  // (tagged with pipelineId, so the guard keeps matching after the claim drops).
   const claimId = `resuming:${pipelineId}`;
-  runs.set(claimId, { status: 'running', orch: { getState: () => ({ id: pipelineId }) }, buffer: [] });
+  runs.set(claimId, { status: 'running', pipelineId, buffer: [] });
   try {
-    // Yield once to let concurrent requests reach the guard while claim is held.
-    // This simulates the latency that would occur in production (network, scheduler).
-    await new Promise((r) => setImmediate(r));
     const handle = await resumeOnboarding({ pipelineId, interactive: !!interactive, mock: !!mock });
     // evict the superseded paused/interrupted lineage so it can't resurface as
     // a phantom paused card next to the resumed run.
     for (const [id, e] of runs) {
-      if (id !== claimId && e.orch?.getState?.()?.id === pipelineId &&
+      if (id !== claimId && (e.pipelineId ?? e.orch?.getState?.()?.id) === pipelineId &&
           ['paused', 'interrupted'].includes(String(e.status || ''))) runs.delete(id);
     }
     registerRun(handle.runId, handle);
