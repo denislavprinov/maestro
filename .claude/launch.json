@@ -12,7 +12,8 @@
       "name": "enable",
       "runtimeExecutable": "node",
       "runtimeArgs": ["--disable-warning=ExperimentalWarning", "apps/enable/server.mjs"],
-      "port": 4319
+      "port": 4319,
+      "autoPort": true
     }
   ]
 }
