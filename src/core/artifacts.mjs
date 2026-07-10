@@ -1281,6 +1281,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     dir: row.dir,
     title: row.title ?? row.id,
     status: row.status ?? 'unknown',
+    hasResumePoint: !!row.has_resume_point,
     startedAt: row.started_at ?? null,
     branch: feature,
     sourceBranch: source,
@@ -1336,7 +1337,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch,
+           resume_point IS NOT NULL AS has_resume_point
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'}
     ORDER BY started_at DESC
@@ -1360,7 +1362,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta
+           total_cost_usd, total_active_ms, branch, workspace_meta,
+           resume_point IS NOT NULL AS has_resume_point
     FROM pipelines
     ORDER BY started_at DESC
   `).all();
