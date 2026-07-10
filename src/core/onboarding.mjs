@@ -123,25 +123,11 @@ export function wireGateAnswers(orch, events, { answers = {}, interactive = fals
   });
 }
 
-export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_TITLE, mock = false, branch, interactive = false } = {}) {
-  if (!projectDir) throw new Error('runOnboarding: projectDir is required');
-
-  // 1. validate + seed wf_enable (idempotent). reg mirrors
-  //    test/workflow-onboarding-topology.test.mjs.
-  const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
-  const v = validateWorkflow(ENABLE_WORKFLOW, reg);
-  if (!v.ok) throw new Error(`wf_enable invalid: ${v.errors.join('; ')}`);
-  await writeWorkflow(ENABLE_WORKFLOW);                // async upsert
-
-  // 2. orchestrator pinned to wf_enable + Enable title (branch derives from title).
-  const orch = createOrchestrator({
-    projectDir,
-    workflowId: ENABLE_WORKFLOW_ID,
-    title,
-    branch: branch || { source: null, feature: null }, // feature:null -> derived from title (safe)
-    claude: { permissionMode: 'acceptEdits', mock },
-  });
-
+// Shared wiring for fresh and resumed Enable runs: event forwarding, gate
+// answering, readiness derivation, and the done-promise. `kick` starts the
+// engine (run() or resume()); `replayDir`, when set, re-emits readiness already
+// on disk so a resumed/reconnecting UI gets its ring state back.
+function wireOnboardingRun(orch, { answers = {}, interactive = false, kick, replayDir = null } = {}) {
   const events = new EventEmitter();
   const runId = randomUUID();
 
@@ -152,9 +138,9 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
 
   wireGateAnswers(orch, events, { answers, interactive });
 
-  // 4. derive readiness from canonical files on phase-done boundaries (D5).
-  //    pipelineDir is set on state at orchestrator.mjs:411 (before dispatch), so
-  //    it is readable inside these mid-run phase listeners.
+  // derive readiness from canonical files on phase-done boundaries (D5).
+  // pipelineDir is set on state at orchestrator.mjs:411 (before dispatch), so
+  // it is readable inside these mid-run phase listeners.
   let baselineEmitted = false;
   const cyclesEmitted = new Set();
   orch.on('phase', (ev) => {
@@ -175,23 +161,69 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
     }
   });
 
-  // 5. run, then emit final readiness + resolve summary.
+  // re-emit readiness a prior lifetime of this pipeline already produced, and
+  // seed the dedup state so the live listeners above don't double-emit.
+  const replayReadiness = (dir) => {
+    const b = readBaselineReadiness(dir);
+    if (b) {
+      baselineEmitted = true;
+      events.emit('readiness', { kind: 'baseline', score: b.score, dimensions: b.dimensions });
+    }
+    for (let c = 1; ; c++) {
+      const s = readCycleScore(dir, c);
+      if (s == null) break;
+      cyclesEmitted.add(c);
+      events.emit('readiness', { kind: 'cycle', cycle: c, score: s });
+    }
+  };
+
+  // run, then emit final readiness + resolve summary. The setImmediate lets the
+  // caller attach its events listeners (a microtask-continuation of our return)
+  // before the replay frames fire — otherwise they'd be emitted into silence.
   const done = (async () => {
-    const result = await orch.run();
+    await new Promise((r) => setImmediate(r));
+    if (replayDir) replayReadiness(replayDir);
+    const result = await kick();
     const dir = result.pipelineDir;
     const readiness = dir ? readFinalReadiness(dir) : null;
     const feature = orch.getState().branch?.feature ?? null;
-    events.emit('readiness', {
-      kind: 'final',
-      score: readiness?.score ?? null,
-      baselineScore: readiness?.baselineScore ?? null,
-      delta: readiness?.delta ?? null,
-      dimensions: readiness?.dimensions ?? {},
-      gaps: readiness?.gaps ?? [],
-      branch: feature,                     // results screen renders this
-    });
+    // A paused run is NOT final: emitting kind:'final' here would flip the
+    // renderer to the results screen right before the paused banner shows.
+    if (result.status !== 'paused') {
+      events.emit('readiness', {
+        kind: 'final',
+        score: readiness?.score ?? null,
+        baselineScore: readiness?.baselineScore ?? null,
+        delta: readiness?.delta ?? null,
+        dimensions: readiness?.dimensions ?? {},
+        gaps: readiness?.gaps ?? [],
+        branch: feature,                     // results screen renders this
+      });
+    }
     return { status: result.status, branch: feature, readiness };
   })();
 
   return { runId, events, done, orch };               // orch exposed for the server's answer route
+}
+
+export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_TITLE, mock = false, branch, interactive = false } = {}) {
+  if (!projectDir) throw new Error('runOnboarding: projectDir is required');
+
+  // 1. validate + seed wf_enable (idempotent). reg mirrors
+  //    test/workflow-onboarding-topology.test.mjs.
+  const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const v = validateWorkflow(ENABLE_WORKFLOW, reg);
+  if (!v.ok) throw new Error(`wf_enable invalid: ${v.errors.join('; ')}`);
+  await writeWorkflow(ENABLE_WORKFLOW);                // async upsert
+
+  // 2. orchestrator pinned to wf_enable + Enable title (branch derives from title).
+  const orch = createOrchestrator({
+    projectDir,
+    workflowId: ENABLE_WORKFLOW_ID,
+    title,
+    branch: branch || { source: null, feature: null }, // feature:null -> derived from title (safe)
+    claude: { permissionMode: 'acceptEdits', mock },
+  });
+
+  return wireOnboardingRun(orch, { answers, interactive, kick: () => orch.run() });
 }
