@@ -32,6 +32,8 @@ let baseline = null;
 let baselineDims = null;
 let ws = null;
 let currentRunId = null;
+let currentPipelineId = null;        // engine pipeline id, from state frames
+let lastWarnLine = null;             // pause reason candidate (session limit etc.)
 let answeredQuestions = new Set();   // per-run; guards against replayed frames
 
 // ---------- screen switching ----------
@@ -152,6 +154,31 @@ function collectAnswers() {
   return a;
 }
 
+// ---------- pause / resume ----------
+// 'running' | 'pausing' | 'paused' | 'idle'
+function setPauseUi(mode) {
+  const btn = document.querySelector('#pause-btn');
+  const banner = document.querySelector('#paused-banner');
+  btn.hidden = mode !== 'running' && mode !== 'pausing';
+  btn.disabled = mode === 'pausing';
+  btn.textContent = mode === 'pausing' ? 'Pausing…' : 'Pause run';
+  banner.hidden = mode !== 'paused';
+  if (mode === 'paused') {
+    document.querySelector('#paused-reason').textContent =
+      lastWarnLine && /limit/i.test(lastWarnLine)
+        ? `${lastWarnLine} The run will pick up where it left off.`
+        : 'Run paused — resume when you\'re ready.';
+    announce('The run is paused.');
+    document.querySelector('#resume-btn').focus();
+  }
+}
+
+function showPaused() {
+  stopLiveMeter();
+  hideGate(null);
+  setPauseUi('paused');
+}
+
 // ---------- run ----------
 async function start(projectDir, answers) {
   const mock = document.querySelector('#mock-toggle').checked;
@@ -169,6 +196,11 @@ async function start(projectDir, answers) {
     ({ runId } = await res.json());
   } catch (err) { showError(String(err.message || err)); return; }
 
+  setPauseUi('running');
+  connectRun(runId);
+}
+
+function connectRun(runId) {
   if (ws) { try { ws.close(); } catch {} }   // drop the previous run's socket
   currentRunId = runId;
   ws = new WebSocket(`ws://${location.host}/ws?runId=${runId}`);
@@ -176,10 +208,37 @@ async function start(projectDir, answers) {
   ws.onerror = () => showError('Lost connection to the Enable server.');
 }
 
+async function resumeRun(pipelineId) {
+  resetProgress();
+  show('progress');
+  startLiveMeter();
+  try {
+    const res = await fetch('/api/enable/resume', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pipelineId }) });
+    if (!res.ok) { showError((await res.json().catch(() => ({}))).error || `resume failed (${res.status})`); return; }
+    const { runId } = await res.json();
+    currentPipelineId = pipelineId;
+    setPauseUi('running');
+    connectRun(runId);
+  } catch (err) { showError(String(err.message || err)); }
+}
+
+async function pauseRun() {
+  if (!currentRunId) return;
+  setPauseUi('pausing');
+  try {
+    const res = await fetch('/api/enable/pause', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runId: currentRunId }) });
+    if (!res.ok) setPauseUi('running');   // engine refused (already finishing)
+  } catch { setPauseUi('running'); }
+}
+
 function handle(ev) {
   if (ev.runId && ev.runId !== currentRunId) return; // another run's frame
   switch (ev.type) {
-    case 'state':    updateLiveTotals(ev); break;
+    case 'state':    if (ev.id) currentPipelineId = ev.id; updateLiveTotals(ev); break;
     case 'phase':    if (ev.status === 'done') activateStage(ev.nodeId || ev.phase); break;
     case 'log':      appendFeed(ev); break;
     case 'readiness':
@@ -189,7 +248,13 @@ function handle(ev) {
         announce(`Pass ${ev.cycle}: readiness score ${Math.round(ev.score)} out of 100.`); } }
       if (ev.kind === 'final')    renderResults(ev);
       break;
-    case 'done':     stopLiveMeter(); if (ev.status === 'error') showError('The run ended with an error.'); break;
+    case 'paused':   showPaused(); break;
+    case 'done':
+      stopLiveMeter();
+      if (ev.status === 'paused') showPaused();
+      else if (ev.status === 'error') showError('The run ended with an error.');
+      else setPauseUi('idle');
+      break;
     case 'error':    stopLiveMeter(); showError(ev.message); break;
     case 'question':          showGate(ev); break;
     case 'question-answered': hideGate(ev.id); break;
@@ -250,6 +315,9 @@ async function sendAnswer(id, payload) {
 function resetProgress() {
   baseline = null;
   baselineDims = null;
+  currentPipelineId = null;
+  lastWarnLine = null;
+  setPauseUi('idle');
   answeredQuestions = new Set();
   hideGate(null);
   stopLiveMeter();
@@ -279,6 +347,7 @@ function activateStage(node) {
 }
 
 function appendFeed(ev) {
+  if (ev.level === 'warn' && typeof (ev.text || ev.message) === 'string') lastWarnLine = ev.text || ev.message;
   const text = ev.text || ev.message || ev.value;
   if (!text) return;
   const raw = document.querySelector('#raw-log');
@@ -657,9 +726,12 @@ async function loadHistory() {
     const name = h.projectName || h.title;
     li.innerHTML = `<button type="button" class="hist-btn">
       <span class="hist-project">${name}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>
-      <button type="button" class="hist-delete" aria-label="Delete the ${name} run from ${when}" title="Delete run">✕</button>`;
+      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>` +
+      (h.resumable ? `<button type="button" class="hist-resume"
+        aria-label="Resume the ${name} run from ${when}" title="Resume run">Resume</button>` : '') +
+      `<button type="button" class="hist-delete" aria-label="Delete the ${name} run from ${when}" title="Delete run">✕</button>`;
     li.querySelector('.hist-btn').addEventListener('click', () => showHistoryDetail(h.id));
+    li.querySelector('.hist-resume')?.addEventListener('click', () => resumeRun(h.id));
     li.querySelector('.hist-delete').addEventListener('click', () => deleteHistory(h));
     list.append(li);
   }
@@ -806,6 +878,17 @@ function init() {
     toggle.textContent = raw.hidden ? 'Show details' : 'Hide details';
     toggle.setAttribute('aria-expanded', String(!raw.hidden));
   });
+
+  document.querySelector('#pause-btn').addEventListener('click', pauseRun);
+  document.querySelector('#resume-btn').addEventListener('click', () => {
+    if (currentPipelineId) resumeRun(currentPipelineId);
+  });
+
+  // test-only hook (JSDOM suites drive frames without a real socket)
+  window.__enableTest = {
+    handle,
+    setRun(runId, pipelineId) { currentRunId = runId; currentPipelineId = pipelineId; },
+  };
 }
 
 document.addEventListener('DOMContentLoaded', init);

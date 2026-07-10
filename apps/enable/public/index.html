@@ -116,6 +116,14 @@
 
         <div id="run-meter" class="run-meter" hidden></div>
 
+        <div class="progress-actions">
+          <button id="pause-btn" class="ghost-btn small" type="button" hidden>Pause run</button>
+        </div>
+        <div id="paused-banner" class="paused-banner" role="status" hidden>
+          <p id="paused-reason">Run paused — resume when you're ready.</p>
+          <button id="resume-btn" class="primary-btn" type="button">Resume run</button>
+        </div>
+
         <div id="gate-wrap" class="gate-card" role="alertdialog" aria-labelledby="gate-title" hidden>
           <h3 id="gate-title"></h3>
           <p id="gate-detail" class="lede"></p>
