@@ -66,9 +66,10 @@ Steps:
 2. Validate: `saved.row.status` is `paused` or `interrupted`; `saved.resumePoint`
    present; `saved.row.title === ENABLE_TITLE` (refuse resuming non-Enable
    pipelines through the Enable app).
-3. Resolve `projectDir` from the projects registry via `saved.row.project_key`
-   (same mapping as `ui/server.mjs:817`). Error if the project is not onboarded
-   on this machine.
+3. Resolve `projectDir` via `readStoreMeta(saved.row.project_key)?.path` —
+   NOT the projects registry (`listProjects()`, ui/server.mjs:817): Enable
+   projects are not registered in the `projects` table (verified: bevup-studio
+   has store_meta but no registry row). Error if the path is unknown or gone.
 4. Worktree check: if `saved.row.branch.worktreeDir` set and missing on disk,
    fail fast with `worktree missing: <path>`.
 5. `createOrchestrator({ projectDir, resume: saved, claude: { permissionMode:
