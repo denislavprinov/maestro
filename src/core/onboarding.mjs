@@ -2,12 +2,13 @@
 // onboarding-only surface and derives the readiness stream the engine omits.
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createOrchestrator } from './orchestrator.mjs';
 import { writeWorkflow } from './workflows.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { readPipelineForResume, readStoreMeta } from './artifacts.mjs';
 
 export const ENABLE_WORKFLOW_ID = 'wf_enable';
 export const ENABLE_TITLE = 'Enable project for AI';
@@ -226,4 +227,48 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
   });
 
   return wireOnboardingRun(orch, { answers, interactive, kick: () => orch.run() });
+}
+
+// Resume a paused/interrupted Enable pipeline (manual pause or session-limit
+// auto-pause) with the SAME event wiring as a fresh run. Project dir resolves
+// via store_meta — Enable projects are not in the projects registry table.
+export async function resumeOnboarding({ pipelineId, interactive = false, mock = false, answers = {} } = {}) {
+  if (!pipelineId) throw new Error('resumeOnboarding: pipelineId is required');
+  const saved = readPipelineForResume(pipelineId);
+  if (!saved) {
+    const e = new Error('pipeline not found');
+    e.code = 'NOT_FOUND';
+    throw e;
+  }
+  const { row, resumePoint } = saved;
+  if (row.title !== ENABLE_TITLE) throw new Error(`not an Enable run: "${row.title ?? row.id}"`);
+  if (row.status !== 'paused' && row.status !== 'interrupted') {
+    throw new Error(`pipeline is "${row.status}", not resumable`);
+  }
+  if (!resumePoint) throw new Error('pipeline has no resume point');
+
+  let branch = null;
+  try { branch = row.branch ? JSON.parse(row.branch) : null; } catch {}
+  if (branch?.worktreeDir && !existsSync(branch.worktreeDir)) {
+    throw new Error(`worktree missing: ${branch.worktreeDir}`);
+  }
+
+  const projectDir = readStoreMeta(row.project_key)?.path ?? null;
+  if (!projectDir || !existsSync(projectDir)) {
+    throw new Error('project directory for this run no longer exists on this machine');
+  }
+
+  const orch = createOrchestrator({
+    projectDir,
+    resume: saved,
+    claude: { permissionMode: 'acceptEdits', mock },
+  });
+  return {
+    ...wireOnboardingRun(orch, {
+      answers, interactive,
+      kick: () => orch.resume(),
+      replayDir: resumePoint.pipelineDir || null,
+    }),
+    pipelineId,
+  };
 }
