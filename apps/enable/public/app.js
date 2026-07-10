@@ -31,6 +31,7 @@ let baseline = null;
 let baselineDims = null;
 let ws = null;
 let currentRunId = null;
+let currentHistoryId = null;    // set when viewing a past run from disk (no live socket)
 
 // ---------- screen switching ----------
 function show(id) {
@@ -158,6 +159,7 @@ async function start(projectDir, answers) {
 
   if (ws) { try { ws.close(); } catch {} }   // drop the previous run's socket
   currentRunId = runId;
+  currentHistoryId = null;                     // a live run supersedes any disk view
   ws = new WebSocket(`ws://${location.host}/ws?runId=${runId}`);
   ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch {} };
   ws.onerror = () => showError('Lost connection to the Enable server.');
@@ -353,6 +355,109 @@ function splitPatch(patch) {
   return chunks.map((c) => ({ path: c.path, text: c.lines.join('\n') }));
 }
 
+// ---------- markdown preview ----------
+const mdCache = new Map();   // path -> { ok, content }; reset per results render
+
+function isMarkdown(p) { return /\.(md|markdown)$/i.test(p || ''); }
+
+// Where to fetch a changed file's full content from — the live run, else the
+// disk-backed history view. Null when neither is active (nothing to preview).
+function fileEndpoint(p) {
+  const q = `?path=${encodeURIComponent(p)}`;
+  if (currentRunId) return `/api/enable/runs/${currentRunId}/file${q}`;
+  if (currentHistoryId) return `/api/enable/history/${currentHistoryId}/file${q}`;
+  return null;
+}
+
+async function loadMdContent(p) {
+  if (mdCache.has(p)) return mdCache.get(p);
+  const url = fileEndpoint(p);
+  let out = { ok: false, content: '' };
+  if (url) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) out = { ok: true, content: (await res.json()).content || '' };
+    } catch { /* leave as unavailable */ }
+  }
+  mdCache.set(p, out);
+  return out;
+}
+
+// Only same-origin/relative or http(s) links survive; everything else (javascript:,
+// data:, quotes that could break out of the attribute) is dropped to plain text.
+function safeHref(u) {
+  const t = String(u).trim();
+  if (/["'<>]/.test(t) || /^\s*javascript:/i.test(t)) return null;
+  if (/^(https?:\/\/|\/|#|\.?\.?\/)/i.test(t) || /^[\w./#-]+$/.test(t)) return esc(t);
+  return null;
+}
+
+// Inline spans. Code spans are lifted out to NUL sentinels first so nothing inside
+// them is re-parsed AND so emphasis/links that straddle a code span still match;
+// they are restored last. Everything else is HTML-escaped before markup is added.
+function inlineMd(raw) {
+  const codes = [];
+  let s = String(raw).replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return ` ${codes.length - 1} `; });
+  s = esc(s);
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => {
+    const href = safeHref(url);
+    return href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>` : text;
+  });
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>').replace(/(^|[^_\w])_([^_]+)_/g, '$1<em>$2</em>');
+  return s.replace(/ (\d+) /g, (m, i) => `<code>${esc(codes[Number(i)])}</code>`);
+}
+
+// Compact, safe Markdown -> HTML for the preview pane. Covers the constructs that
+// show up in repo docs (headings, lists, fenced code, blockquotes, rules, inline
+// emphasis/links); anything else falls through as a paragraph. Not CommonMark.
+function renderMarkdown(src) {
+  const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let para = [];
+  let listType = null;   // 'ul' | 'ol' | null
+  const flushPara = () => { if (para.length) { out.push(`<p>${inlineMd(para.join(' '))}</p>`); para = []; } };
+  const flushList = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^\s*```(.*)$/);
+    if (fence) {
+      flushPara(); flushList();
+      const body = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) body.push(lines[i++]);
+      out.push(`<pre class="md-code"><code>${esc(body.join('\n'))}</code></pre>`);
+      continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { flushPara(); flushList(); const n = h[1].length; out.push(`<h${n}>${inlineMd(h[2].trim())}</h${n}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); flushList(); out.push('<hr>'); continue; }
+    const bq = line.match(/^\s*>\s?(.*)$/);
+    if (bq) {
+      flushPara(); flushList();
+      const buf = [bq[1]];
+      while (i + 1 < lines.length) { const m = lines[i + 1].match(/^\s*>\s?(.*)$/); if (!m) break; buf.push(m[1]); i++; }
+      out.push(`<blockquote>${inlineMd(buf.join(' '))}</blockquote>`);
+      continue;
+    }
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (ul || ol) {
+      flushPara();
+      const t = ul ? 'ul' : 'ol';
+      if (listType && listType !== t) flushList();
+      if (!listType) { listType = t; out.push(`<${t}>`); }
+      out.push(`<li>${inlineMd((ul ? ul[1] : ol[1]).trim())}</li>`);
+      continue;
+    }
+    if (/^\s*$/.test(line)) { flushPara(); flushList(); continue; }
+    flushList();
+    para.push(line.trim());
+  }
+  flushPara(); flushList();
+  return out.join('\n');
+}
+
 // ---------- diff modal ----------
 let diffState = { files: [], chunks: [] };
 
@@ -383,9 +488,19 @@ function openDiffModal(focusIndex = 0) {
   }).join('');
   paneEl.innerHTML = chunks.map((ch, i) => {
     const { st, sign } = statusGlyph(statusOf(ch.path));
-    return `<section id="diff-file-${i}" class="diff-file">
-      <header class="diff-file-head"><span class="file-status status-${st}">${sign}</span> ${esc(ch.path)}</header>
+    // Markdown files that still exist can be previewed rendered/raw, not just as a diff.
+    const previewable = isMarkdown(ch.path) && st !== 'D';
+    const toggle = previewable
+      ? `<span class="diff-view-toggle" role="group">
+          <button type="button" data-view="diff" class="active">Diff</button>
+          <button type="button" data-view="rendered">Rendered</button>
+          <button type="button" data-view="raw">Raw</button>
+        </span>`
+      : '';
+    return `<section id="diff-file-${i}" class="diff-file" data-path="${esc(ch.path)}">
+      <header class="diff-file-head"><span class="file-status status-${st}">${sign}</span> ${esc(ch.path)}${toggle}</header>
       <pre class="diff-body">${renderPatch(ch.text)}</pre>
+      ${previewable ? '<div class="md-preview" hidden></div>' : ''}
     </section>`;
   }).join('');
   const modal = document.querySelector('#diff-modal');
@@ -409,6 +524,25 @@ function closeDiffModal() {
   const modal = document.querySelector('#diff-modal');
   modal.hidden = true;
   document.body.classList.remove('modal-open');
+}
+
+// Switch a .md file section between its diff, rendered preview, and raw source.
+async function switchDiffView(btn) {
+  const sec = btn.closest('.diff-file');
+  if (!sec) return;
+  const view = btn.dataset.view;
+  for (const b of sec.querySelectorAll('.diff-view-toggle [data-view]'))
+    b.classList.toggle('active', b === btn);
+  const body = sec.querySelector('.diff-body');
+  const prev = sec.querySelector('.md-preview');
+  if (!prev) return;
+  if (view === 'diff') { body.hidden = false; prev.hidden = true; return; }
+  body.hidden = true; prev.hidden = false;
+  prev.classList.toggle('rendered', view === 'rendered');
+  const { ok, content } = await loadMdContent(sec.dataset.path);
+  if (btn.classList.contains('active') === false) return;   // user switched away mid-fetch
+  if (!ok) { prev.innerHTML = '<p class="md-empty">Preview unavailable.</p>'; return; }
+  prev.innerHTML = view === 'rendered' ? renderMarkdown(content) : `<pre class="md-raw">${esc(content)}</pre>`;
 }
 
 async function loadChanges(url) {
@@ -440,6 +574,7 @@ function renderChanges(c) {
   list.innerHTML = files.slice(0, MAX_FILE_ROWS).map(fileRow).join('') +
     (files.length > MAX_FILE_ROWS ? `<li class="file-more">…and ${files.length - MAX_FILE_ROWS} more</li>` : '');
 
+  mdCache.clear();
   diffState = { files, chunks: splitPatch(c.patch) };
   const toggle = document.querySelector('#patch-toggle');
   toggle.hidden = !c.patch;
@@ -484,6 +619,7 @@ async function showHistoryDetail(id) {
   } catch { return; }
   if (ws) { try { ws.close(); } catch {} ws = null; }
   currentRunId = null;                       // disk view, no live socket
+  currentHistoryId = id;                      // .md preview reads from this run's dir
   renderResults({ ...(d.readiness || {}), branch: d.entry?.branch ?? null });
   renderChanges(d.changes);
 }
@@ -569,7 +705,9 @@ function init() {
 
   const modal = document.querySelector('#diff-modal');
   modal.addEventListener('click', (e) => {
-    if (e.target.closest('[data-close]')) closeDiffModal();
+    if (e.target.closest('[data-close]')) { closeDiffModal(); return; }
+    const view = e.target.closest('.diff-view-toggle [data-view]');
+    if (view) { switchDiffView(view); return; }
     const item = e.target.closest('.diff-file-item');
     if (item) focusDiffFile(Number(item.dataset.idx));
   });

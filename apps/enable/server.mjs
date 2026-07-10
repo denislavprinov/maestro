@@ -142,6 +142,37 @@ app.get('/api/enable/runs/:runId/changes', (req, res) => {
   res.json(readChanges(dir));
 });
 
+// Full post-run content of a file the run touched. The worktree is torn down when
+// a run ends (branch is kept), so we resolve the content from the feature branch
+// via `git show <ref>:<path>` rather than reading disk. Returns null on any failure.
+function gitShowFile(repoDir, ref, relPath) {
+  if (!repoDir || !ref || !relPath) return null;
+  try {
+    return execFileSync('git', ['-C', repoDir, 'show', `${ref}:${relPath}`],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  } catch { return null; }
+}
+
+// The paths a run actually changed — the allowlist for the file route so a crafted
+// ?path= (traversal, absolute, or an untouched file) can only ever read run output.
+function changedPathSet(changes) {
+  return new Set([...(changes.newFiles || []), ...(changes.changedFiles || [])].map((f) => f.path));
+}
+
+// Preview a single changed file's full content (used by the results-screen .md
+// preview). Path must be one this run changed; content comes off the feature branch.
+app.get('/api/enable/runs/:runId/file', (req, res) => {
+  const entry = runs.get(req.params.runId);
+  const state = entry?.orch?.getState();
+  const dir = state?.pipelineDir;
+  if (!entry || !dir) return res.status(404).json({ error: 'unknown runId' });
+  const rel = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!changedPathSet(readChanges(dir)).has(rel)) return res.status(404).json({ error: 'not a changed file' });
+  const content = gitShowFile(state.projectDir, state.branch?.feature, rel);
+  if (content == null) return res.status(404).json({ error: 'content unavailable' });
+  res.json({ path: rel, content });
+});
+
 // past Enable runs, newest first (filtered on the pinned run title). Each entry
 // carries its final readiness (null while unwritten) so the list can show scores.
 async function enableHistory() {
@@ -160,6 +191,20 @@ app.get('/api/enable/history/:id', async (req, res) => {
     const entry = (await enableHistory()).find((p) => p.id === req.params.id);
     if (!entry || !entry.dir) return res.status(404).json({ error: 'unknown run' });
     res.json({ entry, readiness: entry.readiness, changes: readChanges(entry.dir) });
+  } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+});
+
+// Disk-backed twin of the live file route: preview a changed file from a past run,
+// again off its kept feature branch. Same changed-file allowlist guard.
+app.get('/api/enable/history/:id/file', async (req, res) => {
+  try {
+    const entry = (await enableHistory()).find((p) => p.id === req.params.id);
+    if (!entry || !entry.dir) return res.status(404).json({ error: 'unknown run' });
+    const rel = typeof req.query.path === 'string' ? req.query.path : '';
+    if (!changedPathSet(readChanges(entry.dir)).has(rel)) return res.status(404).json({ error: 'not a changed file' });
+    const content = gitShowFile(entry.projectDir, entry.branch, rel);
+    if (content == null) return res.status(404).json({ error: 'content unavailable' });
+    res.json({ path: rel, content });
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 

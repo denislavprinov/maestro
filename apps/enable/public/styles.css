@@ -325,6 +325,35 @@ select:focus, input[type='text']:focus { outline: none; border-color: var(--acce
 .diff-body .diff-del { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); display: block; }
 .diff-body .diff-hunk { color: var(--blue); display: block; }
 .diff-body .diff-meta { color: var(--dim); display: block; }
+/* rendered/raw view switch for markdown files */
+.diff-view-toggle { margin-left: auto; display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.diff-view-toggle button {
+  font: inherit; font-size: 11px; padding: 3px 9px; border: 0; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--muted);
+}
+.diff-view-toggle button.active { background: var(--accent); color: #06120c; }
+.md-preview { padding: 16px 20px; font-size: 14px; line-height: 1.6; color: var(--text); word-break: break-word; }
+.md-preview.rendered h1, .md-preview.rendered h2, .md-preview.rendered h3,
+.md-preview.rendered h4, .md-preview.rendered h5, .md-preview.rendered h6 {
+  margin: 18px 0 8px; line-height: 1.3; }
+.md-preview.rendered h1 { font-size: 22px; } .md-preview.rendered h2 { font-size: 18px; }
+.md-preview.rendered h3 { font-size: 16px; } .md-preview.rendered h4,
+.md-preview.rendered h5, .md-preview.rendered h6 { font-size: 14px; color: var(--muted); }
+.md-preview.rendered p { margin: 8px 0; }
+.md-preview.rendered ul, .md-preview.rendered ol { margin: 8px 0; padding-left: 22px; }
+.md-preview.rendered li { margin: 3px 0; }
+.md-preview.rendered a { color: var(--accent); }
+.md-preview.rendered blockquote { margin: 8px 0; padding: 2px 14px; border-left: 3px solid var(--border); color: var(--muted); }
+.md-preview.rendered hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+.md-preview.rendered code { font-family: var(--mono); font-size: 12px; background: var(--surface-2);
+  padding: 1px 5px; border-radius: 4px; }
+.md-preview.rendered pre.md-code { background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
+.md-preview.rendered pre.md-code code { background: none; padding: 0; }
+.md-preview pre.md-raw { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--muted);
+  white-space: pre-wrap; word-break: break-word; }
+.md-preview .md-empty { color: var(--muted); font-style: italic; }
 .diff-file.flash .diff-file-head { animation: diff-flash 1s ease-out 1; }
 @keyframes diff-flash {
   0% { background: color-mix(in srgb, var(--accent) 40%, var(--surface)); }

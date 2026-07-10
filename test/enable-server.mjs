@@ -215,6 +215,70 @@ test('GET /api/enable/history/:id returns entry + readiness + changes; 404 unkno
   assert.equal(missing.status, 404);
 });
 
+const FILE_ANSWERS = { testTier: 'scaffold', vendoringDepth: 'full',
+  multiToolTargets: ['cursor', 'copilot'], canary: 'yes', scopeConstraints: '' };
+
+// commit `content` at `rel` onto the run's kept feature branch, then list `rel`
+// as a changed file in results.json so the file route's allowlist admits it.
+function seedFeatureFile(repo, feature, dir, rel, content) {
+  execSync(`git -C ${repo} checkout -q ${feature}`);
+  writeFileSync(join(repo, rel), content);
+  execSync(`git -C ${repo} add ${rel} && git -C ${repo} -c user.email=t@t -c user.name=t commit -q -m ${rel}`);
+  execSync(`git -C ${repo} checkout -q main`);
+  writeFileSync(join(dir, 'results.json'), JSON.stringify({
+    summary: { filesNew: 1, filesChanged: 0, filesDeleted: 0, linesAdded: 1, linesRemoved: 0 },
+    newFiles: [{ path: rel, status: 'A', added: 1, removed: 0 }], changedFiles: [], nitpicks: [] }));
+}
+
+test('GET /api/enable/runs/:runId/file returns full content from the feature branch', async () => {
+  const repo = freshRepo();
+  const { json } = await post('/api/enable/run', { projectDir: repo, answers: FILE_ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const st = entry.orch.getState();
+  assert.ok(st.branch?.feature, 'run kept a feature branch');
+  seedFeatureFile(repo, st.branch.feature, st.pipelineDir, 'GUIDE.md', '# Title\n\nHello **world**.\n');
+
+  const res = await fetch(`http://${base}/api/enable/runs/${json.runId}/file?path=GUIDE.md`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.path, 'GUIDE.md');
+  assert.match(body.content, /# Title/);
+  assert.match(body.content, /\*\*world\*\*/);
+});
+
+test('file route allowlists to changed files (traversal / untouched paths 404)', async () => {
+  assert.equal((await fetch(`http://${base}/api/enable/runs/nope/file?path=x.md`)).status, 404);
+
+  const repo = freshRepo();
+  const { json } = await post('/api/enable/run', { projectDir: repo, answers: FILE_ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const st = entry.orch.getState();
+  seedFeatureFile(repo, st.branch.feature, st.pipelineDir, 'GUIDE.md', '# ok\n');
+
+  const trav = await fetch(`http://${base}/api/enable/runs/${json.runId}/file?path=${encodeURIComponent('../../../etc/passwd')}`);
+  assert.equal(trav.status, 404, 'traversal path is refused');
+  const untouched = await fetch(`http://${base}/api/enable/runs/${json.runId}/file?path=package.json`);
+  assert.equal(untouched.status, 404, 'a file the run did not change is refused');
+});
+
+test('GET /api/enable/history/:id/file previews a past run file off its branch', async () => {
+  const repo = freshRepo();
+  const { json } = await post('/api/enable/run', { projectDir: repo, answers: FILE_ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const st = entry.orch.getState();
+  seedFeatureFile(repo, st.branch.feature, st.pipelineDir, 'NOTES.md', '# Doc\n\n- a\n- b\n');
+
+  const hist = await (await fetch(`http://${base}/api/enable/history`)).json();
+  const mine = hist.runs.find((h) => h.dir === st.pipelineDir);
+  assert.ok(mine, 'run is present in history');
+  const res = await fetch(`http://${base}/api/enable/history/${mine.id}/file?path=NOTES.md`);
+  assert.equal(res.status, 200);
+  assert.match((await res.json()).content, /# Doc/);
+});
+
 test('POST /api/enable/answer with unknown runId -> 400', async () => {
   const { status, json } = await post('/api/enable/answer', { runId: 'nope', id: 'x', payload: {} });
   assert.equal(status, 400);
