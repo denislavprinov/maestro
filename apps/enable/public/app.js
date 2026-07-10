@@ -599,11 +599,13 @@ async function loadHistory() {
     const li = document.createElement('li');
     const when = h.startedAt ? new Date(h.startedAt).toLocaleDateString() : '';
     const r = h.readiness;
-    const score = r && r.score != null
+    // A real run shows its score; a dry run has none by design (mock never scores),
+    // so label it "dry run" rather than a bare status word that reads as a failure.
+    const scoreHtml = r && r.score != null
       ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
-      : h.status;
-    li.innerHTML = `<span class="hist-project">${h.projectName || h.title}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span>`;
+      : (h.mock ? '<span class="hist-mock">dry run</span>' : esc(h.status || ''));
+    li.innerHTML = `<span class="hist-project">${esc(h.projectName || h.title || '')}</span>
+      <span class="hist-when">${when}</span><span class="hist-score">${scoreHtml}</span>`;
     li.addEventListener('click', () => showHistoryDetail(h.id));
     list.append(li);
   }

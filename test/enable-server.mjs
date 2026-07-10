@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { WebSocket } from 'ws';
+import { getDb } from '../src/core/db.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
@@ -277,6 +278,39 @@ test('GET /api/enable/history/:id/file previews a past run file off its branch',
   const res = await fetch(`http://${base}/api/enable/history/${mine.id}/file?path=NOTES.md`);
   assert.equal(res.status, 200);
   assert.match((await res.json()).content, /# Doc/);
+});
+
+test('history marks a $0 sub-5s run as mock; a costed run is not', async () => {
+  const { json } = await post('/api/enable/run', { projectDir: freshRepo(), answers: FILE_ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const dir = entry.orch.getState().pipelineDir;
+
+  let hist = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs;
+  const mine = hist.find((h) => h.dir === dir);
+  assert.ok(mine, 'the mock run is listed');
+  assert.equal(mine.mock, true, 'a $0, sub-5s run is flagged as a dry run');
+
+  // give the same row a real cost -> no longer a mock
+  getDb().prepare('UPDATE pipelines SET total_cost_usd = 5.5, total_active_ms = 700000 WHERE id = ?').run(mine.id);
+  hist = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs;
+  assert.equal(hist.find((h) => h.dir === dir).mock, false, 'a costed, minutes-long run is not a mock');
+});
+
+test('history surfaces a run by onboarding artifact even when the title differs', async () => {
+  const { json } = await post('/api/enable/run', { projectDir: freshRepo(), answers: FILE_ANSWERS, mock: true });
+  const entry = runs.get(json.runId);
+  await entry.done;
+  const dir = entry.orch.getState().pipelineDir;
+  const id = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs.find((h) => h.dir === dir).id;
+
+  // simulate a pre-pin real run: model-generated title + the evaluator signature file
+  getDb().prepare('UPDATE pipelines SET title = ? WHERE id = ?').run('Enable AI Integration', id);
+  writeFileSync(join(dir, 'onboardingEvaluator-review-cycle1.json'), '{}');
+
+  const hist = (await (await fetch(`http://${base}/api/enable/history`)).json()).runs;
+  assert.ok(hist.some((h) => h.dir === dir),
+    'a run with a non-pinned title still appears via its onboarding artifact');
 });
 
 test('POST /api/enable/answer with unknown runId -> 400', async () => {

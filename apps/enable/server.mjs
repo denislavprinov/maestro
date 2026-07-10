@@ -173,12 +173,32 @@ app.get('/api/enable/runs/:runId/file', (req, res) => {
   res.json({ path: rel, content });
 });
 
-// past Enable runs, newest first (filtered on the pinned run title). Each entry
-// carries its final readiness (null while unwritten) so the list can show scores.
+// An onboarding-specific artifact only the wf_onboarding evaluator writes. Its
+// presence marks a run as an Enable run regardless of title, so real runs from
+// before the title was pinned (model-generated titles like "Enable AI Integration")
+// still surface in history instead of being dropped by an exact-title filter.
+const ENABLE_SIGNATURE = 'onboardingEvaluator-review-cycle1.json';
+
+function isEnableRun(p) {
+  if (p.title === ENABLE_TITLE) return true;
+  if (!p.dir) return false;
+  return existsSync(path.join(p.dir, ENABLE_SIGNATURE)) || existsSync(path.join(p.dir, 'readiness.json'));
+}
+
+// Heuristic mock/dry-run flag: no stored flag exists on old rows, but a real
+// onboarding run always costs money and takes minutes, so $0 + sub-5s active time
+// is unambiguously a mock. Guards a "dry run" label so blank-score rows read clearly.
+function looksMock(p) {
+  return (!p.totalCostUsd) && p.totalActiveMs != null && p.totalActiveMs < 5000;
+}
+
+// past Enable runs, newest first. Includes pinned-title runs AND any run carrying
+// the onboarding artifact signature. Each entry carries its final readiness (null
+// while unwritten) and a mock flag so the list can label dry runs vs real scores.
 async function enableHistory() {
   const all = await listAllPipelines();
-  return all.filter((p) => p.title === ENABLE_TITLE)
-    .map((p) => ({ ...p, readiness: p.dir ? readFinalReadiness(p.dir) : null }));
+  return all.filter(isEnableRun)
+    .map((p) => ({ ...p, readiness: p.dir ? readFinalReadiness(p.dir) : null, mock: looksMock(p) }));
 }
 
 app.get('/api/enable/history', async (_req, res) => {

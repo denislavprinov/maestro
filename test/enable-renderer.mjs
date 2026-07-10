@@ -33,6 +33,7 @@ async function bootEnable(opts = {}) {
     projectName: 'tinytool', readiness: { score: 91, baselineScore: 30, delta: 61, dimensions: {}, gaps: [] },
   };
   const MD_CONTENT = '# Enable\n\nDocs for **AI**.\n\n- one\n- two\n\n`npm test`\n\n[site](https://example.com)\n';
+  const HISTORY_LIST = opts.history || [HISTORY_ENTRY];   // capture before the fetch-arg `opts` shadows it
   window.fetch = (url, opts) => {
     const u = String(url);
     if (u.includes('/file')) {
@@ -43,7 +44,7 @@ async function bootEnable(opts = {}) {
         ({ entry: HISTORY_ENTRY, readiness: HISTORY_ENTRY.readiness, changes: CHANGES_FIXTURE }) });
     }
     if (u.includes('/api/enable/history')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ runs: [HISTORY_ENTRY] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ runs: HISTORY_LIST }) });
     }
     if (u.includes('/api/enable/browse')) {
       const m = u.match(/dir=([^&]*)/);
@@ -333,6 +334,23 @@ test('markdown renderer escapes HTML and drops unsafe links', async () => {
   assert.equal(prev.querySelector('script'), null, 'no script element is created');
   assert.equal(prev.querySelector('a'), null, 'javascript: link falls back to text');
   assert.match(prev.textContent, /alert\(1\)/, 'the escaped text is still visible');
+});
+
+test('history shows a "dry run" chip for mock rows and a score for real ones', async () => {
+  const HIST = [
+    { id: 'mock01', dir: '/s/mock01', title: 'Enable project for AI', status: 'done',
+      startedAt: '2026-07-09T21:55:16Z', projectName: 'bevup-admin', mock: true, readiness: null },
+    { id: 'real01', dir: '/s/real01', title: 'Enable project for AI', status: 'done',
+      startedAt: '2026-07-06T15:15:36Z', projectName: 'tinytool2', mock: false,
+      readiness: { score: 95, baselineScore: 12 } },
+  ];
+  const { document } = await bootEnable({ history: HIST });
+  const rows = document.querySelectorAll('#history-list li');
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].querySelector('.hist-mock'), 'mock row gets a dry-run chip');
+  assert.match(rows[0].querySelector('.hist-mock').textContent, /dry run/);
+  assert.equal(rows[1].querySelector('.hist-mock'), null, 'real row has no chip');
+  assert.match(rows[1].querySelector('.hist-score').textContent, /12 → 95/, 'real row shows its score');
 });
 
 test('per-dimension rows render ghost (baseline) and current bars at distinct widths', async () => {
