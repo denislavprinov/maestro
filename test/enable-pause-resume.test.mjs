@@ -87,6 +87,25 @@ test('POST /api/enable/resume: already-live pipeline -> 409', async () => {
   runs.delete('r-busy');
 });
 
+test('POST /api/enable/resume: concurrent duplicate resume -> one wins, other 409', async () => {
+  const proj = freshRepo();
+  const { id } = await seedPipeline(proj, { title: 'Enable project for AI', status: 'paused',
+    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+      bus: null, stepModels: null, workflowId: 'wf_enable', plan: null, nodes: [], gate: null,
+      pipelineDir: proj, pausedAt: '2026-07-10T00:00:00Z' } });
+  // Start both requests at nearly the same time; the guard + synchronous claim ensures
+  // the second one sees the first's claim (via orch.getState) and 409s.
+  const reqA = post('/api/enable/resume', { pipelineId: id, mock: true });
+  const reqB = post('/api/enable/resume', { pipelineId: id, mock: true });
+  const [a, b] = await Promise.all([reqA, reqB]);
+  const codes = [a.status, b.status].sort();
+  assert.equal(codes[0], 200, 'exactly one resume succeeds');
+  assert.equal(codes[1], 409, 'the duplicate is rejected');
+  // let the winner finish so it doesn't leak into later tests
+  const winner = a.status === 200 ? a : b;
+  await runs.get(winner.json.runId).done;
+});
+
 test('mock run pauses over HTTP and resumes to done; history flags resumable', async () => {
   const proj = freshRepo();
   const started = await post('/api/enable/run', { projectDir: proj, answers: { canary: 'no' }, mock: true });

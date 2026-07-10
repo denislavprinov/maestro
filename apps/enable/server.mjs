@@ -221,12 +221,20 @@ app.post('/api/enable/resume', async (req, res) => {
       return res.status(409).json({ error: 'pipeline is already live' });
     }
   }
+  // Synchronous claim BEFORE the first await: a concurrent /resume for the same
+  // pipeline hits the live-guard above via this placeholder and 409s instead of
+  // double-resuming. Released in finally — by then registerRun has the real entry.
+  const claimId = `resuming:${pipelineId}`;
+  runs.set(claimId, { status: 'running', orch: { getState: () => ({ id: pipelineId }) }, buffer: [] });
   try {
+    // Yield once to let concurrent requests reach the guard while claim is held.
+    // This simulates the latency that would occur in production (network, scheduler).
+    await new Promise((r) => setImmediate(r));
     const handle = await resumeOnboarding({ pipelineId, interactive: !!interactive, mock: !!mock });
     // evict the superseded paused/interrupted lineage so it can't resurface as
     // a phantom paused card next to the resumed run.
     for (const [id, e] of runs) {
-      if (e.orch?.getState?.()?.id === pipelineId &&
+      if (id !== claimId && e.orch?.getState?.()?.id === pipelineId &&
           ['paused', 'interrupted'].includes(String(e.status || ''))) runs.delete(id);
     }
     registerRun(handle.runId, handle);
@@ -234,6 +242,8 @@ app.post('/api/enable/resume', async (req, res) => {
   } catch (err) {
     const status = err && err.code === 'NOT_FOUND' ? 404 : 400;
     res.status(status).json({ error: String(err && err.message || err) });
+  } finally {
+    runs.delete(claimId);
   }
 });
 
