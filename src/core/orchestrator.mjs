@@ -18,7 +18,7 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, realpath, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -1630,6 +1630,9 @@ class Orchestrator extends EventEmitter {
         agentKey: node.key, nodeId: node.nodeId, answers: { answers: enriched },
       });
       await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`);
+      // Consume the processed round file: the DB row is authoritative, and a
+      // surviving file would re-gate the user on a crash/pause-resumed re-run.
+      await rm(qPath, { force: true }).catch(() => {});
       const step = this.state.steps.find((s) => s.key === stepKey);
       if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
       ctx.questionsAnswered = [...(ctx.questionsAnswered || []), ...enriched];

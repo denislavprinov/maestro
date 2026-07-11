@@ -6,6 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -44,10 +45,12 @@ test('enabled node: ask -> answer -> resume same session -> done; rounds persist
   const dir = await makeTmpDir();
   const orch = await primedInteractive(dir);
   const calls = [];
+  let qPath1 = null;
   orch._runners = {
     producer: async (ctx) => {
       calls.push({ resume: ctx.resumeSessionId || null, answered: (ctx.questionsAnswered || []).length });
       if (calls.length === 1) {
+        qPath1 = ctx.questionsFile;
         // Simulate the agent reporting its session id (the way real runners do
         // via runClaude's session event) then writing round 1's questions.
         ctx.onEvent({ type: 'session', sessionId: 'sess-1' });
@@ -78,6 +81,7 @@ test('enabled node: ask -> answer -> resume same session -> done; rounds persist
   assert.equal(rows[0].agentKey, 'worker');
   assert.equal(rows[0].nodeId, 'n1');
   assert.deepEqual(rows[0].answers, [{ id: 'q1', question: 'Which storage?', choice: 'Postgres' }]);
+  assert.equal(existsSync(qPath1), false, 'answered round file is consumed');
 });
 
 test('round cap: asks at most 3 times, final resume has no questions file', async () => {
