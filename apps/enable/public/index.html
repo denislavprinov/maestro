@@ -20,22 +20,38 @@
         <p class="lede">Point Enable at a local project. It reads the code, sets up docs, guardrails,
           skills and tests, then shows you how much more ready it is — before and after.</p>
 
-        <label class="field">
-          <span>Project</span>
-          <select id="project-select"><option value="">Loading projects…</option></select>
-        </label>
-        <label class="field">
-          <span>Or paste a path</span>
-          <div class="path-row">
-            <input id="project-path" type="text" placeholder="/Users/you/dev/my-project" />
-            <button id="browse-btn" type="button" class="ghost-btn">Browse…</button>
-          </div>
-        </label>
+        <div class="seg" id="target-seg" role="tablist" aria-label="Run target">
+          <button type="button" class="seg-btn" data-target="project" aria-selected="true">Project</button>
+          <button type="button" class="seg-btn" data-target="workspace" aria-selected="false">Workspace</button>
+          <input type="radio" name="target" value="project" checked hidden />
+          <input type="radio" name="target" value="workspace" hidden />
+        </div>
 
-        <label class="field" id="branch-field" hidden>
-          <span>Source branch</span>
-          <select id="source-branch"></select>
-        </label>
+        <div id="target-project-pane">
+          <label class="field">
+            <span>Project</span>
+            <select id="project-select"><option value="">Loading projects…</option></select>
+          </label>
+          <label class="field">
+            <span>Or paste a path</span>
+            <div class="path-row">
+              <input id="project-path" type="text" placeholder="/Users/you/dev/my-project" />
+              <button id="browse-btn" type="button" class="ghost-btn">Browse…</button>
+            </div>
+          </label>
+          <label class="field" id="branch-field" hidden>
+            <span>Source branch</span>
+            <select id="source-branch"></select>
+          </label>
+        </div>
+
+        <div id="target-workspace-pane" hidden>
+          <label class="field">
+            <span>Workspace</span>
+            <select id="workspace-select"><option value="">Loading workspaces…</option></select>
+          </label>
+          <p class="hint-line" id="workspace-empty-hint" hidden>No saved workspaces yet — create one in the main Maestro UI first.</p>
+        </div>
 
         <label class="check inline">
           <input id="mock-toggle" type="checkbox" />
