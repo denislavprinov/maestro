@@ -88,7 +88,8 @@ select:focus, input[type='text']:focus { outline: none; border-color: var(--acce
   background: transparent; color: var(--text); font-size: 14px; font-family: inherit;
 }
 .ghost-btn.small { padding: 7px 12px; font-size: 13px; }
-.ghost-btn:hover { background: var(--surface-2); }
+.ghost-btn:hover:not(:disabled) { background: var(--surface-2); }
+.ghost-btn:disabled { opacity: .4; cursor: not-allowed; }
 .row { display: flex; gap: 12px; margin-top: 22px; }
 .row .primary-btn { flex: 1; }
 
