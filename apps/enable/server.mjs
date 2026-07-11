@@ -235,7 +235,13 @@ app.post('/api/enable/resume', async (req, res) => {
   const claimId = `resuming:${pipelineId}`;
   runs.set(claimId, { status: 'running', pipelineId, buffer: [] });
   try {
-    const handle = await resumeOnboarding({ pipelineId, interactive: !!interactive, mock: !!mock });
+    // mock passes through only as an explicit boolean — otherwise the core
+    // infers the run's own mode from its step sessions (a stale UI toggle must
+    // never flip a real run to mock or a mock run to real spend).
+    const handle = await resumeOnboarding({
+      pipelineId, interactive: !!interactive,
+      mock: typeof mock === 'boolean' ? mock : undefined,
+    });
     // evict the superseded paused/interrupted lineage so it can't resurface as
     // a phantom paused card next to the resumed run.
     for (const [id, e] of runs) {

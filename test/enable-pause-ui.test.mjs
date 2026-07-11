@@ -71,7 +71,7 @@ test('done{paused} also lands on the banner, not the error screen', async () => 
   assert.equal(w.document.querySelector('#errored').classList.contains('active'), false);
 });
 
-test('resume button POSTs /api/enable/resume with the pipeline id and current mock/interactive toggles', async () => {
+test('resume button POSTs only the pipeline id — stale run-mode toggles must not ride along', async () => {
   let resumeBody = null;
   const { window: w } = await boot({
     onFetch: (url, opts) => {
@@ -86,11 +86,13 @@ test('resume button POSTs /api/enable/resume with the pipeline id and current mo
   w.__enableTest.handle({ type: 'paused', runId: 'run-1' });
   // engine confirms the actual pause before Resume is usable
   w.__enableTest.handle({ type: 'done', status: 'paused', runId: 'run-1' });
+  // toggles deliberately left checked: they describe the NEXT new run, and a
+  // stale checked mock toggle once resumed a real pipeline with mock runners.
   w.document.querySelector('#mock-toggle').checked = true;
   w.document.querySelector('#interactive-toggle').checked = true;
   w.document.querySelector('#resume-btn').click();
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(resumeBody, { pipelineId: 'pl-1', mock: true, interactive: true });
+  assert.deepEqual(resumeBody, { pipelineId: 'pl-1' });
   assert.ok(FakeWS.last.url.includes('runId=run-2'), 'reconnected on the new runId');
 });
 

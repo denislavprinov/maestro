@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
-import { runOnboarding, resumeOnboarding, ENABLE_TITLE } from '../src/core/onboarding.mjs';
+import { runOnboarding, resumeOnboarding, inferMockFromSteps, ENABLE_TITLE } from '../src/core/onboarding.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 
 useTempHome(after);
@@ -68,7 +68,7 @@ test('mock Enable run pauses and resumeOnboarding drives it to done', async () =
   const pipelineId = fresh.orch.getState().id;
   assert.ok(readPipelineForResume(pipelineId).resumePoint, 'resume point persisted');
 
-  const resumed = await resumeOnboarding({ pipelineId, mock: true });
+  const resumed = await resumeOnboarding({ pipelineId });   // no mock arg: inferred from the run's mock session ids
   assert.equal(resumed.pipelineId, pipelineId);
   const readiness = [];
   resumed.events.on('readiness', (r) => readiness.push(r));
@@ -76,4 +76,16 @@ test('mock Enable run pauses and resumeOnboarding drives it to done', async () =
   assert.equal(r2.status, 'done');
   assert.equal(readPipelineForResume(pipelineId).row.status, 'done');
   assert.ok(readiness.some((r) => r.kind === 'final'), 'final readiness emitted on the resumed lifetime');
+});
+
+// Run mode is a property of the run, not the caller: a stale UI toggle must
+// never resume a real pipeline with mock runners (or a mock one with real spend).
+test('inferMockFromSteps: mock only when every recorded session is mock', () => {
+  const mk = (...ids) => ids.map((sessionId) => ({ key: 'k', sessionId }));
+  assert.equal(inferMockFromSteps(mk('mock-session-a', 'mock-session-b')), true);
+  assert.equal(inferMockFromSteps(mk('mock-session-a', '17e18636-7d02')), false, 'mixed stays real');
+  assert.equal(inferMockFromSteps(mk('17e18636-7d02')), false);
+  assert.equal(inferMockFromSteps([{ key: 'k', sessionId: null }]), false, 'no sessions -> real');
+  assert.equal(inferMockFromSteps([]), false);
+  assert.equal(inferMockFromSteps(undefined), false);
 });

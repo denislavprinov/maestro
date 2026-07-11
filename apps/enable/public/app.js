@@ -239,13 +239,12 @@ async function resumeRun(pipelineId) {
   show('progress');
   startLiveMeter();
   try {
+    // No run-mode fields here: the home-screen toggles describe the NEXT new
+    // run, not this pipeline. The engine infers the run's own mode from its
+    // recorded sessions — sending a stale toggle once mock-corrupted a real run.
     const res = await fetch('/api/enable/resume', { method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        pipelineId,
-        mock: document.querySelector('#mock-toggle')?.checked || false,
-        interactive: document.querySelector('#interactive-toggle')?.checked || false,
-      }) });
+      body: JSON.stringify({ pipelineId }) });
     if (!res.ok) {
       // server-side rejection (already live, not resumable, …): stay on the
       // progress screen and re-show the paused banner so Resume can be retried,

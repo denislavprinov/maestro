@@ -229,10 +229,20 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
   return wireOnboardingRun(orch, { answers, interactive, kick: () => orch.run() });
 }
 
+// Run mode is a property of the RUN, not the caller: a paused real pipeline
+// must resume with real runners (and a mock one with mock runners) no matter
+// what a UI toggle happens to say. Mock lifetimes stamp 'mock-session-*' ids
+// on their step rows — a run is mock only when EVERY recorded session is mock.
+export function inferMockFromSteps(steps) {
+  const ids = (Array.isArray(steps) ? steps : []).map((s) => s && s.sessionId).filter(Boolean);
+  return ids.length > 0 && ids.every((id) => String(id).startsWith('mock-session-'));
+}
+
 // Resume a paused/interrupted Enable pipeline (manual pause or session-limit
 // auto-pause) with the SAME event wiring as a fresh run. Project dir resolves
 // via store_meta — Enable projects are not in the projects registry table.
-export async function resumeOnboarding({ pipelineId, interactive = false, mock = false, answers = {} } = {}) {
+// `mock` left unset -> inferred from the run's own step sessions (see above).
+export async function resumeOnboarding({ pipelineId, interactive = false, mock, answers = {} } = {}) {
   if (!pipelineId) throw new Error('resumeOnboarding: pipelineId is required');
   const saved = readPipelineForResume(pipelineId);
   if (!saved) {
@@ -258,10 +268,11 @@ export async function resumeOnboarding({ pipelineId, interactive = false, mock =
     throw new Error('project directory for this run no longer exists on this machine');
   }
 
+  const useMock = typeof mock === 'boolean' ? mock : inferMockFromSteps(saved.steps);
   const orch = createOrchestrator({
     projectDir,
     resume: saved,
-    claude: { permissionMode: 'acceptEdits', mock },
+    claude: { permissionMode: 'acceptEdits', mock: useMock },
   });
   return {
     ...wireOnboardingRun(orch, {
