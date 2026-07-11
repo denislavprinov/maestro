@@ -179,6 +179,27 @@ export async function readClarify(pipelineDir) {
 }
 
 /**
+ * Read one ask-then-resume questions file (per-step user questions, spec
+ * 2026-07-11) from an ABSOLUTE path. Same schema, caps, and tolerance as
+ * clarify.json. Missing file => { questions: [], malformed: false } (the agent
+ * chose not to ask); present-but-unparseable => malformed: true so the caller
+ * can audit-warn while proceeding.
+ * @param {string} absPath
+ * @returns {Promise<{questions: Array, malformed: boolean}>}
+ */
+export async function readQuestionsFile(absPath) {
+  let text;
+  try {
+    text = await readFile(absPath, 'utf8');
+  } catch {
+    return { questions: [], malformed: false };
+  }
+  const parsed = safeParseJson(text);
+  if (parsed === null) return { questions: [], malformed: true };
+  return { ...normalizeClarify(parsed), malformed: false };
+}
+
+/**
  * Coerce arbitrary parsed data into the canonical review shape:
  *   { issues: [ { severity, title, detail, location } ], summary }
  * Always returns { issues: [], summary: '' } on bad input.
