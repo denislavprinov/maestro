@@ -6,8 +6,9 @@ import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { runOnboarding } from '../src/core/onboarding.mjs';
+import { runOnboarding, resumeOnboarding } from '../src/core/onboarding.mjs';
 import { projectKey } from '../src/core/store.mjs';
+import { seedWorkspacePipeline } from './helpers/db-seed.mjs';
 
 useTempHome(after);
 
@@ -47,4 +48,23 @@ test('runOnboarding: workspace-only kicks off a mock run against the primary mem
   assert.equal(handle.orch.projectDir, projects[0].projectDir);
   const result = await handle.done;
   assert.ok(['done', 'error'].includes(result.status)); // mock run completes or fails fast; either way it ran the workspace path
+});
+
+test('resumeOnboarding: resumes a paused workspace pipeline against its member set', async () => {
+  const a = freshRepo('ra'), b = freshRepo('rb');
+  const projects = [
+    { projectKey: projectKey(a), projectDir: a, projectName: 'ra', branch: { source: null, feature: null } },
+    { projectKey: projectKey(b), projectDir: b, projectName: 'rb', branch: { source: null, feature: null } },
+  ].sort((x, y) => (x.projectKey < y.projectKey ? -1 : x.projectKey > y.projectKey ? 1 : 0));
+  const { id } = await seedWorkspacePipeline(a, 'wks-r-33333333', {
+    title: 'Enable project for AI', status: 'paused', workspaceName: 'R',
+    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+      bus: null, stepModels: null, workflowId: 'wf_enable', plan: null, nodes: [], gate: null,
+      pipelineDir: a, pausedAt: '2026-07-10T00:00:00Z' },
+  }, projects);
+
+  const handle = await resumeOnboarding({ pipelineId: id, mock: true });
+  assert.equal(handle.orch.isWorkspace, true);
+  assert.equal(handle.orch.projectDir, projects[0].projectDir);
+  await handle.done;
 });

@@ -289,7 +289,23 @@ export async function resumeOnboarding({ pipelineId, interactive = false, mock, 
     throw new Error(`worktree missing: ${branch.worktreeDir}`);
   }
 
-  const projectDir = readStoreMeta(row.project_key)?.path ?? null;
+  // Resolve projectDir: workspace runs carry their member set in workspace_meta
+  // (mirrors ui/server.mjs's /api/run/resume arm); single-project runs map
+  // project_key back through store_meta.
+  let projectDir = null;
+  let workspace;
+  if (row.target === 'workspace' && row.workspace_meta) {
+    const meta = JSON.parse(row.workspace_meta);
+    const projects = (meta.projects || []).map((p) => ({ ...p }));
+    if (!projects.length) throw new Error('workspace metadata incomplete');
+    projectDir = projects[0].projectDir;
+    workspace = {
+      id: meta.workspaceId, key: row.workspace_key, name: meta.workspaceName,
+      description: meta.workspaceDescription || '', projects,
+    };
+  } else {
+    projectDir = readStoreMeta(row.project_key)?.path ?? null;
+  }
   if (!projectDir || !existsSync(projectDir)) {
     throw new Error('project directory for this run no longer exists on this machine');
   }
@@ -298,6 +314,7 @@ export async function resumeOnboarding({ pipelineId, interactive = false, mock, 
     : (readRunMode(resumePoint.pipelineDir)?.mock ?? false);   // legacy runs without the file resume real
   const orch = createOrchestrator({
     projectDir,
+    ...(workspace ? { workspace } : {}),
     resume: saved,
     claude: { permissionMode: 'acceptEdits', mock: useMock },
   });

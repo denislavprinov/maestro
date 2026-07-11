@@ -67,18 +67,28 @@ export async function seedPipeline(projectDir, state = {}) {
  */
 export async function seedWorkspacePipeline(primaryDir, workspaceKey, state = {}, projects) {
   const primaryKey = projectKey(primaryDir);
+  const workspaceId = workspaceKey;
+  const workspaceName = state.workspaceName || 'WS';
   const { id, dir } = await createPipeline(primaryDir, {
     prompt: state.prompt || 'seed',
     title: state.title || state.id || 'seed',
     workspaceKey,
-    workspaceId: workspaceKey,
-    workspaceName: state.workspaceName || 'WS',
+    workspaceId,
+    workspaceName,
     projects,
   });
   // project_key is NOT NULL; createPipeline stamps it = primary member's key. Carry
   // it (and the ws discriminators) so writeState's INSERT arm binds it and the row's
-  // workspace superset round-trips through workspace_meta.
-  await writeState(dir, { projectKey: primaryKey, ...state, id, workspaceKey, target: 'workspace' });
+  // workspace superset round-trips through workspace_meta. writeState's UPDATE arm
+  // SETs workspace_meta unconditionally (artifacts.mjs toPipelineRow), so this second
+  // call must re-supply workspaceId/workspaceName/projects itself or it would clobber
+  // the superset createPipeline's own internal writeState just persisted back down to
+  // an empty projects[]/null workspaceId — exactly what a real orchestrator's this.state
+  // (which carries these fields on every _persist) never does.
+  await writeState(dir, {
+    projectKey: primaryKey, workspaceId, workspaceName, projects,
+    ...state, id, workspaceKey, target: 'workspace',
+  });
   return { id, dir };
 }
 
