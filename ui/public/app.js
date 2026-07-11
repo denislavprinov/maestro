@@ -1350,7 +1350,12 @@ async function loadConfig(projectDir) {
     state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
     state.stepDefaults = {};
     if (Array.isArray(data.steps)) {
-      for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = { fanOut: !!s.fanOut };
+      for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
+        fanOut: !!s.fanOut,
+        asksQuestions: !!s.asksQuestions,
+        questionsLocked: !!s.questionsLocked,
+        questionsDefault: !!s.questionsDefault,
+      };
     }
   } catch {
     /* keep last-known config */
@@ -2042,6 +2047,9 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
       const meta = reg[node.key] || null;
       const saved = nodes[node.id] || {};
       const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
+      const metaAsks = !!(meta && meta.asksQuestions);
+      const metaLocked = !!(meta && meta.questionsLocked);
+      const metaQDefault = !!(meta && meta.questionsDefault);
       rows.push({
         nodeId: node.id,
         key: node.key,
@@ -2052,6 +2060,13 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
         model: typeof saved.model === 'string' ? saved.model : '',
         effort: typeof saved.effort === 'string' ? saved.effort : '',
         fanOut: typeof saved.fanOut === 'boolean' ? saved.fanOut : metaFan,
+        // null => the agent has no questions capability (no checkbox rendered).
+        askQuestions: !metaAsks
+          ? null
+          : (metaLocked
+              ? metaQDefault
+              : (typeof saved.askQuestions === 'boolean' ? saved.askQuestions : metaQDefault)),
+        questionsLocked: metaAsks && metaLocked,
       });
     });
   });
@@ -2229,6 +2244,26 @@ function renderStepConfigs() {
       const defFan = (state.stepDefaults[role] || {}).fanOut || false;
       fanCb.checked = typeof savedFan === 'boolean' ? savedFan : defFan;
     }
+    const qCb = document.querySelector(`.step-questions[data-role="${role}"]`);
+    if (qCb) {
+      const d = state.stepDefaults[role] || {};
+      const wrap = qCb.closest('.questions-toggle');
+      if (!d.asksQuestions) {
+        if (wrap) wrap.hidden = true;
+      } else {
+        if (wrap) {
+          wrap.hidden = false;
+          wrap.title = d.questionsLocked
+            ? (d.questionsDefault ? 'Always on for this agent' : 'Always off for this agent')
+            : '';
+        }
+        const savedQ = (state.config.steps[role] || {}).askQuestions;
+        qCb.checked = d.questionsLocked
+          ? !!d.questionsDefault
+          : (typeof savedQ === 'boolean' ? savedQ : !!d.questionsDefault);
+        qCb.disabled = !!d.questionsLocked;
+      }
+    }
   }
 }
 
@@ -2363,6 +2398,24 @@ function renderNodeRows(rows) {
     fanTxt.textContent = 'Fan-out';
     fanWrap.append(fanCb, fanTxt);
     picks.append(mWrap, eWrap, fanWrap);
+    if (row.askQuestions !== null && row.askQuestions !== undefined) {
+      const qWrap = document.createElement('label');
+      qWrap.className = 'fanout-toggle questions-toggle';
+      if (row.questionsLocked) {
+        qWrap.title = row.askQuestions ? 'Always on for this agent' : 'Always off for this agent';
+      }
+      const qCb = document.createElement('input');
+      qCb.type = 'checkbox';
+      qCb.className = 'step-questions';
+      qCb.dataset.nodeId = row.nodeId;
+      qCb.setAttribute('aria-label', `${row.label} questions`);
+      qCb.checked = !!row.askQuestions;
+      qCb.disabled = !!row.questionsLocked;
+      const qTxt = document.createElement('span');
+      qTxt.textContent = 'Questions';
+      qWrap.append(qCb, qTxt);
+      picks.appendChild(qWrap);
+    }
     card.appendChild(picks);
 
     const caption = document.createElement('small');
@@ -2421,14 +2474,14 @@ if (el.workflowSelect) {
   });
 }
 
-async function saveStep(role, model, effort, fanOut) {
+async function saveStep(role, model, effort, fanOut, askQuestions) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -2445,14 +2498,14 @@ async function saveStep(role, model, effort, fanOut) {
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort, fanOut) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -2557,6 +2610,23 @@ el.pipelineConfig.addEventListener('change', (e) => {
     } else if (t.dataset.role) {
       const cur = state.config.steps[t.dataset.role] || {};
       saveStep(t.dataset.role, cur.model || '', cur.effort || '', fanOut);
+    }
+    return;
+  }
+
+  // Questions toggles (checkboxes). Mirror step-fanout: send the row's current
+  // model/effort along so the replace-semantics setters don't wipe them; omit
+  // fanOut (undefined) so the setters preserve it.
+  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-questions')) {
+    const askQuestions = !!t.checked;
+    if (t.dataset.nodeId) {
+      const nodeId = t.dataset.nodeId;
+      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
+    } else if (t.dataset.role) {
+      const cur = state.config.steps[t.dataset.role] || {};
+      saveStep(t.dataset.role, cur.model || '', cur.effort || '', undefined, askQuestions);
     }
     return;
   }
