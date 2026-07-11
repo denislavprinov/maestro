@@ -232,6 +232,75 @@ test('_buildWorktreeGraph: success builds in the worktree and sets the worktree 
   assert.ok(existsSync(join(work, 'graphify-out')), 'graph built inside the worktree');
 });
 
+test('_buildWorktreeGraph: success copies graphify-out/ back to the project dir', async () => {
+  const dir = await makeTmpDir();
+  const work = await makeTmpDir('maestro-work-');
+  const binDir = await makeTmpDir('maestro-bin-');
+  await fakeGraphify(
+    binDir,
+    '#!/bin/sh\nmkdir -p "$2/graphify-out"\necho "{}" > "$2/graphify-out/graph.json"\nexit 0\n',
+  );
+  const orch = newOrch(dir);
+  orch.workDir = work;
+  orch.state.tools = { kind: 'cli' };
+  orch.pipeline = { dir };
+  orch.toolInstruction = 'SENTINEL';
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    await orch._buildWorktreeGraph();
+  } finally {
+    process.env.PATH = prevPath;
+  }
+  assert.ok(existsSync(join(dir, 'graphify-out', 'graph.json')),
+    'graph copied back to the project dir so it survives worktree teardown');
+});
+
+test('_buildWorktreeGraph: build failure does NOT copy anything into the project dir', async () => {
+  const dir = await makeTmpDir();
+  const work = await makeTmpDir('maestro-work-');
+  const binDir = await makeTmpDir('maestro-bin-');
+  await fakeGraphify(binDir, '#!/bin/sh\necho "kaboom" 1>&2\nexit 1\n');
+  const orch = newOrch(dir);
+  orch.workDir = work;
+  orch.state.tools = { kind: 'cli' };
+  orch.pipeline = { dir };
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    await orch._buildWorktreeGraph();
+  } finally {
+    process.env.PATH = prevPath;
+  }
+  assert.ok(!existsSync(join(dir, 'graphify-out')), 'nothing copied on a failed build');
+});
+
+test('_buildWorktreeGraph: copy-back failure is fail-safe (does not clear the instruction)', async () => {
+  const dir = await makeTmpDir();
+  const work = await makeTmpDir('maestro-work-');
+  const binDir = await makeTmpDir('maestro-bin-');
+  await fakeGraphify(binDir, '#!/bin/sh\nmkdir -p "$2/graphify-out"\nexit 0\n');
+  const orch = newOrch(dir);
+  orch.workDir = work;
+  orch.state.tools = { kind: 'cli' };
+  // projectDir/graphify-out is a FILE, so the recursive copy destination is invalid — cp() rejects.
+  writeFileSync(join(dir, 'graphify-out'), 'not a directory');
+  orch.pipeline = { dir };
+  orch.toolInstruction = 'SENTINEL';
+  const logs = [];
+  orch._log = (source, level, text) => logs.push({ source, level, text });
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    await orch._buildWorktreeGraph(); // must NOT throw despite the failing copy
+  } finally {
+    process.env.PATH = prevPath;
+  }
+  assert.equal(orch.toolInstruction, worktreeGraphInstruction(),
+    'worktree build still succeeded; agents still get the grounding instruction');
+  assert.ok(logs.some((l) => l.level === 'warn' && /copy/i.test(l.text)), 'copy failure logged');
+});
+
 test('_buildWorktreeGraph: success is fail-safe even when the audit write fails', async () => {
   const dir = await makeTmpDir();
   const work = await makeTmpDir('maestro-work-');

@@ -10,7 +10,7 @@
 // subprocess resolves to `false` and NEVER throws.
 
 import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { constants as FS } from 'node:fs';
@@ -256,6 +256,34 @@ export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
     child.on('error', (err) => done({ ok: false, code: -1, timedOut, stderr: stderr || err.message }));
     child.on('close', (code) => done({ ok: code === 0, code: code ?? -1, timedOut, stderr }));
   });
+}
+
+/**
+ * Ensure the project's .gitignore excludes graphify-out/. The orchestrator
+ * copies the worktree-built graph back into the main project dir (outside
+ * git's own write path) so it survives worktree teardown; without an ignore
+ * rule that copy would show up as untracked, `git add -A`-able content in
+ * projects that never ran /graphify manually. Idempotent — recognizes
+ * `graphify-out`, `graphify-out/`, `/graphify-out`, `/graphify-out/` as
+ * already covering it. Fail-safe — never throws (e.g. unwritable dir).
+ */
+export async function ensureGraphifyGitignore(projectDir) {
+  const path = join(projectDir, '.gitignore');
+  try {
+    let text = '';
+    try {
+      text = await readFile(path, 'utf8');
+    } catch {
+      // no .gitignore yet — start fresh
+    }
+    const covered = text.split('\n').some((line) =>
+      line.trim().replace(/^\//, '').replace(/\/$/, '') === 'graphify-out');
+    if (covered) return;
+    const sep = text.length && !text.endsWith('\n') ? '\n' : '';
+    await writeFile(path, `${text}${sep}graphify-out/\n`, 'utf8');
+  } catch {
+    // never let a .gitignore write failure affect the run
+  }
 }
 
 /**

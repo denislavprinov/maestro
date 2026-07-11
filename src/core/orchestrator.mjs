@@ -18,7 +18,7 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, realpath, cp } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -48,7 +48,7 @@ import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
 import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
-import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
+import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction, ensureGraphifyGitignore } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
@@ -873,11 +873,16 @@ class Orchestrator extends EventEmitter {
   /**
    * Build a graphify AST graph INSIDE the worktree so agents (which run with
    * cwd=workDir) can query it. graphify-out/ is gitignored, so it never reaches
-   * the reviewer diff, the kept-branch commit, or survives teardown.
+   * the reviewer diff or the kept-branch commit. On success it IS additionally
+   * copied back to the main project dir (outside git — plain files, never
+   * staged/committed there either) so it survives worktree teardown and stays
+   * browsable afterward (e.g. Enable's knowledge-graph view).
    *
    * Fail-safe — never throws. Skipped when: mock mode (keeps `npm run smoke`
    * offline); no worktree was created; or the graphify binary is not on PATH.
-   * On build failure/timeout the run proceeds with no graph instruction.
+   * On build failure/timeout the run proceeds with no graph instruction. A
+   * failure of the copy-back step alone does not affect the run or the
+   * in-worktree grounding — only the post-run browsable copy is lost.
    */
   async _buildWorktreeGraph() {
     if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
@@ -900,6 +905,14 @@ class Orchestrator extends EventEmitter {
       this.toolInstruction = worktreeGraphInstruction();
       this._log('graph', 'info', 'graphify graph built in worktree.');
       await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in worktree (AST-only).').catch(() => {});
+      try {
+        await cp(join(this.workDir, 'graphify-out'), join(this.projectDir, 'graphify-out'),
+          { recursive: true, force: true });
+        await ensureGraphifyGitignore(this.projectDir);
+        this._log('graph', 'info', 'graphify graph copied back to the project dir.');
+      } catch (err) {
+        this._log('graph', 'warn', `graphify graph copy-back failed: ${err.message}`);
+      }
     } else {
       this.toolInstruction = '';
       this._log(
