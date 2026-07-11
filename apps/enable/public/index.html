@@ -43,6 +43,8 @@
         </label>
 
         <button id="go-setup" class="primary-btn">Get started</button>
+        <button id="home-graph-btn" class="ghost-btn" type="button" hidden>View knowledge graph</button>
+        <p id="home-graph-hint" class="hint-line" hidden>Run <code>/graphify</code> on this project to build its knowledge graph first.</p>
         <p id="home-error" class="error-line" hidden></p>
       </div>
       <div class="card history-card" id="history-wrap" hidden>
@@ -163,6 +165,25 @@
         <div id="result-branch" class="branch-line"></div>
         <div class="row">
           <button class="primary-btn" data-back="home">Run another</button>
+          <button id="results-graph-btn" class="ghost-btn" type="button" hidden>View knowledge graph</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- KNOWLEDGE GRAPH -->
+    <section id="graph" class="screen">
+      <div class="card graph-card">
+        <div class="result-head">
+          <h2 tabindex="-1">Knowledge graph<span id="graph-project" class="graph-project"></span></h2>
+          <button id="graph-back" class="ghost-btn small" type="button">← Back</button>
+        </div>
+        <div class="graph-body">
+          <div class="graph-viz">
+            <iframe id="graph-frame" title="Interactive knowledge graph" hidden></iframe>
+            <p id="graph-nohtml" class="hint-line" hidden>Interactive graph not available — run
+              <code>/graphify</code> to (re)generate it.</p>
+          </div>
+          <div id="graph-report" class="graph-report"></div>
         </div>
       </div>
     </section>

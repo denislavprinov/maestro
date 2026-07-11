@@ -360,6 +360,60 @@ app.post('/api/enable/answer', (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
+// --- knowledge graph view -------------------------------------------------
+// Surface graphify's own artifacts (graph.html, GRAPH_REPORT.md, graph.json)
+// for a project. Enable generates nothing here — it only reads and serves.
+
+// Resolve a client-supplied project *name* to an absolute dir strictly under
+// PROJECTS_ROOT. Rejects traversal, absolute paths, separators, and unknown
+// projects, so the graph routes can only ever read inside a known git project.
+function resolveProjectDir(name) {
+  if (typeof name !== 'string' || !name) return null;
+  if (name.includes('/') || name.includes('\\') || name.includes('..')) return null;
+  const base = path.resolve(PROJECTS_ROOT);
+  const dir = path.join(base, name);
+  if (path.dirname(dir) !== base) return null;
+  if (!existsSync(dir) || !existsSync(path.join(dir, '.git'))) return null;
+  return dir;
+}
+
+// graphify's graph.html loads vis-network from unpkg; rewrite it to the copy we
+// vendor under public/vendor so the graph renders offline. Tolerant of version.
+const VIS_CDN_RE = /https?:\/\/unpkg\.com\/vis-network@[^"']+\/standalone\/umd\/vis-network\.min\.js/g;
+
+app.get('/api/enable/graph/exists', (req, res) => {
+  const dir = resolveProjectDir(req.query.project);
+  if (!dir) return res.json({ exists: false, nodes: 0, hasHtml: false, hasReport: false });
+  const g = readJsonSafe(path.join(dir, 'graphify-out', 'graph.json'));
+  const exists = !!(g && Array.isArray(g.nodes));
+  res.json({
+    exists,
+    nodes: exists ? g.nodes.length : 0,
+    hasHtml: existsSync(path.join(dir, 'graphify-out', 'graph.html')),
+    hasReport: existsSync(path.join(dir, 'graphify-out', 'GRAPH_REPORT.md')),
+  });
+});
+
+app.get('/api/enable/graph/view', (req, res) => {
+  const dir = resolveProjectDir(req.query.project);
+  if (!dir) return res.status(404).json({ error: 'unknown project' });
+  let html;
+  try { html = readFileSync(path.join(dir, 'graphify-out', 'graph.html'), 'utf8'); }
+  catch { return res.status(404).json({ error: 'no graph.html — run /graphify first' }); }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html.replace(VIS_CDN_RE, '/vendor/vis-network.min.js'));
+});
+
+app.get('/api/enable/graph/report', (req, res) => {
+  const dir = resolveProjectDir(req.query.project);
+  if (!dir) return res.status(404).json({ error: 'unknown project' });
+  let md;
+  try { md = readFileSync(path.join(dir, 'graphify-out', 'GRAPH_REPORT.md'), 'utf8'); }
+  catch { return res.status(404).json({ error: 'no GRAPH_REPORT.md' }); }
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.send(md);
+});
+
 app.use((req, res, next) => {   // static UI responses carry the session cookie
   res.setHeader('Set-Cookie', `enable_auth=${AUTH_TOKEN}; Path=/; SameSite=Strict; HttpOnly`);
   next();

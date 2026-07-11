@@ -66,6 +66,92 @@ function chosenProjectDir() {
   return document.querySelector('#project-path').value.trim() || document.querySelector('#project-select').value;
 }
 
+// ---------- knowledge graph ----------
+// The graph routes address a project by *name* (a subdir of the projects root),
+// so we derive the name from the chosen dir. Projects pasted from outside the
+// root simply won't resolve server-side -> button stays disabled with a hint.
+let graphProject = null;   // name the graph buttons currently point at
+let graphReturn = 'home';  // screen to return to from the graph view
+let lastProjectDir = '';   // dir of the most recently started run (for results view)
+
+function projectName(dir) {
+  if (!dir) return '';
+  return dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+}
+
+async function graphInfo(name) {
+  if (!name) return { exists: false, hasHtml: false, hasReport: false };
+  try { return await (await fetch(`/api/enable/graph/exists?project=${encodeURIComponent(name)}`)).json(); }
+  catch { return { exists: false, hasHtml: false, hasReport: false }; }
+}
+
+// gate the "View knowledge graph" buttons for the given project dir
+async function refreshGraphButtons(dir) {
+  const name = projectName(dir);
+  graphProject = name || null;
+  const info = await graphInfo(name);
+  const can = !!(info.exists && (info.hasHtml || info.hasReport));
+  for (const id of ['home-graph-btn', 'results-graph-btn']) {
+    const btn = document.querySelector('#' + id);
+    if (!btn) continue;
+    btn.hidden = !name;
+    btn.disabled = !can;
+    btn.title = can ? '' : 'Run /graphify on this project first';
+  }
+  const hint = document.querySelector('#home-graph-hint');
+  if (hint) hint.hidden = !(name && !can);
+}
+
+async function openGraph(name, returnTo) {
+  if (!name) return;
+  graphReturn = returnTo || 'home';
+  document.querySelector('#graph-project').textContent = ` · ${name}`;
+  const frame = document.querySelector('#graph-frame');
+  const report = document.querySelector('#graph-report');
+  const noHtml = document.querySelector('#graph-nohtml');
+  const info = await graphInfo(name);
+  if (info.hasHtml) {
+    frame.src = `/api/enable/graph/view?project=${encodeURIComponent(name)}`;
+    frame.hidden = false; noHtml.hidden = true;
+  } else {
+    frame.removeAttribute('src'); frame.hidden = true; noHtml.hidden = false;
+  }
+  if (info.hasReport) {
+    report.innerHTML = '<p class="hint-line">Loading report…</p>';
+    try {
+      const md = await (await fetch(`/api/enable/graph/report?project=${encodeURIComponent(name)}`)).text();
+      report.innerHTML = renderMarkdown(md);
+    } catch { report.innerHTML = '<p class="hint-line">Could not load the report.</p>'; }
+  } else {
+    report.innerHTML = '<p class="hint-line">No <code>GRAPH_REPORT.md</code> — run <code>/graphify</code> to generate one.</p>';
+  }
+  show('graph');
+}
+
+// Tiny markdown renderer for GRAPH_REPORT.md (headings, bullet lists, hr,
+// paragraphs, inline code / bold / links). Source is escaped first so report
+// content can never inject markup.
+function renderMarkdown(md) {
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const out = [];
+  let inList = false;
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+  for (const raw of String(md).replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trimEnd();
+    let m;
+    if (!line.trim()) { closeList(); continue; }
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) { closeList(); const n = m[1].length; out.push(`<h${n}>${inline(m[2])}</h${n}>`); continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) { closeList(); out.push('<hr>'); continue; }
+    if (/^[-*]\s+/.test(line)) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(line.replace(/^[-*]\s+/, ''))}</li>`); continue; }
+    closeList(); out.push(`<p>${inline(line)}</p>`);
+  }
+  closeList();
+  return out.join('\n');
+}
+
 // ---------- folder picker ----------
 let pickerDir = null;
 
@@ -209,6 +295,7 @@ function showPaused(reason) {
 async function start(projectDir, answers) {
   const mock = document.querySelector('#mock-toggle').checked;
   const sourceBranch = document.querySelector('#source-branch')?.value || undefined;
+  lastProjectDir = projectDir;
   resetProgress();
   show('progress');
   startLiveMeter();
@@ -608,6 +695,7 @@ function renderResults(r) {
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
+  refreshGraphButtons(lastProjectDir);   // graph may have been (re)built during the run
   renderStats(r._stats || (currentRunId ? liveStats() : null));
   if (currentRunId) loadChanges(`/api/enable/runs/${currentRunId}/changes`);
 }
@@ -826,6 +914,7 @@ async function showHistoryDetail(id) {
   stopLiveMeter();
   currentRunId = null;                       // disk view, no live socket
   const e = d.entry || {};
+  lastProjectDir = e.projectDir || e.projectName || '';   // for the graph button on this view
   const est = e.estimatedCost;
   const realCost = e.totalCostUsd > 0 ? e.totalCostUsd : null;
   const _stats = {
@@ -896,8 +985,12 @@ function init() {
     }
     closePicker();
   });
-  document.querySelector('#project-select').addEventListener('change', refreshBranches);
-  document.querySelector('#project-path').addEventListener('change', refreshBranches);
+  const onProjectChange = () => { refreshBranches(); refreshGraphButtons(chosenProjectDir()); };
+  document.querySelector('#project-select').addEventListener('change', onProjectChange);
+  document.querySelector('#project-path').addEventListener('change', onProjectChange);
+  document.querySelector('#home-graph-btn').addEventListener('click', () => openGraph(graphProject, 'home'));
+  document.querySelector('#results-graph-btn').addEventListener('click', () => openGraph(graphProject, 'results'));
+  document.querySelector('#graph-back').addEventListener('click', () => show(graphReturn));
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !picker.hidden) closePicker();
   });
