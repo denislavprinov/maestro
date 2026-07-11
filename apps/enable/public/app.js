@@ -796,6 +796,9 @@ function openDiffModal(focusIndex = 0) {
   const modal = document.querySelector('#diff-modal');
   modal.hidden = false;
   document.body.classList.add('modal-open');
+  const toggle = document.querySelector('#patch-toggle');
+  toggle.setAttribute('aria-expanded', 'true');
+  toggle.textContent = 'Hide patch';
   focusDiffFile(Math.max(0, focusIndex));
 }
 
@@ -814,6 +817,9 @@ function closeDiffModal() {
   const modal = document.querySelector('#diff-modal');
   modal.hidden = true;
   document.body.classList.remove('modal-open');
+  const toggle = document.querySelector('#patch-toggle');
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.textContent = 'Show patch';
 }
 
 async function loadChanges(url) {

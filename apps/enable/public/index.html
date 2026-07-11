@@ -159,7 +159,7 @@
           <h3>What changed</h3>
           <div id="changes-summary" class="changes-summary"></div>
           <ul id="changes-files" class="changes-files"></ul>
-          <button id="patch-toggle" class="ghost-btn small" type="button">Show patch</button>
+          <button id="patch-toggle" class="ghost-btn small" type="button" aria-expanded="false" aria-controls="patch-view">Show patch</button>
         </div>
         <div id="result-stats" class="result-stats"></div>
         <div id="result-branch" class="branch-line"></div>
@@ -208,7 +208,7 @@
     <!-- DIFF MODAL -->
     <div id="diff-modal" class="diff-modal" hidden>
       <div class="diff-modal-backdrop" data-close></div>
-      <div class="diff-modal-panel" role="dialog" aria-modal="true" aria-label="Patch diff">
+      <div id="patch-view" class="diff-modal-panel" role="dialog" aria-modal="true" aria-label="Patch diff">
         <button id="diff-modal-close" class="diff-modal-close" data-close type="button" aria-label="Close patch">✕</button>
         <aside id="diff-file-list" class="diff-file-list"></aside>
         <div id="diff-pane" class="diff-pane"></div>
