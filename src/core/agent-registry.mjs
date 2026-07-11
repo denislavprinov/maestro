@@ -192,6 +192,10 @@ export function normalizeMeta(raw) {
   // safe to a VISIBLE project agent (surfaced by the palette test) rather than a
   // silently-hidden one.
   const scope = raw.scope === 'workspace-only' ? 'workspace-only' : 'project';
+  // Per-agent user questions (spec 2026-07-11): capability + lock + default.
+  // Coherence is forced HERE (single source of truth): an agent that cannot ask
+  // can be neither locked nor default-on, so UI/agent-gen never validate this.
+  const asksQuestions = !!raw.asksQuestions;
   const spec = DEFAULT_SPEC[key] || {};
   const rtFallbackConsumes = runnerType === 'verifier' ? ['code'] : ['userPrompt'];
   const consumes = channelList(raw.consumes, key, 'consumes') || spec.consumes || rtFallbackConsumes;
@@ -212,6 +216,9 @@ export function normalizeMeta(raw) {
     domain: normalizeDomain(raw.domain),   // always set; fail-safe VISIBLE default 'general'
     loopSource: !!raw.loopSource,
     fanOut: !!raw.fanOut,
+    asksQuestions,
+    questionsLocked: asksQuestions && !!raw.questionsLocked,
+    questionsDefault: asksQuestions && !!raw.questionsDefault,
     consumes,
     optionalConsumes,
     produces,

@@ -11,5 +11,8 @@
   "produces": ["review"],
   "consumes": ["checklist","code"],
   "connectsTo": ["implementer"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 6
 }

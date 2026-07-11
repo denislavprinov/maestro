@@ -13,5 +13,8 @@
   "consumes": ["userPrompt", "clarify", "review"],
   "optionalConsumes": ["clarify", "review"],
   "connectsTo": ["refiner", "implementer", "planReviewer", "decomposer"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 1
 }

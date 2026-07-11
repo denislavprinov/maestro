@@ -12,5 +12,8 @@
   "produces": ["review"],
   "consumes": ["plan"],
   "connectsTo": ["planner", "implementer", "decomposer"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 7
 }

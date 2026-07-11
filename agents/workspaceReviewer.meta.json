@@ -12,6 +12,9 @@
   "produces": ["review"],
   "consumes": ["plan", "code"],
   "connectsTo": ["implementer"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 4.5,
   "scope": "workspace-only"
 }

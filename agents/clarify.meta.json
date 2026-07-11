@@ -12,5 +12,8 @@
   "produces": ["clarify"],
   "consumes": ["userPrompt"],
   "connectsTo": ["planner"],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
   "order": 0
 }
