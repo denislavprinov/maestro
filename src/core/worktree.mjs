@@ -35,8 +35,12 @@ const BRANCH_STOPWORDS = new Set([
   'our', 'my',
 ]);
 
+// Checkout-heavy ops (worktree add/remove) legitimately exceed the default
+// 30 s on large repos — give them a longer leash before the SIGKILL deadline.
+const SLOW_GIT_TIMEOUT_MS = 120_000;
+
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws. */
-function git(cwd, args, { signal } = {}) {
+function git(cwd, args, { signal, timeout = 30_000 } = {}) {
   return new Promise((res) => {
     let child;
     try {
@@ -46,10 +50,23 @@ function git(cwd, args, { signal } = {}) {
       return;
     }
     let stdout = '', stderr = '';
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      res(val);
+    };
+    const timer = timeout > 0
+      ? setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch {}
+          done({ ok: false, stdout, stderr: stderr ? `git timed out: ${stderr}` : 'git timed out', code: -1 });
+        }, timeout)
+      : null;
     child.stdout?.on('data', (b) => (stdout += b.toString()));
     child.stderr?.on('data', (b) => (stderr += b.toString()));
-    child.on('error', (err) => res({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
-    child.on('close', (code) => res({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
+    child.on('error', (err) => done({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
+    child.on('close', (code) => done({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
   });
 }
 
@@ -184,6 +201,10 @@ export async function createWorktree({ projectDir, pipelineId, sourceBranch, fea
   }
   const branch = sanitizeBranchName(featureBranch);
   if (!branch) throw new Error('featureBranch resolves to empty after sanitize');
+  // Compare sanitized forms so case/format variants of the same name don't slip past.
+  if (branch === sanitizeBranchName(sourceBranch)) {
+    throw new Error(`featureBranch and sourceBranch both resolve to "${branch}" — they must differ`);
+  }
 
   const base = join(resolve(projectDir), WORKTREES_DIRNAME);
   await mkdir(base, { recursive: true });
@@ -221,7 +242,7 @@ export async function createWorktree({ projectDir, pipelineId, sourceBranch, fea
     }
     args = ['worktree', 'add', '-b', branch, '--', worktreeDir, sourceBranch];
   }
-  const r = await git(projectDir, args, { signal });
+  const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
     throw new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
@@ -245,7 +266,7 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
     const args = force
       ? ['worktree', 'remove', '--force', worktreeDir]
       : ['worktree', 'remove', worktreeDir];
-    const r = await git(projectDir, args);
+    const r = await git(projectDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
     steps.push({ step: 'worktree-remove', ok: r.ok, stderr: r.stderr.trim() });
     if (force) {
       const fsRes = await rm(worktreeDir, { recursive: true, force: true })
