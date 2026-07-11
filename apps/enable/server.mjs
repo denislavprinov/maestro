@@ -11,6 +11,9 @@ import { runOnboarding, resumeOnboarding, readFinalReadiness, ENABLE_TITLE } fro
 import { listAllPipelines, reconcileStaleRunning } from '../../src/core/artifacts.mjs';
 import { estimateCost } from '../../src/core/costEstimate.mjs';
 import { deletePipeline } from '../../src/core/pipeline-delete.mjs';
+import { listWorkspaces, readWorkspace, isGitRepo, WORKSPACE_KEY_RE } from '../../src/core/workspaces.mjs';
+import { projectKey } from '../../src/core/store.mjs';
+import { buildWorkspaceMembers } from '../../ui/server.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -83,6 +86,14 @@ app.get('/api/enable/projects', (_req, res) => {
       .map((d) => ({ name: d.name, path: path.join(PROJECTS_ROOT, d.name) }));
   } catch {}
   res.json({ root: PROJECTS_ROOT, projects: dirs });
+});
+
+// list saved workspaces so the UI can offer them as a run target alongside
+// single projects. Thin passthrough — no PROJECTS_ROOT scoping (a workspace's
+// members can live anywhere; the registry itself is the source of truth).
+app.get('/api/enable/workspaces', async (_req, res) => {
+  try { res.json({ workspaces: await listWorkspaces() }); }
+  catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
 // directory picker: list immediate sub-folders of `dir` (defaults to home) so the
