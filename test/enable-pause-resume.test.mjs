@@ -142,3 +142,16 @@ test('mock run pauses over HTTP and resumes to done; history flags resumable', a
     assert.equal(r1.status, 'done');                  // raced to completion: still a valid run
   }
 });
+
+test('POST /api/enable/resume: 409 on a joinable live entry carries liveRunId', async () => {
+  const proj = freshRepo();
+  const { id } = await seedPipeline(proj, { title: 'Enable project for AI', status: 'paused',
+    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+      bus: null, stepModels: null, workflowId: 'wf_enable', plan: null, nodes: [], gate: null,
+      pipelineDir: proj, pausedAt: '2026-07-11T00:00:00Z' } });
+  runs.set('r-join', { pipelineId: id, status: 'running', buffer: [], events: {}, orch: {} });
+  const r = await post('/api/enable/resume', { pipelineId: id });
+  assert.equal(r.status, 409);
+  assert.equal(r.json.liveRunId, 'r-join');
+  runs.delete('r-join');
+});

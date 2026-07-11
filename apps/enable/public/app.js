@@ -234,22 +234,38 @@ function connectRun(runId) {
   ws.onerror = () => showError('Lost connection to the Enable server.');
 }
 
+let resumeInFlight = false;   // single-flight: a double-click must not fire a second POST
+
 async function resumeRun(pipelineId) {
+  if (resumeInFlight) return;
+  resumeInFlight = true;
+  const resumeBtn = document.querySelector('#resume-btn');
+  resumeBtn.disabled = true;
   resetProgress();
   show('progress');
   startLiveMeter();
   try {
     // No run-mode fields here: the home-screen toggles describe the NEXT new
-    // run, not this pipeline. The engine infers the run's own mode from its
-    // recorded sessions — sending a stale toggle once mock-corrupted a real run.
+    // run, not this pipeline. The engine reads the run's own persisted mode —
+    // sending a stale toggle once mock-corrupted a real run.
     const res = await fetch('/api/enable/resume', { method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pipelineId }) });
     if (!res.ok) {
-      // server-side rejection (already live, not resumable, …): stay on the
-      // progress screen and re-show the paused banner so Resume can be retried,
-      // instead of routing to the dead-end error screen.
-      const msg = (await res.json().catch(() => ({}))).error || `resume failed (${res.status})`;
+      const body = await res.json().catch(() => ({}));
+      // "already live" with a joinable run: this pipeline is streaming right
+      // now (second tab, refresh, racing click) — rejoin it instead of painting
+      // an error banner over a healthy run.
+      if (res.status === 409 && body.liveRunId) {
+        currentPipelineId = pipelineId;
+        setPauseUi('running');
+        connectRun(body.liveRunId);
+        return;
+      }
+      // other rejections (not resumable, worktree gone, …): stay on the
+      // progress screen and re-show the paused banner so Resume can be
+      // retried, instead of routing to the dead-end error screen.
+      const msg = body.error || `resume failed (${res.status})`;
       currentPipelineId = pipelineId;
       stopLiveMeter();
       setPauseUi('paused', `Could not resume: ${msg}`);
@@ -260,6 +276,10 @@ async function resumeRun(pipelineId) {
     setPauseUi('running');
     connectRun(runId);
   } catch (err) { showError(String(err.message || err)); }
+  finally {
+    resumeInFlight = false;
+    resumeBtn.disabled = false;
+  }
 }
 
 async function pauseRun() {
@@ -454,6 +474,10 @@ function renderLiveMeter() {
   if (!el || runStartTs == null) return;
   el.hidden = false;
   const chips = [statChip('elapsed', fmtDuration(Date.now() - runStartTs))];
+  // resumed runs: 'elapsed' counts this lifetime only, while cost/tokens are
+  // engine totals across ALL lifetimes — show cumulative active time alongside
+  // so the numbers read consistently.
+  if (lastTotals.activeMs > Date.now() - runStartTs) chips.push(statChip('active total', fmtDuration(lastTotals.activeMs)));
   if (lastTotals.costUsd > 0) chips.push(statChip('cost', fmtUsd(lastTotals.costUsd)));
   if (lastTotals.tokens > 0) chips.push(statChip('tokens', fmtTokens(lastTotals.tokens)));
   el.innerHTML = chips.join('');

@@ -222,10 +222,14 @@ app.post('/api/enable/pause', (req, res) => {
 app.post('/api/enable/resume', async (req, res) => {
   const { pipelineId, interactive, mock } = req.body || {};
   if (!pipelineId || typeof pipelineId !== 'string') return res.status(400).json({ error: 'pipelineId required' });
-  for (const e of runs.values()) {
+  for (const [id, e] of runs) {
     if ((e.pipelineId ?? e.orch?.getState?.()?.id) === pipelineId &&
         !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
-      return res.status(409).json({ error: 'pipeline is already live' });
+      // liveRunId lets the client rejoin the stream that is already driving
+      // this pipeline (double-click, second tab, refresh) instead of erroring
+      // over a perfectly healthy run. Claim placeholders are not joinable.
+      const joinable = e.buffer && e.events ? id : null;
+      return res.status(409).json({ error: 'pipeline is already live', ...(joinable ? { liveRunId: joinable } : {}) });
     }
   }
   // Synchronous claim BEFORE the first await: a concurrent /resume for the same

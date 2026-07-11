@@ -105,3 +105,43 @@ test('history renders a Resume button only on resumable entries', async () => {
   assert.ok(items[0].querySelector('.hist-resume'), 'paused entry has Resume');
   assert.ok(!items[1].querySelector('.hist-resume'), 'done entry has none');
 });
+
+test('double-click Resume fires exactly one POST', async () => {
+  let posts = 0;
+  const { window: w } = await boot({
+    onFetch: (url) => {
+      if (url.includes('/api/enable/resume')) {
+        posts += 1;
+        return { ok: true, status: 200, json: async () => ({ runId: 'run-2', pipelineId: 'pl-1' }) };
+      }
+      return null;
+    },
+  });
+  w.__enableTest.setRun('run-1', 'pl-1');
+  w.__enableTest.handle({ type: 'paused', runId: 'run-1' });
+  w.__enableTest.handle({ type: 'done', status: 'paused', runId: 'run-1' });
+  const btn = w.document.querySelector('#resume-btn');
+  btn.click();
+  btn.click();   // racing second click: in-flight guard + disabled must swallow it
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts, 1);
+});
+
+test('409 already-live with liveRunId rejoins the stream instead of erroring', async () => {
+  const { window: w } = await boot({
+    onFetch: (url) => {
+      if (url.includes('/api/enable/resume')) {
+        return { ok: false, status: 409, json: async () => ({ error: 'pipeline is already live', liveRunId: 'run-live' }) };
+      }
+      return null;
+    },
+  });
+  w.__enableTest.setRun('run-1', 'pl-1');
+  w.__enableTest.handle({ type: 'paused', runId: 'run-1' });
+  w.__enableTest.handle({ type: 'done', status: 'paused', runId: 'run-1' });
+  w.document.querySelector('#resume-btn').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(FakeWS.last.url.includes('runId=run-live'), 'reconnected to the live run');
+  assert.equal(w.document.querySelector('#paused-banner').hidden, true, 'no error banner over a live run');
+  assert.equal(w.document.querySelector('#errored').classList.contains('active'), false);
+});
