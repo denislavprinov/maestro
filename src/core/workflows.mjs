@@ -302,6 +302,13 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
         model: firstDefined(sel.model, legacy.model),     // undefined unless configured (folded later)
         effort: firstDefined(sel.effort, legacy.effort),  // undefined unless configured
         fanOut: !!firstDefined(sel.fanOut, legacy.fanOut, meta.fanOut, false), // node > role > sidecar > false
+        // Per-agent user questions (spec 2026-07-11): unsupported is ALWAYS off;
+        // locked ignores every override; else node > role > sidecar default.
+        askQuestions: !meta.asksQuestions
+          ? false
+          : (meta.questionsLocked
+              ? !!meta.questionsDefault
+              : !!firstDefined(sel.askQuestions, legacy.askQuestions, meta.questionsDefault, false)),
         tools,
         loopSource: !!meta.loopSource,
         consumes: meta.consumes || [],

@@ -111,6 +111,7 @@ export function decomposedTaskNode(implNode, task, phaseTasks, pipelineDir) {
     effort: implNode.effort,
     tools: implNode.tools,
     fanOut: implNode.fanOut, // inherit so each per-task implementer fans out when the run does
+    askQuestions: false,     // parallel task shards never gate the user (spec §5)
     taskPath: join(pipelineDir, task.file || ''),
     siblings: (Array.isArray(phaseTasks) ? phaseTasks : [])
       .filter((t) => t && t !== task)
