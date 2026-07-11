@@ -43,3 +43,14 @@ test('writeStepQuestions is a no-op on missing args (never throws)', async () =>
   await writeStepQuestions('', 'k', 1, { questions: QS });
   await writeStepQuestions('p', '', 1, { questions: QS });
 });
+
+test('answers-only partial call preserves previously written identity columns', async () => {
+  const { id } = await seedPipeline(await tmpProject());
+  await writeStepQuestions(id, '2:s1_0', 1, { agentKey: 'reviewer', nodeId: 's1_0', questions: QS });
+  await writeStepQuestions(id, '2:s1_0', 1, { answers: AS }); // identity omitted
+  const rows = readStepQuestions(id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].nodeId, 's1_0', 'nodeId survives identity-omitting call');
+  assert.equal(rows[0].agentKey, 'reviewer', 'agentKey survives identity-omitting call');
+  assert.deepEqual(rows[0].answers, AS.answers);
+});

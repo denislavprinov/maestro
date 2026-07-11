@@ -169,7 +169,8 @@ export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey,
       getDb().prepare(`
         INSERT INTO step_questions (pipeline_id, step_key, round, node_id, agent_key) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(pipeline_id, step_key, round)
-        DO UPDATE SET node_id = excluded.node_id, agent_key = excluded.agent_key
+        DO UPDATE SET node_id = COALESCE(excluded.node_id, node_id),
+                      agent_key = COALESCE(excluded.agent_key, agent_key)
       `).run(pipelineId, stepKey, Number(round), nodeId ?? null, agentKey ?? null);
       if (questions !== undefined) {
         getDb().prepare('UPDATE step_questions SET questions = ? WHERE pipeline_id = ? AND step_key = ? AND round = ?')
