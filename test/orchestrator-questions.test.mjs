@@ -1,0 +1,177 @@
+// test/orchestrator-questions.test.mjs
+// Ask-then-resume loop (spec 2026-07-11 §5): dispatcher-level, offline, stubbed
+// runners. Harness mirrors test/dispatcher.test.mjs `primed` (:63-74) but with
+// auto:false, a registry for display names, and a REAL pipelines row (via
+// seedPipeline) so step_questions FK writes land.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { readStepQuestions } from '../src/core/artifacts.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
+
+useTempHome(after);
+const tmpDirs = [];
+async function makeTmpDir() {
+  const dir = await mkdtemp(join(tmpdir(), 'maestro-qorch-'));
+  tmpDirs.push(dir);
+  return dir;
+}
+after(async () => Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true }))));
+
+async function primedInteractive(projectDir) {
+  const orch = createOrchestrator({ projectDir, prompt: 'demo', auto: false, claude: { mock: true } });
+  const { id } = await seedPipeline(projectDir);
+  orch.pipeline = { id, dir: projectDir, promptText: 'demo' };
+  orch.state.id = id;
+  orch.state.pipelineDir = projectDir;
+  orch.baseName = 'feature';
+  orch.agentPrompts = {};
+  orch.toolInstruction = '';
+  orch.checkpointRef = null;
+  orch.registry = { worker: { key: 'worker', displayName: 'Worker' } };
+  orch._setStatus('running');
+  return orch;
+}
+
+const QNODE = { nodeId: 'n1', key: 'worker', runnerType: 'producer', askQuestions: true };
+const PLAN = (nodes) => ({ id: 'wf_q', name: 'Q', steps: [nodes], feedbacks: [] });
+
+test('enabled node: ask -> answer -> resume same session -> done; rounds persisted', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primedInteractive(dir);
+  const calls = [];
+  orch._runners = {
+    producer: async (ctx) => {
+      calls.push({ resume: ctx.resumeSessionId || null, answered: (ctx.questionsAnswered || []).length });
+      if (calls.length === 1) {
+        // Simulate the agent reporting its session id (the way real runners do
+        // via runClaude's session event) then writing round 1's questions.
+        ctx.onEvent({ type: 'session', sessionId: 'sess-1' });
+        await writeFile(ctx.questionsFile, JSON.stringify({
+          questions: [{ id: 'q1', question: 'Which storage?', options: ['Redis', 'Postgres'] }],
+        }), 'utf8');
+      }
+      return { status: 'ok', summary: 'x' };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  const events = [];
+  orch.on('question', (q) => {
+    events.push(q);
+    setImmediate(() => orch.answer(q.id, { answers: [{ id: 'q1', choice: 'Postgres' }] }));
+  });
+  await orch._dispatch(PLAN([QNODE]));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'questions');
+  assert.equal(events[0].agent, 'Worker');
+  assert.equal(events[0].nodeId, 'n1');
+  assert.equal(calls.length, 2, 'initial run + one resume');
+  assert.equal(calls[1].resume, 'sess-1', 'resume reuses the captured session');
+  assert.equal(calls[1].answered, 1, 'answers injected into the resume ctx');
+  const rows = readStepQuestions(orch.pipeline.id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].round, 1);
+  assert.equal(rows[0].agentKey, 'worker');
+  assert.equal(rows[0].nodeId, 'n1');
+  assert.deepEqual(rows[0].answers, [{ id: 'q1', question: 'Which storage?', choice: 'Postgres' }]);
+});
+
+test('round cap: asks at most 3 times, final resume has no questions file', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primedInteractive(dir);
+  const files = [];
+  orch._runners = {
+    producer: async (ctx) => {
+      files.push(ctx.questionsFile || null);
+      if (ctx.questionsFile) {
+        await writeFile(ctx.questionsFile, JSON.stringify({
+          questions: [{ id: 'q1', question: 'Round?', options: ['A', 'B'] }],
+        }), 'utf8');
+      }
+      return { status: 'ok', summary: 'x' };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  let asks = 0;
+  orch.on('question', (q) => { asks += 1; setImmediate(() => orch.answer(q.id, { answers: [] })); });
+  await orch._dispatch(PLAN([QNODE]));
+  assert.equal(asks, 3, 'capped at MAX_QUESTION_ROUNDS');
+  assert.equal(files.length, 4, 'initial + 3 resumes');
+  assert.equal(files[3], null, 'final resume carries no next-round file');
+});
+
+test('auto mode: directive suppressed, no question event, single run', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primedInteractive(dir);
+  orch.auto = true;
+  let runs = 0;
+  let sawEnabled = null;
+  orch._runners = {
+    producer: async (ctx) => { runs += 1; sawEnabled = !!ctx.questionsEnabled; return { status: 'ok', summary: 'x' }; },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  let asks = 0;
+  orch.on('question', () => { asks += 1; });
+  await orch._dispatch(PLAN([QNODE]));
+  assert.equal(runs, 1);
+  assert.equal(asks, 0);
+  assert.equal(sawEnabled, false);
+});
+
+test('malformed questions file: proceeds with no gate, single run', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primedInteractive(dir);
+  let runs = 0;
+  orch._runners = {
+    producer: async (ctx) => {
+      runs += 1;
+      if (runs === 1) await writeFile(ctx.questionsFile, 'not json at all', 'utf8');
+      return { status: 'ok', summary: 'x' };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  let asks = 0;
+  orch.on('question', () => { asks += 1; });
+  await orch._dispatch(PLAN([QNODE]));
+  assert.equal(asks, 0);
+  assert.equal(runs, 1);
+});
+
+test('parallel group: both enabled nodes complete; asks serialize through one slot', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primedInteractive(dir);
+  orch.registry = {
+    worker: { key: 'worker', displayName: 'Worker' },
+    helper: { key: 'helper', displayName: 'Helper' },
+  };
+  const asked = new Set();
+  orch._runners = {
+    producer: async (ctx) => {
+      if (ctx.questionsFile && !asked.has(ctx.node.nodeId)) {
+        asked.add(ctx.node.nodeId);
+        await writeFile(ctx.questionsFile, JSON.stringify({
+          questions: [{ id: 'q1', question: `${ctx.node.key}?`, options: ['A', 'B'] }],
+        }), 'utf8');
+      }
+      return { status: 'ok', summary: 'x' };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  const order = [];
+  orch.on('question', (q) => {
+    order.push(q.nodeId);
+    setImmediate(() => orch.answer(q.id, { answers: [{ id: 'q1', choice: 'A' }] }));
+  });
+  await orch._dispatch(PLAN([
+    { nodeId: 'pa', key: 'worker', runnerType: 'producer', askQuestions: true },
+    { nodeId: 'pb', key: 'helper', runnerType: 'producer', askQuestions: true },
+  ]));
+  assert.deepEqual([...order].sort(), ['pa', 'pb'], 'both nodes gated once each');
+  const st = orch.getState();
+  assert.ok(st.steps.find((s) => s.nodeId === 'pa' && s.status === 'done'));
+  assert.ok(st.steps.find((s) => s.nodeId === 'pb' && s.status === 'done'));
+});
