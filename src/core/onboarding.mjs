@@ -2,7 +2,7 @@
 // onboarding-only surface and derives the readiness stream the engine omits.
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createOrchestrator } from './orchestrator.mjs';
 import { writeWorkflow } from './workflows.mjs';
@@ -128,9 +128,28 @@ export function wireGateAnswers(orch, events, { answers = {}, interactive = fals
 // answering, readiness derivation, and the done-promise. `kick` starts the
 // engine (run() or resume()); `replayDir`, when set, re-emits readiness already
 // on disk so a resumed/reconnecting UI gets its ring state back.
-function wireOnboardingRun(orch, { answers = {}, interactive = false, kick, replayDir = null } = {}) {
+function wireOnboardingRun(orch, { answers = {}, interactive = false, kick, replayDir = null, persistMode = null } = {}) {
   const events = new EventEmitter();
   const runId = randomUUID();
+
+  // Stamp the run's mode into its store dir on the FIRST event that carries a
+  // pipelineDir (state fires before dispatch), so even a run paused before its
+  // first step completes knows how to resume. Written once, never overwritten.
+  if (persistMode) {
+    let stamped = false;
+    const stamp = () => {
+      if (stamped) return;
+      const dir = orch.getState().pipelineDir;
+      if (!dir) return;
+      stamped = true;
+      try {
+        const p = join(dir, 'run-mode.json');
+        if (!existsSync(p)) writeFileSync(p, JSON.stringify(persistMode));
+      } catch { /* mode falls back to real on resume */ }
+    };
+    orch.on('state', stamp);
+    orch.on('phase', stamp);
+  }
 
   // forward raw engine events verbatim (renderer/server consume these too)
   for (const name of ['state', 'phase', 'question', 'artifact', 'log', 'done', 'error']) {
@@ -226,16 +245,22 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
     claude: { permissionMode: 'acceptEdits', mock },
   });
 
-  return wireOnboardingRun(orch, { answers, interactive, kick: () => orch.run() });
+  return wireOnboardingRun(orch, {
+    answers, interactive, kick: () => orch.run(),
+    persistMode: { mock: !!mock, interactive: !!interactive },
+  });
 }
 
 // Run mode is a property of the RUN, not the caller: a paused real pipeline
 // must resume with real runners (and a mock one with mock runners) no matter
-// what a UI toggle happens to say. Mock lifetimes stamp 'mock-session-*' ids
-// on their step rows — a run is mock only when EVERY recorded session is mock.
-export function inferMockFromSteps(steps) {
-  const ids = (Array.isArray(steps) ? steps : []).map((s) => s && s.sessionId).filter(Boolean);
-  return ids.length > 0 && ids.every((id) => String(id).startsWith('mock-session-'));
+// what a UI toggle happens to say. Mode is persisted as run-mode.json in the
+// pipeline store dir at run start — sessions can't be used to infer it (a run
+// paused before its first step records one has nothing to infer from, and
+// non-claude steps record real-format ids even in mock runs).
+export function readRunMode(pipelineDir) {
+  if (!pipelineDir) return null;
+  const m = readJsonSafe(join(pipelineDir, 'run-mode.json'));
+  return m && typeof m.mock === 'boolean' ? m : null;
 }
 
 // Resume a paused/interrupted Enable pipeline (manual pause or session-limit
@@ -268,7 +293,8 @@ export async function resumeOnboarding({ pipelineId, interactive = false, mock, 
     throw new Error('project directory for this run no longer exists on this machine');
   }
 
-  const useMock = typeof mock === 'boolean' ? mock : inferMockFromSteps(saved.steps);
+  const useMock = typeof mock === 'boolean' ? mock
+    : (readRunMode(resumePoint.pipelineDir)?.mock ?? false);   // legacy runs without the file resume real
   const orch = createOrchestrator({
     projectDir,
     resume: saved,
