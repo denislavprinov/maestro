@@ -2854,6 +2854,8 @@ function renderQpanel(r) {
     title.textContent = `${cls.replace('_', ' ')} error — action needed`;
   } else if (isGate) {
     title.textContent = 'Cycle gate';
+  } else if (pq.kind === 'questions') {
+    title.textContent = `${pq.agent || 'Agent'} has questions`;
   } else {
     const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
     title.textContent = `${phaseLabel} needs your input`;
