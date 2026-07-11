@@ -105,3 +105,13 @@ test('add then delete a custom model over HTTP', async () => {
   assert.equal(r.status, 200);
   assert.ok(!(await r.json()).models.some((m) => m.id === 'my-model-x'));
 });
+
+test('POST /api/config passes askQuestions through to setStep', async () => {
+  let r = await fetch(`${base}/api/config`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectDir: proj, step: 'planner', askQuestions: true }),
+  });
+  assert.equal(r.status, 200);
+  const { config } = await r.json();
+  assert.equal(config.steps.planner.askQuestions, true);
+});

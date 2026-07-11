@@ -1558,7 +1558,9 @@ app.post('/api/config', async (req, res) => {
   const projectDir = resolveProjectDir(body.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
-    const config = await setStep(projectDir, body.step, { model: body.model, effort: body.effort, fanOut: body.fanOut });
+    const config = await setStep(projectDir, body.step, {
+      model: body.model, effort: body.effort, fanOut: body.fanOut, askQuestions: body.askQuestions,
+    });
     res.json({ config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.

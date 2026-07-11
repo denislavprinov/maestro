@@ -86,8 +86,14 @@ function sanitizeSteps(steps) {
     const model = typeof v.model === 'string' ? v.model.trim() : '';
     const effort = typeof v.effort === 'string' ? v.effort.trim() : '';
     const fanOut = typeof v.fanOut === 'boolean' ? v.fanOut : undefined;
-    if (model || effort || fanOut !== undefined) {
-      out[k] = { ...(model && { model }), ...(effort && { effort }), ...(fanOut !== undefined && { fanOut }) };
+    const askQuestions = typeof v.askQuestions === 'boolean' ? v.askQuestions : undefined;
+    if (model || effort || fanOut !== undefined || askQuestions !== undefined) {
+      out[k] = {
+        ...(model && { model }),
+        ...(effort && { effort }),
+        ...(fanOut !== undefined && { fanOut }),
+        ...(askQuestions !== undefined && { askQuestions }),
+      };
     }
   }
   return out;
@@ -227,10 +233,20 @@ export async function setStep(projectDir, step, selection = {}) {
   const fanOut = typeof selection.fanOut === 'boolean'
     ? selection.fanOut
     : (typeof prev.fanOut === 'boolean' ? prev.fanOut : undefined);
+  // askQuestions mirrors fanOut: preserved when omitted (only the toggle sends
+  // it), set when a boolean (spec 2026-07-11 §4).
+  const askQuestions = typeof selection.askQuestions === 'boolean'
+    ? selection.askQuestions
+    : (typeof prev.askQuestions === 'boolean' ? prev.askQuestions : undefined);
 
   const steps = { ...cfg.steps };
-  if (!model && !effort && fanOut === undefined) delete steps[step];
-  else steps[step] = { ...(model && { model }), ...(effort && { effort }), ...(fanOut !== undefined && { fanOut }) };
+  if (!model && !effort && fanOut === undefined && askQuestions === undefined) delete steps[step];
+  else steps[step] = {
+    ...(model && { model }),
+    ...(effort && { effort }),
+    ...(fanOut !== undefined && { fanOut }),
+    ...(askQuestions !== undefined && { askQuestions }),
+  };
 
   const updated = { ...cfg, steps };
   writeLegacy(key, updated);
