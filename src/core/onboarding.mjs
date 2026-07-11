@@ -226,8 +226,9 @@ function wireOnboardingRun(orch, { answers = {}, interactive = false, kick, repl
   return { runId, events, done, orch };               // orch exposed for the server's answer route
 }
 
-export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_TITLE, mock = false, branch, interactive = false } = {}) {
-  if (!projectDir) throw new Error('runOnboarding: projectDir is required');
+export async function runOnboarding({ projectDir, workspace, answers = {}, title = ENABLE_TITLE, mock = false, branch, interactive = false } = {}) {
+  if (!projectDir && !workspace) throw new Error('runOnboarding: projectDir or workspace is required');
+  if (projectDir && workspace) throw new Error('runOnboarding: provide projectDir or workspace, not both');
 
   // 1. validate + seed wf_enable (idempotent). reg mirrors
   //    test/workflow-onboarding-topology.test.mjs.
@@ -238,7 +239,7 @@ export async function runOnboarding({ projectDir, answers = {}, title = ENABLE_T
 
   // 2. orchestrator pinned to wf_enable + Enable title (branch derives from title).
   const orch = createOrchestrator({
-    projectDir,
+    ...(workspace ? { workspace } : { projectDir }),
     workflowId: ENABLE_WORKFLOW_ID,
     title,
     branch: branch || { source: null, feature: null }, // feature:null -> derived from title (safe)
