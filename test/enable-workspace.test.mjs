@@ -38,3 +38,39 @@ test('GET /api/enable/workspaces returns saved workspaces', async () => {
   assert.ok(Array.isArray(body.workspaces));
   assert.ok(body.workspaces.some((w) => w.name === 'Combo'));
 });
+
+test('POST /api/enable/run: both projectDir and workspaceId -> 400', async () => {
+  const a = freshRepo('c'), b = freshRepo('d');
+  const ws = await createWorkspace({ name: 'Both', projectPaths: [a, b] });
+  const res = await fetch(`http://${base}/api/enable/run`, { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectDir: a, workspaceId: ws.id, mock: true }) });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/enable/run: neither projectDir nor workspaceId -> 400', async () => {
+  const res = await fetch(`http://${base}/api/enable/run`, { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mock: true }) });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/enable/run: unknown workspaceId -> 404', async () => {
+  const res = await fetch(`http://${base}/api/enable/run`, { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workspaceId: 'wks-nope-deadbeef', mock: true }) });
+  assert.equal(res.status, 404);
+});
+
+test('POST /api/enable/run: valid workspaceId starts a mock workspace run', async () => {
+  const a = freshRepo('e'), b = freshRepo('f');
+  const wsEntry = await createWorkspace({ name: 'Runnable', projectPaths: [a, b] });
+  const res = await fetch(`http://${base}/api/enable/run`, { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workspaceId: wsEntry.id, mock: true }) });
+  assert.equal(res.status, 200);
+  const { runId } = await res.json();
+  assert.ok(runId);
+  const entry = runs.get(runId);
+  assert.equal(entry.orch.isWorkspace, true);
+  await entry.done;
+});

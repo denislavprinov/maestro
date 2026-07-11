@@ -196,12 +196,53 @@ function registerRun(runId, { orch, events, done, pipelineId = null }) {
 }
 
 app.post('/api/enable/run', async (req, res) => {
-  const { projectDir, answers, mock, sourceBranch, interactive } = req.body || {};
-  if (!projectDir) return res.status(400).json({ error: 'projectDir required' });
+  const { projectDir, workspaceId, answers, mock, sourceBranch, interactive } = req.body || {};
+  const hasWorkspace = typeof workspaceId === 'string' && workspaceId.trim();
+  const hasProjectDir = typeof projectDir === 'string' && projectDir.trim();
+  if (hasWorkspace && hasProjectDir) {
+    return res.status(400).json({ error: 'provide workspaceId or projectDir, not both' });
+  }
+  if (!hasWorkspace && !hasProjectDir) {
+    return res.status(400).json({ error: 'projectDir or workspaceId required' });
+  }
   try {
-    const branch = sourceBranch ? { source: sourceBranch, feature: null } : undefined;
-    const handle = await runOnboarding({
-      projectDir, answers: answers || {}, mock: !!mock, interactive: !!interactive, branch });
+    const sharedBranch = sourceBranch ? { source: sourceBranch, feature: null } : { source: null, feature: null };
+    let handle;
+    if (hasWorkspace) {
+      const id = workspaceId.trim();
+      if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+      const wsEntry = await readWorkspace(id);
+      if (!wsEntry) return res.status(404).json({ error: 'workspace not found' });
+
+      // Every member must be an existing git repo (D3: per-project worktrees) —
+      // a workspace run is defined over its full set, no skip-missing (mirrors
+      // ui/server.mjs's /api/run workspace arm).
+      const projects = [];
+      for (const dir of wsEntry.projectPaths) {
+        if (!existsSync(dir)) return res.status(400).json({ error: 'workspace member path is missing' });
+        if (!isGitRepo(dir)) return res.status(400).json({ error: `workspace member is not a git repository: ${dir}` });
+        projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir) });
+      }
+      projects.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));
+
+      if (sharedBranch.source && sharedBranch.source.startsWith('-')) {
+        return res.status(400).json({ error: `unknown or invalid sourceBranch: ${sharedBranch.source}` });
+      }
+
+      handle = await runOnboarding({
+        workspace: {
+          id: wsEntry.id, key: wsEntry.id, name: wsEntry.name, description: wsEntry.description,
+          // No per-member override UI in Enable (out of scope, see plan header) — every
+          // member gets the one shared sourceBranch, same as buildWorkspaceMembers(..., {}).
+          projects: buildWorkspaceMembers(projects, sharedBranch, {}),
+        },
+        answers: answers || {}, mock: !!mock, interactive: !!interactive, branch: sharedBranch,
+      });
+    } else {
+      const branch = sourceBranch ? sharedBranch : undefined;
+      handle = await runOnboarding({
+        projectDir, answers: answers || {}, mock: !!mock, interactive: !!interactive, branch });
+    }
     registerRun(handle.runId, handle);
     res.json({ runId: handle.runId });
   } catch (err) {
