@@ -44,3 +44,17 @@ test('builtin sidecars: clarify locked-ON; workspaceScanner off; all others capa
     );
   }
 });
+
+test('registryToSteps carries the questions defaults per step', () => {
+  const steps = registryToSteps(loadAgentRegistry(undefined, { userAgentsDir: null }));
+  const clarify = steps.find((s) => s.key === 'clarify');
+  assert.deepEqual(
+    { asks: clarify.asksQuestions, locked: clarify.questionsLocked, def: clarify.questionsDefault },
+    { asks: true, locked: true, def: true },
+  );
+  const planner = steps.find((s) => s.key === 'planner');
+  assert.deepEqual(
+    { asks: planner.asksQuestions, locked: planner.questionsLocked, def: planner.questionsDefault },
+    { asks: true, locked: false, def: false },
+  );
+});

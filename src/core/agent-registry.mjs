@@ -314,11 +314,18 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
  * this returns the 9 built-in project-scope steps plus any user-layer project
  * agents (without the exclusion the two workspace sidecars would add 2 more).
  * @param {Record<string, object>} registry
- * @returns {Array<{key:string,label:string,fanOut:boolean}>}
+ * @returns {Array<{key:string,label:string,fanOut:boolean,asksQuestions:boolean,questionsLocked:boolean,questionsDefault:boolean}>}
  */
 export function registryToSteps(registry) {
   return Object.values(registry || {})
     .filter((m) => m.scope !== 'workspace-only')
     .sort((a, b) => a.order - b.order)
-    .map((m) => ({ key: m.key, label: LEGACY_LABELS[m.key] || m.displayName, fanOut: !!m.fanOut }));
+    .map((m) => ({
+      key: m.key,
+      label: LEGACY_LABELS[m.key] || m.displayName,
+      fanOut: !!m.fanOut,
+      asksQuestions: !!m.asksQuestions,
+      questionsLocked: !!m.questionsLocked,
+      questionsDefault: !!m.questionsDefault,
+    }));
 }
