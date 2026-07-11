@@ -152,6 +152,62 @@ export function readClarifyRow(pipelineId) {
 }
 
 /**
+ * Upsert one round of a node's ask-then-resume Q&A (spec 2026-07-11). Pass
+ * { questions } and/or { answers }; a partial call updates only the provided
+ * column (writeClarify pattern). stepKey is the step record's stable
+ * "<stepIndex>:<nodeId>[#cycle]" key; nodeId is denormalized for per-node
+ * re-injection. Best-effort under WAL contention.
+ * @param {string} pipelineId
+ * @param {string} stepKey
+ * @param {number} round 1-based round within one node run
+ * @param {{agentKey?:string, nodeId?:string, questions?:object, answers?:object}} payload
+ */
+export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey, nodeId, questions, answers } = {}) {
+  if (!pipelineId || !stepKey || !Number.isFinite(Number(round))) return;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        INSERT INTO step_questions (pipeline_id, step_key, round, node_id, agent_key) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(pipeline_id, step_key, round)
+        DO UPDATE SET node_id = excluded.node_id, agent_key = excluded.agent_key
+      `).run(pipelineId, stepKey, Number(round), nodeId ?? null, agentKey ?? null);
+      if (questions !== undefined) {
+        getDb().prepare('UPDATE step_questions SET questions = ? WHERE pipeline_id = ? AND step_key = ? AND round = ?')
+          .run(s(questions), pipelineId, stepKey, Number(round));
+      }
+      if (answers !== undefined) {
+        getDb().prepare('UPDATE step_questions SET answers = ? WHERE pipeline_id = ? AND step_key = ? AND round = ?')
+          .run(s(answers), pipelineId, stepKey, Number(round));
+      }
+    });
+  } catch { /* defensive: mirrors writeClarify — a transient lock must not crash a run */ }
+}
+
+/**
+ * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, ordered
+ * by (step_key, round). Always returns an array.
+ * @param {string} pipelineId
+ * @returns {Array<{stepKey:string, round:number, nodeId:string, agentKey:string, questions:Array, answers:Array}>}
+ */
+export function readStepQuestions(pipelineId) {
+  const rows = getDb().prepare(
+    'SELECT step_key, round, node_id, agent_key, questions, answers FROM step_questions WHERE pipeline_id = ? ORDER BY step_key, round'
+  ).all(pipelineId);
+  return rows.map((r) => {
+    const qWrap = j(r.questions, null);
+    const aWrap = j(r.answers, null);
+    return {
+      stepKey: r.step_key,
+      round: r.round,
+      nodeId: r.node_id || '',
+      agentKey: r.agent_key || '',
+      questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
+      answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+    };
+  });
+}
+
+/**
  * Map a channels.allocate() review base name to the reviews-table `kind`. A2: the
  * kind is a 5-value OPEN set {refine, impl, plan, ws, webui} derived by stripping the
  * "-review-cycleN.json" suffix from the legacy filename; treat it as free text (an
@@ -235,7 +291,7 @@ export function readPipelineExtras(pipelineId) {
       summary: typeof v.summary === 'string' ? v.summary : '',
     };
   });
-  return { clarify, reviews };
+  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
 }
 
 /**

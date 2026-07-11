@@ -440,7 +440,7 @@ test('readPipelineExtras returns clarify {questions,answers} and all review rows
 test('readPipelineExtras on a bare pipeline returns empty arrays (never null)', () => {
   seedPipelineRow({ id: 'ex000002', projectKey: 'proj-00000001', status: 'done' });
   const ex = readPipelineExtras('ex000002');
-  assert.deepEqual(ex, { clarify: { questions: [], answers: [] }, reviews: [] });
+  assert.deepEqual(ex, { clarify: { questions: [], answers: [] }, reviews: [], stepQuestions: [] });
 });
 
 test('readPipelineByKey attaches clarify + reviews to the detail response', async () => {
