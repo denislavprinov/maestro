@@ -1697,7 +1697,8 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
   const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch,
+           resume_point IS NOT NULL AS has_resume_point
     FROM pipelines WHERE workspace_key = ? ORDER BY started_at DESC
   `).all(workspaceKey);
   const out = [];

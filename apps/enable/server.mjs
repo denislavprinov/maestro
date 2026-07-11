@@ -175,7 +175,12 @@ function registerRun(runId, { orch, events, done, pipelineId = null }) {
     });
   }
   done.then((r) => { entry.status = r.status; })
-      .catch((err) => broadcast({ type: 'error', runId, message: String(err && err.message || err) }));
+      .catch((err) => {
+        entry.status = 'error';
+        const frame = { type: 'error', runId, message: String(err && err.message || err) };
+        entry.buffer.push(frame);
+        broadcast(frame);
+      });
   return entry;
 }
 

@@ -155,28 +155,54 @@ function collectAnswers() {
 }
 
 // ---------- pause / resume ----------
-// 'running' | 'pausing' | 'paused' | 'idle'
-function setPauseUi(mode) {
+// Prefer the engine's own pause reason (done{paused}.reason, set for limit-pauses
+// by orchestrator._completePaused); fall back to the last warn-level log line when
+// it looks like a limit message, then a generic message. `reason` is either the
+// engine's string or undefined.
+function pausedReasonText(reason) {
+  if (typeof reason === 'string' && reason.trim())
+    return `${reason} The run will pick up where it left off.`;
+  if (typeof lastWarnLine === 'string' && /limit/i.test(lastWarnLine))
+    return `${lastWarnLine} The run will pick up where it left off.`;
+  return 'Run paused — resume when you\'re ready.';
+}
+
+// 'running' | 'pausing' | 'winding-down' | 'paused' | 'idle'
+// winding-down = the synthetic {type:'paused'} frame just arrived; the engine is
+// still finishing the in-flight step, so Resume must stay disabled and unfocused
+// until the real done{status:'paused'} frame confirms the pipeline actually stopped.
+function setPauseUi(mode, reasonText) {
   const btn = document.querySelector('#pause-btn');
   const banner = document.querySelector('#paused-banner');
+  const resumeBtn = document.querySelector('#resume-btn');
   btn.hidden = mode !== 'running' && mode !== 'pausing';
   btn.disabled = mode === 'pausing';
   btn.textContent = mode === 'pausing' ? 'Pausing…' : 'Pause run';
-  banner.hidden = mode !== 'paused';
-  if (mode === 'paused') {
-    document.querySelector('#paused-reason').textContent =
-      lastWarnLine && /limit/i.test(lastWarnLine)
-        ? `${lastWarnLine} The run will pick up where it left off.`
-        : 'Run paused — resume when you\'re ready.';
+  banner.hidden = mode !== 'winding-down' && mode !== 'paused';
+  if (mode === 'winding-down') {
+    resumeBtn.disabled = true;
+    document.querySelector('#paused-reason').textContent = 'Pausing — finishing the current step…';
+  } else if (mode === 'paused') {
+    resumeBtn.disabled = false;
+    document.querySelector('#paused-reason').textContent = reasonText || pausedReasonText();
     announce('The run is paused.');
-    document.querySelector('#resume-btn').focus();
+    resumeBtn.focus();
   }
 }
 
-function showPaused() {
+// synthetic {type:'paused'} frame: POST /pause just returned but the engine is
+// still winding down the in-flight step — show the banner, keep Resume disabled.
+function showWindingDown() {
+  hideGate(null);
+  setPauseUi('winding-down');
+}
+
+// done{status:'paused'}: the pipeline has actually stopped — enable Resume, set
+// the final reason text, and move focus there.
+function showPaused(reason) {
   stopLiveMeter();
   hideGate(null);
-  setPauseUi('paused');
+  setPauseUi('paused', pausedReasonText(reason));
 }
 
 // ---------- run ----------
@@ -215,8 +241,21 @@ async function resumeRun(pipelineId) {
   try {
     const res = await fetch('/api/enable/resume', { method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pipelineId }) });
-    if (!res.ok) { showError((await res.json().catch(() => ({}))).error || `resume failed (${res.status})`); return; }
+      body: JSON.stringify({
+        pipelineId,
+        mock: document.querySelector('#mock-toggle')?.checked || false,
+        interactive: document.querySelector('#interactive-toggle')?.checked || false,
+      }) });
+    if (!res.ok) {
+      // server-side rejection (already live, not resumable, …): stay on the
+      // progress screen and re-show the paused banner so Resume can be retried,
+      // instead of routing to the dead-end error screen.
+      const msg = (await res.json().catch(() => ({}))).error || `resume failed (${res.status})`;
+      currentPipelineId = pipelineId;
+      stopLiveMeter();
+      setPauseUi('paused', `Could not resume: ${msg}`);
+      return;
+    }
     const { runId } = await res.json();
     currentPipelineId = pipelineId;
     setPauseUi('running');
@@ -248,10 +287,10 @@ function handle(ev) {
         announce(`Pass ${ev.cycle}: readiness score ${Math.round(ev.score)} out of 100.`); } }
       if (ev.kind === 'final')    renderResults(ev);
       break;
-    case 'paused':   showPaused(); break;
+    case 'paused':   showWindingDown(); break;
     case 'done':
       stopLiveMeter();
-      if (ev.status === 'paused') showPaused();
+      if (ev.status === 'paused') showPaused(ev.reason);
       else if (ev.status === 'error') showError('The run ended with an error.');
       else setPauseUi('idle');
       break;

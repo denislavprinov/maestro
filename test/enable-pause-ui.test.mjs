@@ -42,7 +42,7 @@ async function boot({ history = [], onFetch = () => null } = {}) {
   return { window, calls };
 }
 
-test('paused frame shows the banner and hides the pause button', async () => {
+test('paused frame shows the banner (winding-down) with Resume disabled; done{paused} enables it', async () => {
   const { window } = await boot();
   const w = window;
   // simulate an active run: elements exist statically in index.html
@@ -54,6 +54,12 @@ test('paused frame shows the banner and hides the pause button', async () => {
   w.__enableTest.handle({ type: 'paused', runId: 'run-1' });
   assert.equal(w.document.querySelector('#paused-banner').hidden, false);
   assert.equal(w.document.querySelector('#pause-btn').hidden, true);
+  // synthetic frame = engine still winding down; Resume must not be usable yet
+  assert.equal(w.document.querySelector('#resume-btn').disabled, true);
+
+  w.__enableTest.handle({ type: 'done', status: 'paused', runId: 'run-1' });
+  assert.equal(w.document.querySelector('#paused-banner').hidden, false);
+  assert.equal(w.document.querySelector('#resume-btn').disabled, false);
 });
 
 test('done{paused} also lands on the banner, not the error screen', async () => {
@@ -61,10 +67,11 @@ test('done{paused} also lands on the banner, not the error screen', async () => 
   w.__enableTest.setRun('run-1', 'pl-1');
   w.__enableTest.handle({ type: 'done', status: 'paused', runId: 'run-1' });
   assert.equal(w.document.querySelector('#paused-banner').hidden, false);
+  assert.equal(w.document.querySelector('#resume-btn').disabled, false);
   assert.equal(w.document.querySelector('#errored').classList.contains('active'), false);
 });
 
-test('resume button POSTs /api/enable/resume with the pipeline id', async () => {
+test('resume button POSTs /api/enable/resume with the pipeline id and current mock/interactive toggles', async () => {
   let resumeBody = null;
   const { window: w } = await boot({
     onFetch: (url, opts) => {
@@ -77,9 +84,13 @@ test('resume button POSTs /api/enable/resume with the pipeline id', async () => 
   });
   w.__enableTest.setRun('run-1', 'pl-1');
   w.__enableTest.handle({ type: 'paused', runId: 'run-1' });
+  // engine confirms the actual pause before Resume is usable
+  w.__enableTest.handle({ type: 'done', status: 'paused', runId: 'run-1' });
+  w.document.querySelector('#mock-toggle').checked = true;
+  w.document.querySelector('#interactive-toggle').checked = true;
   w.document.querySelector('#resume-btn').click();
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(resumeBody, { pipelineId: 'pl-1' });
+  assert.deepEqual(resumeBody, { pipelineId: 'pl-1', mock: true, interactive: true });
   assert.ok(FakeWS.last.url.includes('runId=run-2'), 'reconnected on the new runId');
 });
 
