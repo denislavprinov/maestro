@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -486,6 +486,30 @@ ALTER TABLE pipelines ADD COLUMN heartbeat_at TEXT;
 `;
 
 /**
+ * Incremental v10 -> v11 migration (per-agent user questions, spec 2026-07-11).
+ * ask_questions: nullable boolean per-node override (NULL = inherit the
+ * manifest default). step_questions: one row per (pipeline, step, round) of the
+ * ask-then-resume gate — mirrors the clarify table, keyed by the step record's
+ * stable "<stepIndex>:<nodeId>[#cycle]" key plus the round number. node_id is
+ * denormalized so prior answers can be re-injected per node without parsing
+ * step_key.
+ */
+const SCHEMA_V11 = `
+ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
+CREATE TABLE step_questions (
+  pipeline_id TEXT NOT NULL,
+  step_key    TEXT NOT NULL,
+  round       INTEGER NOT NULL,
+  node_id     TEXT,
+  agent_key   TEXT,
+  questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
+  answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+  PRIMARY KEY (pipeline_id, step_key, round),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+`;
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -521,6 +545,7 @@ export function migrate(db) {
     if (current < 8) db.exec(SCHEMA_V8);
     if (current < 9) db.exec(SCHEMA_V9);
     if (current < 10) db.exec(SCHEMA_V10);
+    if (current < 11) db.exec(SCHEMA_V11);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

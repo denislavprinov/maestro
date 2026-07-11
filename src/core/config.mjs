@@ -313,13 +313,19 @@ export async function removeCustomModel(projectDir, id) {
 // nested shape from those rows. activeWorkflowId is project_config.active_workflow_id;
 // unknown top-level keys (e.g. webUiTesting) round-trip via project_config.extra.
 
-/** Coerce a per-node selection to a clean {model?,effort?,fanOut?} or null (all empty). */
+/** Coerce a per-node selection to a clean {model?,effort?,fanOut?,askQuestions?} or null (all empty). */
 function cleanNodeSel(selection) {
   const model = typeof selection?.model === 'string' ? selection.model.trim() : '';
   const effort = typeof selection?.effort === 'string' ? selection.effort.trim() : '';
   const fanOut = typeof selection?.fanOut === 'boolean' ? selection.fanOut : undefined;
-  if (!model && !effort && fanOut === undefined) return null;
-  return { ...(model && { model }), ...(effort && { effort }), ...(fanOut !== undefined && { fanOut }) };
+  const askQuestions = typeof selection?.askQuestions === 'boolean' ? selection.askQuestions : undefined;
+  if (!model && !effort && fanOut === undefined && askQuestions === undefined) return null;
+  return {
+    ...(model && { model }),
+    ...(effort && { effort }),
+    ...(fanOut !== undefined && { fanOut }),
+    ...(askQuestions !== undefined && { askQuestions }),
+  };
 }
 
 /**
@@ -337,12 +343,13 @@ function readWorkflowsMap(key) {
     return workflows[wf];
   };
   for (const r of prepare(
-    'SELECT workflow_id, node_id, model, effort, fan_out FROM config_workflow_nodes WHERE project_key = ?'
+    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions FROM config_workflow_nodes WHERE project_key = ?'
   ).all(key)) {
     const sel = {};
     if (r.model) sel.model = r.model;
     if (r.effort) sel.effort = r.effort;
     if (r.fan_out !== null && r.fan_out !== undefined) sel.fanOut = !!r.fan_out;
+    if (r.ask_questions !== null && r.ask_questions !== undefined) sel.askQuestions = !!r.ask_questions;
     // Only attach a node entry that carries something (matches cleanNodeSel output).
     if (Object.keys(sel).length) ensure(r.workflow_id).nodes[r.node_id] = sel;
   }
@@ -381,25 +388,28 @@ export async function readRunConfig(projectDir) {
 }
 
 /**
- * Set (or clear) the model+effort+fanOut for one node instance of a workflow. A
- * cleaned selection of null (all blank) deletes the row. fanOut is preserved when
- * the caller omits it (read from the existing row) and set when a boolean. Writes
- * only the config_workflow_nodes table (legacy view + extra untouched).
+ * Set (or clear) the model+effort+fanOut+askQuestions for one node instance of a
+ * workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
+ * askQuestions are preserved when the caller omits them (read from the existing
+ * row) and set when a boolean. Writes only the config_workflow_nodes table
+ * (legacy view + extra untouched).
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {string} nodeId
- * @param {{model?:string,effort?:string,fanOut?:boolean}} selection
+ * @param {{model?:string,effort?:string,fanOut?:boolean,askQuestions?:boolean}} selection
  * @returns {Promise<void>}
  */
 export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
-    'SELECT fan_out FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+    'SELECT fan_out, ask_questions FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
   ).get(key, workflowId, nodeId);
   const prevFanOut = prev && prev.fan_out !== null && prev.fan_out !== undefined ? !!prev.fan_out : undefined;
   const fanOut = typeof selection.fanOut === 'boolean' ? selection.fanOut : prevFanOut;
-  const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, fanOut });
+  const prevAsk = prev && prev.ask_questions !== null && prev.ask_questions !== undefined ? !!prev.ask_questions : undefined;
+  const askQuestions = typeof selection.askQuestions === 'boolean' ? selection.askQuestions : prevAsk;
+  const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, fanOut, askQuestions });
 
   tx(() => {
     if (!sel) {
@@ -409,15 +419,17 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
       return;
     }
     prepare(`
-      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_key, workflow_id, node_id)
-      DO UPDATE SET model = excluded.model, effort = excluded.effort, fan_out = excluded.fan_out
+      DO UPDATE SET model = excluded.model, effort = excluded.effort,
+                    fan_out = excluded.fan_out, ask_questions = excluded.ask_questions
     `).run(
       key, workflowId, nodeId,
       sel.model ?? null,
       sel.effort ?? null,
       sel.fanOut === undefined ? null : (sel.fanOut ? 1 : 0),
+      sel.askQuestions === undefined ? null : (sel.askQuestions ? 1 : 0),
     );
   });
 }

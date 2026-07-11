@@ -1589,7 +1589,8 @@ app.patch('/api/config', async (req, res) => {
       if (!workflowId) return badRequest(res, 'workflowId is required to set node config');
       for (const [nodeId, sel] of Object.entries(body.nodes)) {
         await setNodeModel(projectDir, workflowId, nodeId, {
-          model: sel && sel.model, effort: sel && sel.effort, fanOut: sel && sel.fanOut,
+          model: sel && sel.model, effort: sel && sel.effort,
+          fanOut: sel && sel.fanOut, askQuestions: sel && sel.askQuestions,
         });
       }
     }

@@ -48,3 +48,26 @@ test('sanitizeSteps keeps an askQuestions-only entry (read back after write)', a
   const cfg = await readConfig(p);
   assert.deepEqual(cfg.steps.implementer, { askQuestions: true });
 });
+
+test('schema v11: ask_questions column + step_questions table exist', async () => {
+  await setStep(await freshProject(), 'planner', {}); // any call that opens the DB
+  const db = getDb();
+  assert.ok(db.prepare('PRAGMA user_version').get().user_version >= 11);
+  const cols = db.prepare('PRAGMA table_info(config_workflow_nodes)').all().map((c) => c.name);
+  assert.ok(cols.includes('ask_questions'), 'ask_questions column present');
+  const qCols = db.prepare('PRAGMA table_info(step_questions)').all().map((c) => c.name);
+  assert.deepEqual(qCols, ['pipeline_id', 'step_key', 'round', 'node_id', 'agent_key', 'questions', 'answers']);
+});
+
+test('setNodeModel persists askQuestions, preserves it when omitted, NULL = inherit', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 's1_0', { askQuestions: true });
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s1_0, { askQuestions: true });
+  await setNodeModel(p, 'wf_x', 's1_0', { model: 'claude-opus-4-8' });
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s1_0, { model: 'claude-opus-4-8', askQuestions: true });
+  await setNodeModel(p, 'wf_x', 's1_0', { model: 'claude-opus-4-8', askQuestions: false });
+  assert.equal((await resolveRunConfig(p, 'wf_x')).nodes.s1_0.askQuestions, false);
+  // Clearing everything deletes the row (all-empty selection).
+  await setNodeModel(p, 'wf_x', 's2_0', {});
+  assert.equal((await resolveRunConfig(p, 'wf_x')).nodes.s2_0, undefined);
+});
