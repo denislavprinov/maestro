@@ -66,6 +66,41 @@ function chosenProjectDir() {
   return document.querySelector('#project-path').value.trim() || document.querySelector('#project-select').value;
 }
 
+// ---------- home / target picker (project vs. workspace) ----------
+function currentTarget() {
+  return document.querySelector('input[name="target"]:checked')?.value || 'project';
+}
+
+async function loadWorkspaces() {
+  const sel = document.querySelector('#workspace-select');
+  const hint = document.querySelector('#workspace-empty-hint');
+  try {
+    const { workspaces } = await (await fetch('/api/enable/workspaces')).json();
+    if (!workspaces.length) {
+      sel.innerHTML = '<option value="">No workspaces yet</option>';
+      hint.hidden = false;
+      return;
+    }
+    hint.hidden = true;
+    sel.innerHTML = '<option value="">Choose a workspace…</option>' +
+      workspaces.map((w) => `<option value="${w.id}">${w.name} (${w.projectPaths.length} projects)</option>`).join('');
+  } catch {
+    sel.innerHTML = '<option value="">Could not list workspaces</option>';
+  }
+}
+
+function chosenWorkspaceId() {
+  return document.querySelector('#workspace-select').value;
+}
+
+function setTargetPane(target) {
+  document.querySelector('#target-project-pane').hidden = target !== 'project';
+  document.querySelector('#target-workspace-pane').hidden = target !== 'workspace';
+  for (const btn of document.querySelector('#target-seg').querySelectorAll('.seg-btn')) {
+    btn.setAttribute('aria-selected', String(btn.dataset.target === target));
+  }
+}
+
 // ---------- knowledge graph ----------
 // The graph routes address a project by *name* (a subdir of the projects root),
 // so we derive the name from the chosen dir. Projects pasted from outside the
@@ -292,19 +327,25 @@ function showPaused(reason) {
 }
 
 // ---------- run ----------
-async function start(projectDir, answers) {
+async function start(target, answers) {
   const mock = document.querySelector('#mock-toggle').checked;
-  const sourceBranch = document.querySelector('#source-branch')?.value || undefined;
-  lastProjectDir = projectDir;
+  const interactive = document.querySelector('#interactive-toggle').checked;
+  const body = { answers, mock, interactive };
+  if (target === 'workspace') {
+    body.workspaceId = chosenWorkspaceId();
+    lastProjectDir = '';   // graph/estimate buttons stay hidden in workspace mode
+  } else {
+    body.projectDir = chosenProjectDir();
+    body.sourceBranch = document.querySelector('#source-branch')?.value || undefined;
+    lastProjectDir = body.projectDir;
+  }
   resetProgress();
   show('progress');
   startLiveMeter();
   let runId;
   try {
-    const interactive = document.querySelector('#interactive-toggle').checked;
     const res = await fetch('/api/enable/run', { method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ projectDir, answers, mock, sourceBranch, interactive }) });
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) { showError((await res.json().catch(() => ({}))).error || `run failed (${res.status})`); return; }
     ({ runId } = await res.json());
   } catch (err) { showError(String(err.message || err)); return; }
@@ -956,17 +997,31 @@ function initTheme() {
 function init() {
   initTheme();
   loadProjects();
+  loadWorkspaces();
   loadHistory();
   buildSetupForm();
 
   document.querySelector('#go-setup').addEventListener('click', () => {
-    const dir = chosenProjectDir();
+    const target = currentTarget();
     const err = document.querySelector('#home-error');
-    if (!dir) { err.textContent = 'Pick a project or paste a path first.'; err.hidden = false; return; }
+    const ready = target === 'workspace' ? !!chosenWorkspaceId() : !!chosenProjectDir();
+    if (!ready) {
+      err.textContent = target === 'workspace' ? 'Pick a workspace first.' : 'Pick a project or paste a path first.';
+      err.hidden = false;
+      return;
+    }
     err.hidden = true;
     show('setup');
-    refreshEstimate();
+    if (target === 'project') refreshEstimate();   // no per-repo estimate for workspaces yet
   });
+
+  for (const btn of document.querySelector('#target-seg').querySelectorAll('.seg-btn')) {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.target;
+      document.querySelector(`input[name="target"][value="${target}"]`).checked = true;
+      setTargetPane(target);
+    });
+  }
 
   document.querySelector('#setup-form').addEventListener('change', scheduleEstimate);
   document.querySelector('#setup-form').addEventListener('input', scheduleEstimate);
@@ -1003,7 +1058,7 @@ function init() {
 
   document.querySelector('#setup-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    start(chosenProjectDir(), collectAnswers());
+    start(currentTarget(), collectAnswers());
   });
 
   for (const b of document.querySelectorAll('[data-back]')) {
