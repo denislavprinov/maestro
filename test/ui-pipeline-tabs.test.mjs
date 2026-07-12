@@ -192,6 +192,44 @@ test('a live non-pipeline run shows on Overview but has no child tab', async () 
   assert.equal(cards[0].dataset.runId, 'scan-1');
 });
 
+// Running badge split: green = running count, amber (with pause flag) = paused
+// count, hidden at zero. liveRuns() excludes 'paused' so the counts are disjoint.
+test('paused pipelines get their own badge; running badge excludes them', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
+  assert.equal(window.document.querySelector('#nav-paused-badge').hidden, true, 'paused badge hidden at zero');
+  recv({ type: 'done', runId: 'auth-fix', status: 'paused' });
+  assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
+  assert.equal(window.document.querySelector('#nav-paused-count').textContent, '1');
+  assert.equal(window.document.querySelector('#nav-paused-badge').hidden, false);
+  assert.ok(window.document.querySelector('#nav-paused-badge .pause-flag'), 'pause flag icon present');
+});
+
+// Workspace runs list every member project in the child hint (clamped by CSS).
+test('a workspace run lists all member projects in the child hint', async () => {
+  const { window, recv } = await boot();
+  recv({
+    type: 'hello',
+    runs: [live('ws-run', { kind: 'workspace-run', workspaceId: 'w1', projectNames: ['api', 'web', 'mobile', 'infra'] })],
+  });
+  const hint = window.document.querySelector('#nav-running-children .nav-child .child-proj');
+  assert.equal(hint.textContent, 'api · web · mobile · infra');
+  const single = window.document.querySelector('#nav-running-children .nav-child[data-child-run-id="ws-run"]');
+  assert.ok(single, 'workspace run still renders a child tab');
+});
+
+// A run started by ANOTHER tab / the CLI arrives via the run-created broadcast
+// (hello is once-per-socket) and must carry its project metadata immediately.
+test('run-created broadcast materializes a child row with project metadata', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [] });
+  recv({ type: 'run-created', runId: 'fresh', title: 'fresh run', projectDir: PROJECT, kind: 'run', status: 'starting', startedAt: '10:00:00' });
+  const row = window.document.querySelector('#nav-running-children .nav-child[data-child-run-id="fresh"]');
+  assert.ok(row, 'child row present without a reload');
+  assert.equal(row.querySelector('.child-proj').textContent, 'proj');
+  assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
+});
+
 // v3: finishing the FOCUSED run falls back to the Overview (Q&A #5).
 test('finishing the focused run falls back to Overview', async () => {
   const { window, recv } = await boot();

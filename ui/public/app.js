@@ -320,6 +320,25 @@ function handleServerMessage(msg) {
 
   // Tagged per-run event. Ignore anything without a runId.
   if (!msg.runId) return;
+  // Run birth announcement: carries the metadata hello would have sent (projectDir,
+  // kind, workspace attribution, member names) so a run started by ANOTHER tab or
+  // the CLI doesn't render "(no project)" until the next reload.
+  if (msg.type === 'run-created') {
+    upsertRun({
+      runId: msg.runId,
+      title: msg.title,
+      projectDir: msg.projectDir,
+      status: msg.status || 'starting',
+      startedAt: msg.startedAt,
+      kind: msg.kind || 'run',
+      workspaceId: msg.workspaceId || undefined,
+      projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
+    });
+    updateNavCounts();
+    renderPipelineTabs();
+    renderRunningView();
+    return;
+  }
   // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
   // A sub-agent with no parent run is meaningless, and auto-creating a card here is
   // exactly what produced the phantom "(untitled)" pipeline. Other event types may
@@ -415,6 +434,7 @@ function onHello(msg) {
       kind: r0.kind || 'run',
       pipelineId: r0.pipelineId || null,
       workspaceId: r0.workspaceId || undefined,
+      projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real (s0_0-keyed) nodes BEFORE any subagent delta paints
@@ -812,12 +832,13 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null,
-  workspaceId = undefined, workspaceName = undefined,
+  workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
     runId,
     title: title || '(untitled)',
     projectDir: projectDir || '',
+    projectNames,         // string[] for workspace runs (all member names); null otherwise
     status,
     startedAt: startedAt || nowHMS(),
     local,
@@ -1231,6 +1252,12 @@ function cycleAwareLabel(stepper, subAgents, groupKeys) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  // Mirror the on-disk pipeline short id the orchestrator stamps onto state.id
+  // after createPipeline. The server captures the same field (ui/server.mjs
+  // wireRun); without this the run model only ever gets a pipelineId from the
+  // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
+  // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
+  if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
   if (msg && msg.branch && msg.branch.feature) {
     r.branchFeature = msg.branch.feature;
   }
@@ -2226,6 +2253,7 @@ if (typeof window !== 'undefined') {
     paintRunCard,
     onHello,
     isPaused,
+    resumeRunFromCard,
   });
 }
 
@@ -5122,11 +5150,14 @@ el.form.addEventListener('submit', async (e) => {
   let projectDir = '';
   let workspaceId = '';
   let workspaceName = '';
+  let workspaceProjectNames = null;
   if (target === 'workspace') {
     workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
     if (!workspaceId) return setFormMsg('Select a workspace first (or create one).', 'err');
     const ws = state.workspaces.find((w) => w && w.id === workspaceId);
     workspaceName = (ws && ws.name) || '';
+    workspaceProjectNames = ws && Array.isArray(ws.projectPaths)
+      ? ws.projectPaths.map(projectName) : null;
   } else {
     projectDir = selectedProjectPath();
     if (!projectDir) return setFormMsg('Select a project first (or add one).', 'err');
@@ -5199,7 +5230,8 @@ el.form.addEventListener('submit', async (e) => {
     }
 
     // begin tracking the new run (creates a local model + switches to Running)
-    beginRun(data.runId, projectDir, title, target === 'workspace' ? { workspaceId, workspaceName } : {});
+    beginRun(data.runId, projectDir, title,
+      target === 'workspace' ? { workspaceId, workspaceName, projectNames: workspaceProjectNames } : {});
     // Re-enable the form so more runs can be started concurrently.
     el.startBtn.disabled = false;
     setFormMsg('Run started.', 'ok');
@@ -5235,6 +5267,7 @@ function beginRun(runId, projectDir, title, opts = {}) {
     kind: opts.workspaceId ? 'workspace-run' : 'run',
     workspaceId: opts.workspaceId || undefined,
     workspaceName: opts.workspaceName || undefined,
+    projectNames: Array.isArray(opts.projectNames) && opts.projectNames.length ? opts.projectNames : undefined,
   });
   hideViewer();
   updateNavCounts();
@@ -5397,6 +5430,7 @@ async function resumeRunFromCard(runId, btn) {
   // Snapshot the pre-pause log BEFORE the old run is dropped, to seed the resumed
   // run for a continuous log.
   const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
+  const prevBtnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
   try {
     const res = await fetch('/api/resume', {
@@ -5425,7 +5459,7 @@ async function resumeRunFromCard(runId, btn) {
     location.hash = `running/${data.runId}`;   // land on the continuous live card
     renderRunningView();
   } catch (err) {
-    if (btn) { btn.disabled = false; btn.textContent = ' Resume'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
     const rr = runs.get(runId);
     if (rr) onLog(rr, { source: 'ui', level: 'error', text: `resume failed: ${err.message}`, ts: Date.now() });
   }
@@ -7359,7 +7393,13 @@ function renderPipelineTabs() {
 
     const hint = document.createElement('span');
     hint.className = 'child-proj';
-    hint.textContent = projectName(r.projectDir);
+    // Workspace runs list every member project (CSS clamps at three lines);
+    // single-project runs keep the lone basename.
+    const projLabel = Array.isArray(r.projectNames) && r.projectNames.length
+      ? r.projectNames.join(' · ')
+      : projectName(r.projectDir);
+    hint.textContent = projLabel;
+    hint.title = projLabel;
 
     body.append(title, hint);
     row.append(dot, body);
@@ -7394,6 +7434,13 @@ function renderPipelineTabs() {
 function updateNavCounts() {
   const c = $('#nav-running-count');
   if (c) c.textContent = String(liveRuns().length);
+  // Paused pipelines get their own amber badge (hidden at zero); liveRuns()
+  // excludes status 'paused', so the two counts never overlap.
+  const paused = [...runs.values()].filter((r) => isPipelineRun(r) && isPaused(r)).length;
+  const pc = $('#nav-paused-count');
+  if (pc) pc.textContent = String(paused);
+  const pb = $('#nav-paused-badge');
+  if (pb) pb.hidden = paused === 0;
 }
 
 // Single authoritative refresh for all four sidebar counts. Running is derived from
