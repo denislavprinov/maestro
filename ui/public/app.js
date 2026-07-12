@@ -37,6 +37,9 @@ const state = {
   },
   // --- Agent creation wizard (ephemeral; reset on wizard close) ---
   agentWizard: { step: 1, genId: '', abort: null, draft: null, ownMd: false },
+  // --- Pluggable task sources (New Pipeline) ---
+  pluginSources: [],        // GET /api/sources entries with type:'plugin'
+  activePluginSource: null, // selected plugin source | null (legacy prompt/markdown)
 };
 
 // UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
@@ -54,7 +57,15 @@ import {
   groupPaletteByDomain,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
-import { statusChip, diffBadges, mergeFindings } from './results-view.mjs';
+import {
+  statusChip, diffBadges, mergeFindings,
+  sourceBadge, reportResultControl, workflowPickerLabel,
+} from './results-view.mjs';
+import {
+  renderPluginList, renderInstallConsent, renderUpdatePreview,
+  renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
+} from './plugins-view.mjs';
+import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -88,6 +99,8 @@ const el = {
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
   markdownPane: $('#markdown-pane'),
+  sourceSeg: $('#source-seg'),
+  pluginSourcePane: $('#plugin-source-pane'),
   prompt: $('#prompt'),
   promptMarkdown: $('#promptMarkdown'),
   mdFile: $('#mdFile'),
@@ -199,6 +212,20 @@ const el = {
   agwSave: $('#agw-save'),
   agwRegen: $('#agw-regen'),
   agwClose: $('#agw-close'),
+
+  // Plugins view
+  pluginsList: $('#plugins-list'),
+  pluginsMsg: $('#plugins-msg'),
+  pluginAddBtn: $('#plugin-add-btn'),
+  pluginAddRow: $('#plugin-add-row'),
+  pluginRepoUrl: $('#plugin-repo-url'),
+  pluginRepoScan: $('#plugin-repo-scan'),
+  pluginDiscovered: $('#plugin-discovered'),
+  pluginModal: $('#plugin-modal'),
+  pluginModalTitle: $('#plugin-modal-title'),
+  pluginModalBody: $('#plugin-modal-body'),
+  pluginModalActions: $('#plugin-modal-actions'),
+  pluginModalClose: $('#plugin-modal-close'),
 };
 
 // ---------------------------------------------------------------------------
@@ -1944,6 +1971,7 @@ async function composerSave() {
 }
 
 async function composerLoadSaved() {
+  await loadEnabledPluginNames();
   composer.saved = await listWorkflows();
   composerRenderList();
 }
@@ -2036,7 +2064,7 @@ function composerRenderList() {
       `<div class="pl-row">` +
         `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
         `<div class="pl-main">` +
-          `<div class="pl-name">${escapeHtml(item.name)} <span class="pl-domain">${escapeHtml(item.domain || 'general')}</span></div>` +
+          `<div class="pl-name">${escapeHtml(workflowPickerLabel(item, enabledPluginNames) || item.name)} <span class="pl-domain">${escapeHtml(item.domain || 'general')}</span></div>` +
           `<div class="pl-meta">${meta}</div>` +
           `<div class="pl-chips">${chips}</div>` +
         `</div>` +
@@ -2364,11 +2392,28 @@ async function getAgentsApi() {
   } catch { return state.agents; }
 }
 
+// Enabled-plugin names for workflow-picker labels (§9.3/§6.5). null = plugin
+// list not known yet (fetch pending/failed) — workflowPickerLabel then skips
+// the conservative "— disabled" flag. Refreshed once per view-open.
+let enabledPluginNames = null;
+async function loadEnabledPluginNames() {
+  try {
+    const res = await fetch('/api/plugins');
+    const data = await safeJson(res);
+    if (res.ok && Array.isArray(data.plugins)) {
+      enabledPluginNames = data.plugins.filter((p) => p.enabled).map((p) => p.name);
+      return;
+    }
+  } catch { /* endpoint absent/down -> suffix-free labels */ }
+  enabledPluginNames = null;
+}
+
 // Fill #workflowSelect with Default + saved names, preserving/falling back to
 // the active selection (state.workflowId), then render that workflow's config.
 async function loadWorkflowsInto(selectId) {
   const sel = el.workflowSelect;
   if (!sel) return;
+  await loadEnabledPluginNames();
   const workflows = await listWorkflowsApi();
   if (workflows === null) {
     // List fetch failed: keep whatever the dropdown already shows (do NOT
@@ -2381,7 +2426,7 @@ async function loadWorkflowsInto(selectId) {
   const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
   const want = selectId || state.workflowId || 'wf_default';
   sel.innerHTML = '';
-  list.forEach((wf) => sel.appendChild(option(wf.id, wf.name || wf.id)));
+  list.forEach((wf) => sel.appendChild(option(wf.id, workflowPickerLabel(wf, enabledPluginNames) || wf.id)));
   // Fall back to default if the wanted id is gone (e.g. a deleted workflow).
   state.workflowId = list.some((wf) => wf.id === want) ? want : 'wf_default';
   sel.value = state.workflowId;
@@ -3326,8 +3371,10 @@ function onError(r) {
 // ---------------------------------------------------------------------------
 function syncSourceToggle() {
   const val = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
-  el.promptPane.classList.toggle('hidden', val !== 'prompt');
-  el.markdownPane.classList.toggle('hidden', val !== 'markdown');
+  const plugin = !!state.activePluginSource;
+  el.promptPane.classList.toggle('hidden', plugin || val !== 'prompt');
+  el.markdownPane.classList.toggle('hidden', plugin || val !== 'markdown');
+  if (el.pluginSourcePane) el.pluginSourcePane.classList.toggle('hidden', !plugin);
 }
 el.sourceRadios.forEach((r) => r.addEventListener('change', syncSourceToggle));
 
@@ -3336,6 +3383,8 @@ el.sourceRadios.forEach((r) => r.addEventListener('change', syncSourceToggle));
 $$('#source-seg button[data-src]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const src = btn.dataset.src;
+    state.activePluginSource = null;
+    $$('#source-seg button[data-plugin-src]').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); });
     $$('#source-seg button[data-src]').forEach((b) => {
       const on = b === btn;
       b.classList.toggle('on', on);
@@ -3346,6 +3395,99 @@ $$('#source-seg button[data-src]').forEach((btn) => {
     syncSourceToggle();
   });
 });
+
+// --- Pluggable task sources (plugins). /api/sources is fetched on every
+// New-Pipeline open (self-heals after install/enable — no cache invalidation
+// seam needed); plugin sources append segment buttons after Prompt/Markdown.
+// FEATURE-OFF: with zero plugins the endpoint lists only prompt+markdown, this
+// renders NOTHING, and the segment + submit body are byte-identical to today.
+async function loadTaskSources() {
+  let sources = [];
+  try {
+    const res = await fetch('/api/sources');
+    const data = await safeJson(res);
+    if (res.ok && Array.isArray(data.sources)) sources = data.sources;
+  } catch { /* endpoint absent/down -> legacy-only */ }
+  state.pluginSources = sources.filter((s) => s && s.type === 'plugin');
+  $$('#source-seg button[data-plugin-src]').forEach((b) => b.remove());   // idempotent rebuild
+  for (const src of state.pluginSources) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.pluginSrc = `${src.plugin}/${src.sourceId}`;
+    b.setAttribute('aria-pressed', 'false');
+    b.textContent = src.displayName || src.sourceId;
+    b.addEventListener('click', () => selectPluginSource(src, b));
+    el.sourceSeg.appendChild(b);
+  }
+  // Active source vanished (uninstalled/disabled)? Fall back to the radios.
+  if (state.activePluginSource && !state.pluginSources.some((s) =>
+      s.plugin === state.activePluginSource.plugin && s.sourceId === state.activePluginSource.sourceId)) {
+    state.activePluginSource = null;
+    el.pluginSourcePane.replaceChildren();
+    syncSourceToggle();
+  }
+}
+
+// The pane's injected `call`: one connector op via POST /api/sources/call.
+function sourceCall(src) {
+  return async (op, args) => {
+    const res = await fetch('/api/sources/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plugin: src.plugin, sourceId: src.sourceId, op, args: args || {} }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok || data.ok === false) {
+      throw new Error((data.error && data.error.message) || data.error || `HTTP ${res.status}`);
+    }
+    return data.result;
+  };
+}
+
+function selectPluginSource(src, btn) {
+  state.activePluginSource = src;
+  $$('#source-seg button').forEach((b) => {
+    const on = b === btn;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  syncSourceToggle();
+  mountPluginSourcePane(src);
+}
+
+// validateConfig gate first (= "Test connection"); then the declarative pane.
+async function mountPluginSourcePane(src) {
+  const host = el.pluginSourcePane;
+  const call = sourceCall(src);
+  host.replaceChildren(Object.assign(document.createElement('small'),
+    { className: 'hint', textContent: `Checking ${src.displayName} configuration…` }));
+  let v;
+  try { v = await call('validateConfig', {}); }
+  catch (e) { v = { ok: false, errors: [{ message: e.message }] }; }
+  if (state.activePluginSource !== src) return;   // user switched away meanwhile
+  host.replaceChildren();
+  if (!v || v.ok === false) {
+    const box = document.createElement('div');
+    box.className = 'sp-config-missing';
+    const msg = document.createElement('p');
+    msg.className = 'hint err';
+    msg.textContent = `${src.displayName} is not configured: ${((v && v.errors) || [])
+      .map((x) => x.message).join('; ') || 'connection check failed'}`;
+    const link = document.createElement('a');
+    link.href = '#plugins';
+    link.textContent = 'Open Plugins settings';
+    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'plugins'; });
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-ghost btn-mini';
+    retry.textContent = 'Test connection';
+    retry.addEventListener('click', () => mountPluginSourcePane(src));
+    box.append(msg, link, retry);
+    host.appendChild(box);
+    return;
+  }
+  host.appendChild(renderSourcePane(src, { call }));
+}
 
 // Mock switch. The visible .switch mirrors the hidden #mock checkbox, which is
 // what the submit handler reads (el.mock.checked).
@@ -5196,7 +5338,12 @@ el.form.addEventListener('submit', async (e) => {
     body.projectDir = projectDir;
   }
 
-  if (source === 'markdown') {
+  const psrc = state.activePluginSource;
+  if (psrc) {
+    const picked = collectSourcePane(el.pluginSourcePane);
+    if (picked.error) return setFormMsg(picked.error, 'err');
+    body.source = { type: 'plugin', plugin: psrc.plugin, sourceId: psrc.sourceId, taskId: picked.taskId, inputs: picked.inputs };
+  } else if (source === 'markdown') {
     if (!mdText) return setFormMsg('Provide markdown text or load a .md file.', 'err');
     body.promptMarkdown = mdText;
   } else {
@@ -5329,6 +5476,178 @@ async function saveSettings(root) {
 
 if (el.settingsSave) el.settingsSave.addEventListener('click', () => saveSettings((el.settingsRoot.value || '').trim()));
 if (el.settingsReset) el.settingsReset.addEventListener('click', () => saveSettings(''));
+
+// ---------------------------------------------------------------------------
+// Plugins view. Pure rendering lives in plugins-view.mjs; this block owns the
+// endpoint calls, the modal shell, and ONE delegated click handler on the list.
+// ---------------------------------------------------------------------------
+function setPluginsMsg(text, kind) {
+  if (!el.pluginsMsg) return;
+  el.pluginsMsg.textContent = text || '';
+  el.pluginsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+// Tiny modal shell around #plugin-modal: swap in a body element + action buttons.
+function pluginModal(title, bodyEl, actions = []) {
+  el.pluginModalTitle.textContent = title;
+  el.pluginModalBody.replaceChildren(bodyEl);
+  el.pluginModalActions.replaceChildren(...actions.map(([label, cls, fn]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = cls; b.textContent = label;
+    b.addEventListener('click', fn);
+    return b;
+  }));
+  el.pluginModal.classList.remove('hidden');
+}
+function closePluginModal() { el.pluginModal.classList.add('hidden'); }
+
+// JSON fetch helper: { ok, status, data } — body omitted when undefined.
+async function pluginApi(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { ok: res.ok, status: res.status, data: await safeJson(res) };
+}
+
+async function loadPluginsView() {
+  setPluginsMsg('');
+  try {
+    const res = await fetch('/api/plugins');
+    const data = await safeJson(res);
+    if (!res.ok) return setPluginsMsg(data.error || `HTTP ${res.status}`, 'err');
+    el.pluginsList.replaceChildren(renderPluginList(data.plugins || []));
+  } catch (e) { setPluginsMsg(e.message, 'err'); }
+}
+
+// Add repo -> POST /api/plugins/repo -> discovery pick-list (each row carries
+// its "Will install" inventory) -> Install opens the consent modal.
+async function scanPluginRepo() {
+  const url = (el.pluginRepoUrl.value || '').trim();
+  if (!url) return setPluginsMsg('Enter a repo URL (https://github.com/owner/repo or owner/repo).', 'err');
+  el.pluginRepoScan.disabled = true;
+  setPluginsMsg('Scanning repo…');
+  const { ok, data } = await pluginApi('POST', '/api/plugins/repo', { url });
+  el.pluginRepoScan.disabled = false;
+  if (!ok) return setPluginsMsg(data.error || 'scan failed', 'err');
+  setPluginsMsg('');
+  el.pluginDiscovered.replaceChildren();
+  for (const d of data.discovered || []) {
+    const row = document.createElement('div');
+    row.className = 'pl-pick-row';
+    const label = document.createElement('span');
+    label.textContent = `${d.name}${d.manifest && d.manifest.description ? ' — ' + d.manifest.description : ''}`;
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'btn btn-primary btn-mini'; btn.textContent = 'Install…';
+    btn.addEventListener('click', () => openInstallConsent({ ...d, repoUrl: data.repoUrl, sha: data.sha }));
+    row.append(label, btn);
+    el.pluginDiscovered.appendChild(row);
+  }
+  if (!(data.discovered || []).length) setPluginsMsg('No maestro-plugin.json found at depth 0–1 of that repo.', 'err');
+}
+
+function openInstallConsent(entry) {
+  pluginModal(`Will install: ${entry.name}`, renderInstallConsent(entry, entry.inventory || {}), [
+    ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
+    ['Install', 'btn btn-primary btn-mini', async () => {
+      closePluginModal();
+      setPluginsMsg(`Installing ${entry.name}…`);
+      const { ok, data } = await pluginApi('POST', '/api/plugins/install',
+        { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha });
+      if (!ok) return setPluginsMsg(data.error || 'install failed', 'err');
+      setPluginsMsg(`Installed ${entry.name}.`, 'ok');
+      invalidateAgentCaches();                 // plugin agents join the registry
+      loadPluginsView();
+    }],
+  ]);
+}
+
+async function openPluginSettings(name) {
+  const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config`);
+  if (!ok) return setPluginsMsg(data.error || 'config load failed', 'err');
+  // Multi-source { sources:[{id,schema,values}] }, single-source { schema, values } tolerated.
+  const sources = Array.isArray(data.sources) ? data.sources
+    : [{ id: data.sourceId || '', schema: data.schema || [], values: data.values || {} }];
+  const body = renderConfigForm(sources);
+  pluginModal(`Settings: ${name}`, body, [
+    ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
+    ['Save', 'btn btn-primary btn-mini', async () => {
+      // One PUT per source form, each with ITS OWN sourceId — merging every form
+      // into a single sourceId-less PUT would 400 for multi-source plugins (the
+      // server only infers sourceId when the plugin has exactly one source).
+      let failed = null;
+      for (const f of body.querySelectorAll('.pl-config-form')) {
+        const { sourceId, values } = collectConfigForm(f);
+        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, { sourceId, values });
+        if (!r.ok) { failed = r.data.error || 'save failed'; break; }
+      }
+      closePluginModal();
+      setPluginsMsg(failed || 'Settings saved.', failed ? 'err' : 'ok');
+    }],
+  ]);
+}
+
+// One delegated listener: enable toggle + Settings/Doctor/Update/Remove.
+if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
+  const t = e.target;
+  const name = t && t.dataset ? t.dataset.name : '';
+  if (!name) return;
+  if (t.classList.contains('pl-toggle')) {
+    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/enable`, { enabled: t.checked });
+    if (!ok) { setPluginsMsg(data.error || 'toggle failed', 'err'); t.checked = !t.checked; return; }
+    invalidateAgentCaches();                   // disabled plugin's agents leave the registry
+    loadPluginsView();
+  } else if (t.classList.contains('pl-settings')) {
+    openPluginSettings(name);
+  } else if (t.classList.contains('pl-doctor')) {
+    setPluginsMsg(`Running doctor on ${name}…`);
+    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/doctor`);
+    setPluginsMsg('');
+    pluginModal(`Doctor: ${name}`,
+      renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }),
+      [['Close', 'btn btn-ghost btn-mini', closePluginModal]]);
+  } else if (t.classList.contains('pl-update')) {
+    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+    if (!ok) return setPluginsMsg(data.error || 'update preview failed', 'err');
+    const body = renderUpdatePreview(data);
+    pluginModal(`Update ${name}`, body, [['Close', 'btn btn-ghost btn-mini', closePluginModal]]);
+    const confirmBtn = body.querySelector('.pl-confirm-update');
+    if (confirmBtn) confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true;
+      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      closePluginModal();
+      if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
+      setPluginsMsg(`Updated ${name}.`, 'ok');
+      invalidateAgentCaches();
+      loadPluginsView();
+    });
+  } else if (t.classList.contains('pl-remove')) {
+    const sure = await confirmModal({
+      title: 'Uninstall plugin',
+      message: `Uninstall "${name}"?\nIts config/secrets under data/ are kept (purge later removes them).`,
+      confirmLabel: 'Uninstall',
+    });
+    if (!sure) return;
+    const { ok, status, data } = await pluginApi('DELETE', `/api/plugins/${encodeURIComponent(name)}`);
+    if (status === 409) {
+      pluginModal(`Cannot uninstall ${name}`, renderReferences409(data.references || []),
+        [['Close', 'btn btn-ghost btn-mini', closePluginModal]]);
+      return;
+    }
+    if (!ok) return setPluginsMsg(data.error || 'uninstall failed', 'err');
+    setPluginsMsg(`Uninstalled ${name}. Leftover data kept under ~/.maestro/plugins/${name}/data.`, 'ok');
+    invalidateAgentCaches();
+    loadPluginsView();
+  }
+});
+
+if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
+  el.pluginAddRow.classList.toggle('hidden');
+  if (!el.pluginAddRow.classList.contains('hidden')) el.pluginRepoUrl.focus();
+});
+if (el.pluginRepoScan) el.pluginRepoScan.addEventListener('click', scanPluginRepo);
+if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', closePluginModal);
 
 // ---------------------------------------------------------------------------
 // Per-card Stop. POST /api/stop; on success the server emits state(stopped) +
@@ -6183,6 +6502,9 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
     const { cls, text } = historyBadge(p);
     badge.className = cls;
     badge.textContent = text;
+    // Plugin provenance badge (§11) — null for prompt/markdown rows.
+    const src = sourceBadge(p);
+    if (src) badge.after(src);
   }
 
   const titleEl = node.querySelector('.h-meta b');
@@ -6278,7 +6600,7 @@ function historyLogUrl(id, record) {
 // (paintDiffBar); the Layer-2 overview moved to the Overview dropdown (paintOverviewBar).
 // The "+X / −Y" line-count pill was dropped — renderHistDiff() already shows that next
 // to the Create-PR button.
-function renderResults(host, results) {
+function renderResults(host, results, row) {
   host.innerHTML = '';
   if (!results) { host.textContent = 'No results for this run.'; return; }
 
@@ -6289,6 +6611,15 @@ function renderResults(host, results) {
   status.className = 'results-chip';
   status.textContent = statusChip(results);
   chips.appendChild(status);
+  // Plugin provenance (§11): source badge + manual write-back retry (§7.5).
+  // Prompt/markdown rows produce a null badge — nothing rendered.
+  const src = sourceBadge(row);
+  if (src) chips.appendChild(src);
+  if (row && row.source_type === 'plugin') {
+    chips.appendChild(reportResultControl(row.id, {
+      post: async (url) => { const r = await fetch(url, { method: 'POST' }); return safeJson(r); },
+    }));
+  }
   host.appendChild(chips);
 
   // Key things to check (review issues) — reuse the .issue.sev-* gate styles.
@@ -6407,7 +6738,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify, data.stepQuestions);
     // Results header (status pill + checks). Diff + Overview are separate dropdowns.
     const resHost = detail.querySelector('.results-section');
-    if (resHost) renderResults(resHost, data.results);
+    if (resHost) renderResults(resHost, data.results, data.state);
     paintDiffBar(detail.querySelector('.diff-bar'), data.results);
     paintOverviewBar(detail.querySelector('.overview-bar'), {
       id, projectKey: record && record.projectKey, projectDir, overview: data.overview,
@@ -7472,7 +7803,7 @@ const views = $$('.view');
 const navLinks = $$('.nav a[data-nav], .topnav a[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'settings'];
 
 function showView(name, param = '') {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -7524,10 +7855,12 @@ function showView(name, param = '') {
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
+  if (name === 'plugins') loadPluginsView();
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
+  if (name === 'new') loadTaskSources();
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;

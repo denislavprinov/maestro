@@ -132,6 +132,7 @@ function rowToTpl(r) {
     name: r.name,
     version: r.version,
     domain: r.domain || 'general',          // pre-migration NULL → 'general'
+    origin: r.origin || null,               // 'plugin:<name>' provenance; NULL = user-created
     steps: parseArr(r.steps),
     feedbacks: parseArr(r.feedbacks),
     createdAt: r.created_at,
@@ -144,7 +145,7 @@ function readRaw(id) {
   if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
   getDb();
   const r = prepare(
-    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at FROM workflows WHERE id = ?'
+    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at, origin FROM workflows WHERE id = ?'
   ).get(id);
   if (!r) return null;
   const tpl = rowToTpl(r);
@@ -209,7 +210,7 @@ export async function readWorkflow(id) {
 export async function listWorkflows() {
   getDb();
   const rows = prepare(
-    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at FROM workflows ORDER BY created_at DESC, id'
+    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at, origin FROM workflows ORDER BY created_at DESC, id'
   ).all();
   return rows.filter((r) => r.id !== DEFAULT_WORKFLOW.id).map(rowToTpl);
 }

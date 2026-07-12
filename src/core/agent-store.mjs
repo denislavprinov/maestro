@@ -80,6 +80,13 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   if (existing && existing.origin === 'builtin') {
     throw err(`"${key}" is a built-in agent — duplicate it instead of editing`, 'BUILTIN');
   }
+  const origin = String(existing?.origin || '');
+  if (origin.startsWith('plugin:')) {
+    throw Object.assign(
+      new Error(`agent "${key}" is managed by plugin "${origin.slice('plugin:'.length)}" — disable or uninstall the plugin instead`),
+      { code: 'PLUGIN' },
+    );
+  }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
   // `existing` carries the COMPUTED origin/agentPath fields; normalizeMeta's fixed
   // return set drops them, so the spread below never persists them to the sidecar.
@@ -108,6 +115,13 @@ export async function deleteAgent(key) {
   if (existing && existing.origin === 'builtin') {
     // "duplicate it" must appear here: the API test pins /duplicate it/i on DELETE.
     throw err(`"${key}" is a built-in agent and cannot be deleted — duplicate it under a new name instead`, 'BUILTIN');
+  }
+  const origin = String(existing?.origin || '');
+  if (origin.startsWith('plugin:')) {
+    throw Object.assign(
+      new Error(`agent "${key}" is managed by plugin "${origin.slice('plugin:'.length)}" — disable or uninstall the plugin instead`),
+      { code: 'PLUGIN' },
+    );
   }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
   const refs = (await listWorkflows())

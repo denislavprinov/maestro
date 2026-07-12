@@ -20,6 +20,7 @@
     "install:agents": "node scripts/install.mjs",
     "smoke": "MAESTRO_MOCK=1 MAESTRO_HOME=.maestro-smoke node --disable-warning=ExperimentalWarning src/cli/maestro.mjs --project examples/sandbox --prompt \"demo task\" --mock --yes",
     "smoke:workspace": "MAESTRO_MOCK=1 MAESTRO_HOME=.maestro-smoke node --disable-warning=ExperimentalWarning scripts/smoke-workspace.mjs",
+    "smoke:plugin": "MAESTRO_MOCK=1 MAESTRO_HOME=.maestro-smoke node --disable-warning=ExperimentalWarning scripts/smoke-plugin.mjs",
     "test": "rm -rf .maestro-test && MAESTRO_HOME=.maestro-test node --disable-warning=ExperimentalWarning --test test/*.mjs"
   },
   "dependencies": {
