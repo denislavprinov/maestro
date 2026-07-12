@@ -2190,6 +2190,7 @@ if (typeof window !== 'undefined') {
     historyBadge,
     statusPill,
     buildHistCard,
+    paintClarifyBar,
     pauseRun,
     setupResumeButton,
     nodeKindFor,
@@ -6300,7 +6301,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
       );
     }
     // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
-    paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
+    paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify, data.stepQuestions);
     // Results header (status pill + checks). Diff + Overview are separate dropdowns.
     const resHost = detail.querySelector('.results-section');
     if (resHost) renderResults(resHost, data.results);
@@ -6342,21 +6343,23 @@ async function loadHistDetail(projectDir, id, detail, record) {
 // straight from readPipelineExtras:
 // clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]}.
 // Paint the Clarify dropdown from saved Q&A (read-only). Hidden when empty.
-function paintClarifyBar(barEl, clarify) {
+function paintClarifyBar(barEl, clarify, stepQuestions) {
   if (!barEl) return;
   const questions = Array.isArray(clarify && clarify.questions) ? clarify.questions : [];
   const answers = Array.isArray(clarify && clarify.answers) ? clarify.answers : [];
-  if (!questions.length && !answers.length) { barEl.hidden = true; return; }
+  const stepQ = Array.isArray(stepQuestions) ? stepQuestions.filter((r) => r && (r.questions || []).length) : [];
+  if (!questions.length && !answers.length && !stepQ.length) { barEl.hidden = true; return; }
   barEl.hidden = false;
-  barEl._clarify = { questions, answers };
+  barEl._clarify = { questions, answers, stepQ };
 
   const btn = barEl.querySelector('.btn-subs');
   const panel = barEl.querySelector('.clarify-panel');
   const count = barEl.querySelector('.sb-count');
-  if (count) { count.textContent = String(questions.length); count.classList.remove('grey'); }
+  const total = questions.length + stepQ.reduce((n, r) => n + r.questions.length, 0);
+  if (count) { count.textContent = String(total); count.classList.remove('grey'); }
 
   if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
-    renderClarifyPanel(panel, questions, answers); // re-render an already-open panel
+    renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers, barEl._clarify.stepQ);
   }
   if (btn && btn.dataset.bound !== '1') {
     btn.dataset.bound = '1';
@@ -6365,35 +6368,48 @@ function paintClarifyBar(barEl, clarify) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open) renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers);
+        if (!open) renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers, barEl._clarify.stepQ);
       }
     });
   }
 }
 
 // Render each question with its chosen answer into the clarify panel (idempotent).
-function renderClarifyPanel(panelEl, questions, answers) {
+function renderClarifyPanel(panelEl, questions, answers, stepQuestions) {
   panelEl.innerHTML = '';
-  const byId = new Map((answers || []).map((a) => [a.id, a]));
-  questions.forEach((q, i) => {
-    const block = document.createElement('div');
-    block.className = 'qblock';
-    const qtext = document.createElement('div');
-    qtext.className = 'qtext';
-    const qn = document.createElement('span');
-    qn.className = 'qn';
-    qn.textContent = String(i + 1);
-    qtext.appendChild(qn);
-    qtext.appendChild(document.createTextNode(typeof q.question === 'string' ? q.question : ''));
-    block.appendChild(qtext);
-    const ans = byId.get(q.id);
-    const aLine = document.createElement('div');
-    aLine.className = 'hist-answer';
-    const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
-    aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
-    block.appendChild(aLine);
-    panelEl.appendChild(block);
-  });
+  const addBlocks = (qs, as, offset) => {
+    const byId = new Map((as || []).map((a) => [a.id, a]));
+    (qs || []).forEach((q, i) => {
+      const block = document.createElement('div');
+      block.className = 'qblock';
+      const qtext = document.createElement('div');
+      qtext.className = 'qtext';
+      const qn = document.createElement('span');
+      qn.className = 'qn';
+      qn.textContent = String(offset + i + 1);
+      qtext.appendChild(qn);
+      qtext.appendChild(document.createTextNode(typeof q.question === 'string' ? q.question : ''));
+      block.appendChild(qtext);
+      const ans = byId.get(q.id);
+      const aLine = document.createElement('div');
+      aLine.className = 'hist-answer';
+      const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
+      aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
+      block.appendChild(aLine);
+      panelEl.appendChild(block);
+    });
+    return offset + (qs || []).length;
+  };
+  let n = addBlocks(questions, answers, 0);
+  for (const r of Array.isArray(stepQuestions) ? stepQuestions : []) {
+    const head = document.createElement('div');
+    head.className = 'hint';
+    head.style.margin = '8px 0 4px';
+    const cyc = String(r.stepKey || '').split('#')[1];
+    head.textContent = `${r.agentKey || 'agent'} — round ${r.round}${cyc ? ` · cycle ${cyc}` : ''}`;
+    panelEl.appendChild(head);
+    n = addBlocks(r.questions, r.answers, n);
+  }
 }
 
 // Paint the Live-logs dropdown. Hidden unless a 'live-log' artifact exists. The
