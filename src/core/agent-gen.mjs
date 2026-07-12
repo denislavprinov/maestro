@@ -127,8 +127,14 @@ class AgentGen extends EventEmitter {
       `Write the metadata JSON to: ${this.metaPath}\n` +
       'EXACT shape (one JSON object): { "key": "<lowerCamel>", "displayName", "description", ' +
       '"color": "green|peach|red|blue|violet|amber", "runnerType": "producer|verifier", ' +
-      '"loopSource": bool, "fanOut": bool, "consumes": [..], "optionalConsumes": [..], ' +
-      '"produces": [..], "connectsTo": "*"|["key",..], "order": number }\n\n'
+      '"loopSource": bool, "fanOut": bool, "asksQuestions": bool, "questionsLocked": bool, ' +
+      '"questionsDefault": bool, "consumes": [..], "optionalConsumes": [..], ' +
+      '"produces": [..], "connectsTo": "*"|["key",..], "order": number }\n' +
+      'Questions flags: asksQuestions=true if the agent may need a user decision mid-task ' +
+      '(the orchestrator pauses it and resumes it with the answers). questionsLocked=true ONLY if ' +
+      "asking the user is the agent's whole purpose (the user then cannot toggle it in the " +
+      'pipeline menu). questionsDefault=true only for locked-on agents; every other agent ' +
+      'starts OFF and the user opts in per pipeline.\n\n'
     );
   }
 

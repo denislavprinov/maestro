@@ -969,6 +969,7 @@ async function mockAgentGen(m, onEvent) {
   const meta = {
     key, displayName: name, description: `mock-generated agent for ${name}`,
     color: 'amber', runnerType: 'producer', loopSource: false, fanOut: false,
+    asksQuestions: true, questionsLocked: false, questionsDefault: false,
     consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99,
   };
   if (m.MOCK_OUT) {

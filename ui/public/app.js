@@ -4502,6 +4502,18 @@ function buildChipChecks(host, options, selected) {
 }
 const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
 
+// The two questions sub-flags are meaningless (and normalizeMeta force-clears
+// them) when the agent cannot ask; mirror that in the form.
+function syncQuestionFlags(root) {
+  const asks = root.querySelector('.agent-f-questions');
+  const locked = root.querySelector('.agent-f-questions-locked');
+  const def = root.querySelector('.agent-f-questions-default');
+  if (!asks || !locked || !def) return;
+  locked.disabled = !asks.checked;
+  def.disabled = !asks.checked;
+  if (!asks.checked) { locked.checked = false; def.checked = false; }
+}
+
 // Fill every .agent-f-* field under `root` from meta (+ optional markdown).
 function agentFormFill(root, meta, markdown) {
   const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
@@ -4530,6 +4542,11 @@ function agentFormFill(root, meta, markdown) {
   root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
   root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
   root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
+  root.querySelector('.agent-f-questions').checked = !!meta.asksQuestions;
+  root.querySelector('.agent-f-questions-locked').checked = !!meta.questionsLocked;
+  root.querySelector('.agent-f-questions-default').checked = !!meta.questionsDefault;
+  syncQuestionFlags(root);
+  root.querySelector('.agent-f-questions').onchange = () => syncQuestionFlags(root);
   if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
 }
 
@@ -4549,6 +4566,9 @@ function agentFormRead(root) {
       order: Number(root.querySelector('.agent-f-order').value),
       fanOut: root.querySelector('.agent-f-fanout').checked,
       loopSource: root.querySelector('.agent-f-loopsource').checked,
+      asksQuestions: root.querySelector('.agent-f-questions').checked,
+      questionsLocked: root.querySelector('.agent-f-questions-locked').checked,
+      questionsDefault: root.querySelector('.agent-f-questions-default').checked,
     },
     markdown: root.querySelector('.agent-f-md').value,
   };
