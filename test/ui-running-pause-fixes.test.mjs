@@ -69,3 +69,31 @@ test('(d) run-card meta renders branch feature and refreshes when branch arrives
   onState(r, { branch: { feature: 'feat/x' } });
   assert.match(meta(), /feat\/x/, 'branch feature must appear in the meta line after onState');
 });
+
+// (e) Resume must be a real pill, not a bare native button.
+test('(e) .btn-resume has a base pill style in the green family, like .btn-pause', () => {
+  const css = readFileSync(cssPath, 'utf8');
+  const m = css.match(/\.btn-resume\s*\{([^}]*)\}/);
+  assert.ok(m, '.btn-resume base rule missing — Resume renders as an unstyled browser button');
+  assert.match(m[1], /display:\s*inline-flex/);
+  assert.match(m[1], /var\(--green-bg\)/);
+  assert.match(m[1], /border-radius:\s*999px/);
+});
+
+// (f) The author display rules defeat the UA [hidden] rule — must be patched per
+// class, same as .questions-toggle[hidden] / .hist-pr[hidden] / .subs-bar[hidden].
+test('(f) [hidden] hides Pause/Resume despite their author display rules', () => {
+  const css = readFileSync(cssPath, 'utf8');
+  assert.match(
+    css,
+    /\.btn-pause\[hidden\]\s*,\s*\.btn-resume\[hidden\]\s*\{[^}]*display:\s*none/,
+    'need .btn-pause[hidden],.btn-resume[hidden]{display:none;} — otherwise the paused card shows BOTH buttons and two margin-left:auto split the row'
+  );
+});
+
+// (g) Dead rule: pause sits between resume and stop in the DOM, so this `+`
+// selector can never match; its presence signals the broken margin scheme.
+test('(g) dead adjacency rule .btn-resume.sm + .btn-stop.sm is gone', () => {
+  const css = readFileSync(cssPath, 'utf8');
+  assert.doesNotMatch(css, /\.btn-resume\.sm\s*\+\s*\.btn-stop\.sm/);
+});

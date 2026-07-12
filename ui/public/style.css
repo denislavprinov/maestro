@@ -214,6 +214,14 @@ body.view-history .main{padding-top:0;}
   font-family:inherit;font-weight:600;font-size:13px;cursor:pointer;transition:filter .15s;}
 .btn-pause:hover{filter:brightness(.97);}
 .btn-pause:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.btn-resume{display:inline-flex;align-items:center;gap:8px;background:var(--green-bg);
+  color:var(--green-ink);border:none;padding:11px 19px;border-radius:999px;
+  font-family:inherit;font-weight:600;font-size:13px;cursor:pointer;transition:filter .15s;}
+.btn-resume:hover{filter:brightness(.97);}
+.btn-resume:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* [hidden] must beat the author display rules above (author origin outranks the
+   UA [hidden]{display:none} rule — same footgun as .questions-toggle[hidden]). */
+.btn-pause[hidden],.btn-resume[hidden]{display:none;}
 
 /* ---------- Views ---------- */
 .view{display:block;}
@@ -438,7 +446,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .btn-pause.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
 .btn-resume.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
 .btn-pause.sm + .btn-stop.sm{margin-left:0;}
-.btn-resume.sm + .btn-stop.sm{margin-left:0;}
 
 /* expand to live log */
 .btn-expand{margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:var(--field);
