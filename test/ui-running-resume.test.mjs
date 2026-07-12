@@ -70,3 +70,22 @@ test('resume works from the Running card for a same-session run (no reload)', as
   assert.ok(getRun('r-new'));
   assert.equal(getRun('r-new').pipelineId, 'p1');
 });
+
+test('failed resume restores the Resume button: enabled, icon intact, error logged', async () => {
+  const { window } = await bootLive({ resumeFails: true });
+  const { upsertRun, onState, buildRunCard, resumeRunFromCard, getRun } = window.__np;
+  const r = upsertRun({ runId: 'r1', title: 't', projectDir: '/tmp/proj', status: 'running' });
+  onState(r, { status: 'running', id: 'p1' });
+  onState(r, { status: 'paused' });
+  r.el = buildRunCard(r);
+  const btn = r.el.querySelector('.btn-resume');
+  await resumeRunFromCard('r1', btn);
+  assert.ok(getRun('r1'), 'failed resume must keep the paused run');
+  assert.equal(btn.disabled, false, 'button must be re-enabled after failure');
+  assert.match(btn.innerHTML, /<svg/i, 'failure must restore the play icon, not leave bare text');
+  assert.match(btn.textContent, /Resume/);
+  assert.ok(
+    r.logLines.some((l) => /resume failed: pipeline not found/.test(String(l.text))),
+    'server error must land in the card log'
+  );
+});

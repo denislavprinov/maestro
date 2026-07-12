@@ -5404,6 +5404,7 @@ async function resumeRunFromCard(runId, btn) {
   // Snapshot the pre-pause log BEFORE the old run is dropped, to seed the resumed
   // run for a continuous log.
   const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
+  const prevBtnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
   try {
     const res = await fetch('/api/resume', {
@@ -5432,7 +5433,7 @@ async function resumeRunFromCard(runId, btn) {
     location.hash = `running/${data.runId}`;   // land on the continuous live card
     renderRunningView();
   } catch (err) {
-    if (btn) { btn.disabled = false; btn.textContent = ' Resume'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
     const rr = runs.get(runId);
     if (rr) onLog(rr, { source: 'ui', level: 'error', text: `resume failed: ${err.message}`, ts: Date.now() });
   }
