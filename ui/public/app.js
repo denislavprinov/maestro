@@ -1231,6 +1231,12 @@ function cycleAwareLabel(stepper, subAgents, groupKeys) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  // Mirror the on-disk pipeline short id the orchestrator stamps onto state.id
+  // after createPipeline. The server captures the same field (ui/server.mjs
+  // wireRun); without this the run model only ever gets a pipelineId from the
+  // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
+  // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
+  if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
   if (msg && msg.branch && msg.branch.feature) {
     r.branchFeature = msg.branch.feature;
   }
@@ -2226,6 +2232,7 @@ if (typeof window !== 'undefined') {
     paintRunCard,
     onHello,
     isPaused,
+    resumeRunFromCard,
   });
 }
 
