@@ -7,14 +7,14 @@ import { getDb, migrate } from '../src/core/db.mjs';
 
 useTempHome(after);
 
-test('v10 adds nullable owner_pid/owner_host/heartbeat_at; user_version becomes 10', () => {
-  const db = getDb(); // getDb() opens + migrates to SCHEMA_VERSION (10)
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10);
+test('v10 adds nullable owner_pid/owner_host/heartbeat_at; user_version becomes 12', () => {
+  const db = getDb(); // getDb() opens + migrates to SCHEMA_VERSION (11)
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 12);
   const cols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   for (const c of ['owner_pid', 'owner_host', 'heartbeat_at']) assert.ok(cols.includes(c), c);
 });
 
-test('incremental v9->v10 migration: migrate() adds columns on a v9 DB and stamps 10', () => {
+test('incremental v9->v10 migration: migrate() adds columns on a v9 DB and stamps 12', () => {
   const db = new DatabaseSync(':memory:');
   // Apply V1 schema — a minimal pipelines table (just enough for ALTER TABLE to work)
   db.exec(`
@@ -42,6 +42,7 @@ test('incremental v9->v10 migration: migrate() adds columns on a v9 DB and stamp
       domain TEXT
     );
     CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, domain TEXT);
+    CREATE TABLE IF NOT EXISTS config_workflow_nodes (project_key TEXT, workflow_id TEXT, node_id TEXT, model TEXT, effort TEXT, fan_out INTEGER, PRIMARY KEY (project_key,workflow_id,node_id));
     PRAGMA user_version = 9;
   `);
   // Insert a seed row — its new columns should come back as NULL
@@ -50,7 +51,7 @@ test('incremental v9->v10 migration: migrate() adds columns on a v9 DB and stamp
   // Now run the incremental migration
   migrate(db);
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 10);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 12);
   const cols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   for (const c of ['owner_pid', 'owner_host', 'heartbeat_at']) assert.ok(cols.includes(c), c);
   const row = db.prepare('SELECT owner_pid, owner_host, heartbeat_at FROM pipelines WHERE id = ?').get('seed1');

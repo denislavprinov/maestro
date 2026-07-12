@@ -265,13 +265,53 @@ export const RESUME_HEADER =
   'state of your previous work (files/artifacts you already wrote), then continue the\n' +
   'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
 
+/**
+ * Ask-then-resume prompt block for a questions-enabled node (spec 2026-07-11).
+ * Appended by runOpts, so EVERY producer/verifier runner inherits it with no
+ * per-runner edits. ctx fields (set by the orchestrator per attempt):
+ *   questionsEnabled  gate (node.askQuestions minus clarifier/decomposed/auto)
+ *   questionsFile     absolute path for THIS round's questions JSON; null when
+ *                     rounds are exhausted (closing note instead of directive)
+ *   questionsAnswered [{id,question,choice}] already answered for this node
+ * MOCK_ASK is emitted only on the first round (no prior answers) so the offline
+ * mock asks exactly once, then performs its normal role side effects on resume.
+ * Pure + exported for testing; returns '' when disabled (prompts byte-identical).
+ */
+export function questionsPromptBlock(ctx) {
+  if (!ctx || !ctx.questionsEnabled) return '';
+  const prior = Array.isArray(ctx.questionsAnswered) ? ctx.questionsAnswered : [];
+  const answered = prior.length
+    ? '## Already answered — DO NOT ask these again\n\n' + renderAnswers(prior) + '\n'
+    : '';
+  if (!ctx.questionsFile) {
+    return (
+      '\n\n' + answered +
+      '## Asking the user\n\n' +
+      'No more question rounds are available this run — proceed with reasonable assumptions.\n'
+    );
+  }
+  const mock = prior.length ? '' : mockMarkers({ MOCK_ASK: ctx.questionsFile }) + '\n';
+  return (
+    '\n\n' + answered +
+    '## Asking the user (enabled)\n\n' +
+    'If a decision genuinely blocks correct work and cannot be resolved from the task, the ' +
+    'inputs, or the codebase:\n' +
+    '1. Write {"questions":[{"id","question","options":[2-4 strings],"allowFreeText":true}]} ' +
+    `(max 8 questions) to: ${ctx.questionsFile}\n` +
+    '2. STOP immediately — do no further work. You will be resumed with the answers.\n' +
+    'Prefer reasonable assumptions for minor choices; never pad, and never re-ask an ' +
+    'answered question.\n\n' +
+    mock
+  );
+}
+
 /** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
 function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   return {
     cwd: ctx.projectDir,
     systemPrompt,
-    prompt: ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt,
+    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt) + questionsPromptBlock(ctx),
     resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its
     // frontmatter (e.g. the Playwright MCP browser_* tools). ctx.node is present
@@ -1029,7 +1069,7 @@ function joinPipeline(pipelineDir, name) {
 }
 
 /** Render the answered clarifications as a markdown Q&A list for the plan prompt. */
-function renderAnswers(answers) {
+export function renderAnswers(answers) {
   if (!Array.isArray(answers) || answers.length === 0) {
     return '_No clarifying questions were asked._\n';
   }

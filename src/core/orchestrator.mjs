@@ -18,7 +18,7 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, realpath, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -43,6 +43,8 @@ import {
   touchHeartbeat,
   clearPipelineOwnership,
   HEARTBEAT_INTERVAL_MS,
+  writeStepQuestions,
+  readStepQuestions,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
 import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
@@ -51,7 +53,7 @@ import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
-import { hasBlocking, blockingIssues } from './protocol.mjs';
+import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { classifyError } from './recoverable-error.mjs';
@@ -91,6 +93,9 @@ const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
 })();
 
+/** Max ask-then-resume question rounds per node run (spec 2026-07-11 §5). */
+const MAX_QUESTION_ROUNDS = 3;
+
 /**
  * Build the synthetic implementer node for one decomposed task. Pure (exported for
  * tests). `siblings` carries the OTHER tasks of the same phase so the implementer
@@ -111,6 +116,7 @@ export function decomposedTaskNode(implNode, task, phaseTasks, pipelineDir) {
     effort: implNode.effort,
     tools: implNode.tools,
     fanOut: implNode.fanOut, // inherit so each per-task implementer fans out when the run does
+    askQuestions: false,     // parallel task shards never gate the user (spec §5)
     taskPath: join(pipelineDir, task.file || ''),
     siblings: (Array.isArray(phaseTasks) ? phaseTasks : [])
       .filter((t) => t && t !== task)
@@ -204,7 +210,7 @@ class Orchestrator extends EventEmitter {
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this._recovery = null;      // class -> in-flight Promise<'retry'|'abort'> (same-class dedupe)
-    this._recoveryTail = null;  // serializes _ask: only one recovery prompt open at a time
+    this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
     this.toolInstruction = '';
@@ -1485,38 +1491,12 @@ class Orchestrator extends EventEmitter {
     if (this._resumeNodeSessions?.has(node.nodeId)) {
       ctx.resumeSessionId = this._resumeNodeSessions.get(node.nodeId);
     }
+    this._primeQuestions(node, ctx);
     let result;
     let endMark = 'done';
     try {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          result = await this._runOnce(node, ctx);
-          break;
-        } catch (err) {
-          // Pause/stop always win over a recoverable error.
-          if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
-            endMark = 'paused';
-            throw pauseErr();
-          }
-          if (isAbort(err) || isPause(err)) throw err;
-          const cls = classifyError(err);
-          if (!cls) throw err;                    // not recoverable -> today's path
-          if (cls === 'usage_limit') {
-            // A session/usage cap that only clears after a multi-hour reset.
-            // Retrying is futile and would burn the backoff budget then FAIL the
-            // run (discarding worktree work). Pause the whole run instead so the
-            // user resumes after the reset. pause() aborts in-flight siblings and
-            // the unwind persists a resume point (the same path as a manual pause).
-            this._pauseForLimit(node, err);
-            endMark = 'paused';
-            throw pauseErr();
-          }
-          const decision = await this._recover({ node, cls, err, attempt });
-          if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
-          this._nodeStep(node, stepIndex, cycle, 'start'); // node back to running for the retry
-          // loop -> re-run the node fresh
-        }
-      }
+      result = await this._runNodeAttempts(node, stepIndex, cycle, ctx);
+      result = await this._questionsLoop(node, stepIndex, cycle, ctx, result);
     } catch (err) {
       if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
         endMark = 'paused';
@@ -1528,6 +1508,38 @@ class Orchestrator extends EventEmitter {
     }
     // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
     return { node, result, ctx };
+  }
+
+  /** The recoverable-error retry loop around one node execution. Extracted from
+   *  _runNode verbatim so the questions-resume runs (spec 2026-07-11) get the
+   *  SAME usage-limit/recovery treatment as the initial attempt. The pause
+   *  paths throw pauseErr() with pauseRequested already set (_pauseForLimit
+   *  calls this.pause()), so _runNode's catch reproduces the 'paused' mark. */
+  async _runNodeAttempts(node, stepIndex, cycle, ctx) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this._runOnce(node, ctx);
+      } catch (err) {
+        // Pause/stop always win over a recoverable error.
+        if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+          throw pauseErr();
+        }
+        if (isAbort(err) || isPause(err)) throw err;
+        const cls = classifyError(err);
+        if (!cls) throw err;                    // not recoverable -> today's path
+        if (cls === 'usage_limit') {
+          // A session/usage cap that only clears after a multi-hour reset.
+          // _pauseForLimit pauses the whole run (sets pauseRequested); throwing
+          // pauseErr() unwinds this node as a pause.
+          this._pauseForLimit(node, err);
+          throw pauseErr();
+        }
+        const decision = await this._recover({ node, cls, err, attempt });
+        if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
+        this._nodeStep(node, stepIndex, cycle, 'start'); // node back to running for the retry
+        // loop -> re-run the node fresh
+      }
+    }
   }
 
   /** Run a node's runner once, with the spec §7 vanished-session fresh re-run
@@ -1547,6 +1559,89 @@ class Orchestrator extends EventEmitter {
       }
       throw err;
     }
+  }
+
+  /** Seed the ask-then-resume ctx fields (spec 2026-07-11) for one node run.
+   *  Disabled for clarifier nodes (they have their own gate), decomposed task
+   *  shards, and auto mode (the directive would be auto-answered noise).
+   *  Persisted answers from EVERY prior round/cycle of this node are re-injected
+   *  so a fix-cycle or crash-resumed re-run never re-asks. */
+  _primeQuestions(node, ctx) {
+    const enabled = !!node.askQuestions && node.runnerType !== 'clarifier'
+      && !node.decomposedTask && !this.auto;
+    ctx.questionsEnabled = enabled;
+    if (!enabled) return;
+    ctx.questionsAnswered = readStepQuestions(this.pipeline.id)
+      .filter((r) => r.nodeId === node.nodeId)
+      .flatMap((r) => r.answers);
+    ctx.questionsFile = this._questionsPath(node, ctx.stepIndex, ctx.cycle, 1);
+  }
+
+  /** Absolute per-round questions file path inside the pipeline dir. The node
+   *  id is sanitized so a hand-authored workflow id can never escape the dir. */
+  _questionsPath(node, stepIndex, cycle, round) {
+    const safe = String(node.nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
+    return join(this.pipeline.dir, `questions-${stepIndex}-${safe}-c${cycle}-r${round}.json`);
+  }
+
+  /**
+   * Ask-then-resume rounds (spec 2026-07-11 §5). After a successful run: if the
+   * agent wrote this round's questions file, persist the questions, gate the
+   * user (serialized — single pendingQuestion slot), persist the answers
+   * (BEFORE the resume spawns — crash-safe), then resume the SAME session with
+   * the answers injected via questionsPromptBlock. The resume goes through
+   * _runNodeAttempts, so recovery + the vanished-session fresh re-run apply
+   * unchanged. Caps at MAX_QUESTION_ROUNDS; the final resume carries no
+   * next-round file so the agent proceeds on assumptions.
+   */
+  async _questionsLoop(node, stepIndex, cycle, ctx, firstResult) {
+    let result = firstResult;
+    if (!ctx.questionsEnabled) return result;
+    const stepKey = this._stepKeyFor(node, stepIndex, cycle);
+    const agentLabel = ((this.registry || {})[node.key] || {}).displayName || node.key;
+    for (let round = 1; round <= MAX_QUESTION_ROUNDS; round++) {
+      const qPath = ctx.questionsFile;
+      if (!qPath) break;
+      const { questions, malformed } = await readQuestionsFile(qPath);
+      if (!questions.length) {
+        if (malformed) {
+          await appendAudit(this.pipeline.dir, `${agentLabel}: questions file was malformed — proceeding without asking (round ${round}).`).catch(() => {});
+        }
+        break;
+      }
+      this._checkAbort();
+      await writeStepQuestions(this.pipeline.id, stepKey, round, {
+        agentKey: node.key, nodeId: node.nodeId, questions: { questions },
+      });
+      this._artifact('questions', qPath);
+      await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
+      const payload = await this._enqueueAsk(() => this._ask({
+        id: `questions-${stepKey}-r${round}`,
+        kind: 'questions',
+        questions,
+        agent: agentLabel,
+        nodeId: node.nodeId,
+      }));
+      this._checkAbort();
+      const answers = normalizeClarifyAnswer(payload, questions);
+      const byId = new Map(questions.map((q) => [q.id, q]));
+      const enriched = answers.map((a) => ({ id: a.id, question: byId.get(a.id)?.question || '', choice: a.choice }));
+      await writeStepQuestions(this.pipeline.id, stepKey, round, {
+        agentKey: node.key, nodeId: node.nodeId, answers: { answers: enriched },
+      });
+      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`).catch(() => {});
+      // Consume the processed round file: the DB row is authoritative, and a
+      // surviving file would re-gate the user on a crash/pause-resumed re-run.
+      await rm(qPath, { force: true }).catch(() => {});
+      const step = this.state.steps.find((s) => s.key === stepKey);
+      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+      ctx.questionsAnswered = [...(ctx.questionsAnswered || []), ...enriched];
+      ctx.questionsFile = round < MAX_QUESTION_ROUNDS
+        ? this._questionsPath(node, stepIndex, cycle, round + 1)
+        : null;
+      result = await this._runNodeAttempts(node, stepIndex, cycle, ctx);
+    }
+    return result;
   }
 
   /** Pause the whole run because a node hit a session/usage cap that only clears
@@ -1601,11 +1696,16 @@ class Orchestrator extends EventEmitter {
         kind: 'recovery',
         recovery: { cls, message },
       }).then((ans) => (ans && ans.decision === 'abort' ? 'abort' : 'retry'));
-    // Chain after the current tail (run regardless of whether the prior prompt
-    // resolved or rejected) so only one prompt is ever open.
-    const prev = this._recoveryTail || Promise.resolve();
+    return this._enqueueAsk(run);
+  }
+
+  /** Serialize an _ask-producing thunk behind any in-flight prompt (the gate
+   *  holds a single pendingQuestion slot; recovery AND step questions share
+   *  this tail so parallel nodes can never clobber each other's prompt). */
+  _enqueueAsk(run) {
+    const prev = this._askTail || Promise.resolve();
     const next = prev.then(run, run);
-    this._recoveryTail = next.catch(() => {}); // tail must never reject the chain
+    this._askTail = next.catch(() => {}); // tail must never reject the chain
     return next;
   }
 
@@ -1755,8 +1855,15 @@ class Orchestrator extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery }) {
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId }) {
     this._checkAbort();
+    // No interactive prompt may OPEN on a pausing run. pause() rejects only the
+    // prompt that is currently open; a queued ask (a parallel sibling's questions
+    // or a recovery prompt behind the _askTail chain) would otherwise still fire
+    // and emit a fresh 'question' on a pausing/paused run (stale gate in the UI,
+    // readline prompt while the CLI exits). Unwind it as a pause instead — the
+    // owning node marks 'paused', exactly like every other pause path.
+    this._checkPause();
 
     // Freeze the active-time clock while we wait on the user (active-time-only).
     const frozenKey = this._runningStepKey();
@@ -1767,7 +1874,7 @@ class Orchestrator extends EventEmitter {
       this._persist().catch(() => {});
     }
 
-    this._emit('question', { id, kind, questions, issues, recovery });
+    this._emit('question', { id, kind, questions, issues, recovery, agent, nodeId });
 
     try {
       if (this.auto) {
@@ -1776,8 +1883,8 @@ class Orchestrator extends EventEmitter {
           // this is a defensive fallback so an auto run can never hang.
           return { decision: 'abort' };
         }
-        if (kind === 'clarify') {
-          this._log('orchestrator', 'info', `auto-answering clarify ${id}`);
+        if (kind === 'clarify' || kind === 'questions') {
+          this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);
           return {
             answers: (questions || []).map((q) => ({
               id: q.id,
@@ -2624,7 +2731,7 @@ class Orchestrator extends EventEmitter {
     // 'pipeline' is the dir itself). plan/review markdown live under
     // <store>/<key>/{plans,reviews} (store-root-relative); checklist/webui live in
     // the pipeline dir (dir-relative).
-    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'clarify') return;
+    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'clarify' || kind === 'questions') return;
     let relPath = null;
     const pdir = this.pipeline.dir;
     if (path.startsWith(pdir + sep)) {

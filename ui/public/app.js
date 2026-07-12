@@ -99,6 +99,7 @@ const el = {
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
+  configError: $('#config-error'),
   workflowSelect: $('#workflowSelect'),
   wfDefaultStages: $('#wf-default-stages'),
   wfNodeConfig: $('#wf-node-config'),
@@ -1337,6 +1338,16 @@ function onStepGraphify(r, msg) {
 // ---------------------------------------------------------------------------
 // Per-step model + effort config
 // ---------------------------------------------------------------------------
+
+// Paint (or clear) the config-panel error hint (#config-error), the visible
+// counterpart of appendLog for config-load failures (mirrors the inline
+// "Could not load this workflow." hint in renderWorkflowConfig).
+function setConfigError(text) {
+  if (!el.configError) return;
+  el.configError.textContent = text || '';
+  el.configError.hidden = !text;
+}
+
 async function loadConfig(projectDir) {
   try {
     // No project => omit projectDir; the server replies with the built-in models
@@ -1344,16 +1355,37 @@ async function loadConfig(projectDir) {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const res = await fetch(`/api/config${qs}`);
     const data = await safeJson(res);
-    if (!res.ok) return;
-    state.config = data.config || { steps: {}, customModels: [] };
-    state.models = Array.isArray(data.models) ? data.models : [];
-    state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
-    state.stepDefaults = {};
-    if (Array.isArray(data.steps)) {
-      for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = { fanOut: !!s.fanOut };
+    if (res.ok) {
+      state.config = data.config || { steps: {}, customModels: [] };
+      state.models = Array.isArray(data.models) ? data.models : [];
+      state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
+      state.stepDefaults = {};
+      if (Array.isArray(data.steps)) {
+        for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
+          fanOut: !!s.fanOut,
+          asksQuestions: !!s.asksQuestions,
+          questionsLocked: !!s.questionsLocked,
+          questionsDefault: !!s.questionsDefault,
+        };
+      }
+      setConfigError('');
+    } else {
+      // Surface the failure but DO fall through to loadWorkflowsInto below: an
+      // early return here left the whole form dead (static Default-only dropdown,
+      // empty pickers) when /api/config 500ed. Reset the per-project layers so a
+      // previous project's config is never painted — or echoed back by a later
+      // save — and render defaults with a visible explanation.
+      state.config = { steps: {}, customModels: [] };
+      state.stepDefaults = {};
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
     }
   } catch {
-    /* keep last-known config */
+    // Network-level failure: same reset as the non-ok branch (a previous
+    // project's config must not linger), but keep last-known models/efforts.
+    state.config = { steps: {}, customModels: [] };
+    state.stepDefaults = {};
+    setConfigError('Could not load saved config (network error) — showing defaults.');
   }
   // Seed the active workflow from per-project run-config (activeWorkflowId),
   // then populate the dropdown + render the chosen workflow's config. This
@@ -2042,6 +2074,9 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
       const meta = reg[node.key] || null;
       const saved = nodes[node.id] || {};
       const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
+      const metaAsks = !!(meta && meta.asksQuestions);
+      const metaLocked = !!(meta && meta.questionsLocked);
+      const metaQDefault = !!(meta && meta.questionsDefault);
       rows.push({
         nodeId: node.id,
         key: node.key,
@@ -2052,6 +2087,13 @@ function buildNodeConfigRows(workflow, registry, runConfig) {
         model: typeof saved.model === 'string' ? saved.model : '',
         effort: typeof saved.effort === 'string' ? saved.effort : '',
         fanOut: typeof saved.fanOut === 'boolean' ? saved.fanOut : metaFan,
+        // null => the agent has no questions capability (no checkbox rendered).
+        askQuestions: !metaAsks
+          ? null
+          : (metaLocked
+              ? metaQDefault
+              : (typeof saved.askQuestions === 'boolean' ? saved.askQuestions : metaQDefault)),
+        questionsLocked: metaAsks && metaLocked,
       });
     });
   });
@@ -2175,6 +2217,7 @@ if (typeof window !== 'undefined') {
     historyBadge,
     statusPill,
     buildHistCard,
+    paintClarifyBar,
     pauseRun,
     setupResumeButton,
     nodeKindFor,
@@ -2229,6 +2272,26 @@ function renderStepConfigs() {
       const defFan = (state.stepDefaults[role] || {}).fanOut || false;
       fanCb.checked = typeof savedFan === 'boolean' ? savedFan : defFan;
     }
+    const qCb = document.querySelector(`.step-questions[data-role="${role}"]`);
+    if (qCb) {
+      const d = state.stepDefaults[role] || {};
+      const wrap = qCb.closest('.questions-toggle');
+      if (!d.asksQuestions) {
+        if (wrap) wrap.hidden = true;
+      } else {
+        if (wrap) {
+          wrap.hidden = false;
+          wrap.title = d.questionsLocked
+            ? (d.questionsDefault ? 'Always on for this agent' : 'Always off for this agent')
+            : '';
+        }
+        const savedQ = (state.config.steps[role] || {}).askQuestions;
+        qCb.checked = d.questionsLocked
+          ? !!d.questionsDefault
+          : (typeof savedQ === 'boolean' ? savedQ : !!d.questionsDefault);
+        qCb.disabled = !!d.questionsLocked;
+      }
+    }
   }
 }
 
@@ -2239,12 +2302,16 @@ function renderStepConfigs() {
 // ---------------------------------------------------------------------------
 
 // --- API wrappers (existing fetch()/safeJson style) ---
+// Returns the workflow list, or null on failure — callers must distinguish
+// "the server has no saved workflows" ([]) from "the list could not be
+// fetched" (null), or a transient failure silently rebuilds the dropdown to
+// Default-only and reroutes the next run to wf_default.
 async function listWorkflowsApi() {
   try {
     const res = await fetch('/api/workflows');
     const data = await safeJson(res);
-    return res.ok && Array.isArray(data.workflows) ? data.workflows : [];
-  } catch { return []; }
+    return res.ok && Array.isArray(data.workflows) ? data.workflows : null;
+  } catch { return null; }
 }
 
 async function getWorkflowApi(id) {
@@ -2275,6 +2342,14 @@ async function loadWorkflowsInto(selectId) {
   const sel = el.workflowSelect;
   if (!sel) return;
   const workflows = await listWorkflowsApi();
+  if (workflows === null) {
+    // List fetch failed: keep whatever the dropdown already shows (do NOT
+    // rebuild to Default-only — that would silently reroute the next run) and
+    // still render the current selection's config.
+    appendLog({ source: 'ui', level: 'error', text: 'workflows: list failed', ts: Date.now() });
+    await renderWorkflowConfig(state.workflowId);
+    return;
+  }
   const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
   const want = selectId || state.workflowId || 'wf_default';
   sel.innerHTML = '';
@@ -2302,7 +2377,10 @@ async function renderWorkflowConfig(workflowId) {
   }
 
   const [wf, registry] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
-  if (!wf) {
+  // An empty registry is a failed /api/agents fetch, not a real state — painting
+  // rows against it silently strips capability (labels degrade to raw keys, all
+  // questions toggles vanish), so treat it like a failed workflow fetch.
+  if (!wf || !Object.keys(registry).length) {
     if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
     return;
@@ -2363,6 +2441,24 @@ function renderNodeRows(rows) {
     fanTxt.textContent = 'Fan-out';
     fanWrap.append(fanCb, fanTxt);
     picks.append(mWrap, eWrap, fanWrap);
+    if (row.askQuestions !== null && row.askQuestions !== undefined) {
+      const qWrap = document.createElement('label');
+      qWrap.className = 'fanout-toggle questions-toggle';
+      if (row.questionsLocked) {
+        qWrap.title = row.askQuestions ? 'Always on for this agent' : 'Always off for this agent';
+      }
+      const qCb = document.createElement('input');
+      qCb.type = 'checkbox';
+      qCb.className = 'step-questions';
+      qCb.dataset.nodeId = row.nodeId;
+      qCb.setAttribute('aria-label', `${row.label} questions`);
+      qCb.checked = !!row.askQuestions;
+      qCb.disabled = !!row.questionsLocked;
+      const qTxt = document.createElement('span');
+      qTxt.textContent = 'Questions';
+      qWrap.append(qCb, qTxt);
+      picks.appendChild(qWrap);
+    }
     card.appendChild(picks);
 
     const caption = document.createElement('small');
@@ -2421,14 +2517,14 @@ if (el.workflowSelect) {
   });
 }
 
-async function saveStep(role, model, effort, fanOut) {
+async function saveStep(role, model, effort, fanOut, askQuestions) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -2445,14 +2541,14 @@ async function saveStep(role, model, effort, fanOut) {
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort, fanOut) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -2546,7 +2642,9 @@ el.pipelineConfig.addEventListener('change', (e) => {
   }
 
   // Fan-out toggles (checkboxes). Send the row's current model/effort alongside
-  // fanOut so the replace-on-model/effort setters don't wipe them.
+  // fanOut so the replace-on-model/effort setters don't wipe them. Both paths
+  // read the LIVE selects, not state.config — state lags one in-flight save, so
+  // echoing it could revert a model picked moments earlier.
   if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-fanout')) {
     const fanOut = !!t.checked;
     if (t.dataset.nodeId) {
@@ -2555,8 +2653,29 @@ el.pipelineConfig.addEventListener('change', (e) => {
       const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
       saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
     } else if (t.dataset.role) {
-      const cur = state.config.steps[t.dataset.role] || {};
-      saveStep(t.dataset.role, cur.model || '', cur.effort || '', fanOut);
+      const role = t.dataset.role;
+      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
+      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
+    }
+    return;
+  }
+
+  // Questions toggles (checkboxes). Mirror step-fanout: send the row's current
+  // model/effort (live selects) along so the replace-semantics setters don't
+  // wipe them; omit fanOut (undefined) so the setters preserve it.
+  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-questions')) {
+    const askQuestions = !!t.checked;
+    if (t.dataset.nodeId) {
+      const nodeId = t.dataset.nodeId;
+      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
+    } else if (t.dataset.role) {
+      const role = t.dataset.role;
+      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
+      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
     }
     return;
   }
@@ -2593,8 +2712,9 @@ el.pipelineConfig.addEventListener('change', (e) => {
     if (t.value === '__add__') return addModelFlow(role);
     saveStep(role, t.value, '');
   } else if (t.classList.contains('step-effort')) {
-    const model = (state.config.steps[role] || {}).model || '';
-    saveStep(role, model, t.value);
+    // Live model select, not state.config — state lags one in-flight save.
+    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+    saveStep(role, modelSel ? modelSel.value : '', t.value);
   }
 });
 
@@ -2784,6 +2904,8 @@ function renderQpanel(r) {
     title.textContent = `${cls.replace('_', ' ')} error — action needed`;
   } else if (isGate) {
     title.textContent = 'Cycle gate';
+  } else if (pq.kind === 'questions') {
+    title.textContent = `${pq.agent || 'Agent'} has questions`;
   } else {
     const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
     title.textContent = `${phaseLabel} needs your input`;
@@ -4429,6 +4551,18 @@ function buildChipChecks(host, options, selected) {
 }
 const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
 
+// The two questions sub-flags are meaningless (and normalizeMeta force-clears
+// them) when the agent cannot ask; mirror that in the form.
+function syncQuestionFlags(root) {
+  const asks = root.querySelector('.agent-f-questions');
+  const locked = root.querySelector('.agent-f-questions-locked');
+  const def = root.querySelector('.agent-f-questions-default');
+  if (!asks || !locked || !def) return;
+  locked.disabled = !asks.checked;
+  def.disabled = !asks.checked;
+  if (!asks.checked) { locked.checked = false; def.checked = false; }
+}
+
 // Fill every .agent-f-* field under `root` from meta (+ optional markdown).
 function agentFormFill(root, meta, markdown) {
   const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
@@ -4457,6 +4591,11 @@ function agentFormFill(root, meta, markdown) {
   root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
   root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
   root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
+  root.querySelector('.agent-f-questions').checked = !!meta.asksQuestions;
+  root.querySelector('.agent-f-questions-locked').checked = !!meta.questionsLocked;
+  root.querySelector('.agent-f-questions-default').checked = !!meta.questionsDefault;
+  syncQuestionFlags(root);
+  root.querySelector('.agent-f-questions').onchange = () => syncQuestionFlags(root);
   if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
 }
 
@@ -4476,6 +4615,9 @@ function agentFormRead(root) {
       order: Number(root.querySelector('.agent-f-order').value),
       fanOut: root.querySelector('.agent-f-fanout').checked,
       loopSource: root.querySelector('.agent-f-loopsource').checked,
+      asksQuestions: root.querySelector('.agent-f-questions').checked,
+      questionsLocked: root.querySelector('.agent-f-questions-locked').checked,
+      questionsDefault: root.querySelector('.agent-f-questions-default').checked,
     },
     markdown: root.querySelector('.agent-f-md').value,
   };
@@ -6228,7 +6370,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
       );
     }
     // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
-    paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify);
+    paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify, data.stepQuestions);
     // Results header (status pill + checks). Diff + Overview are separate dropdowns.
     const resHost = detail.querySelector('.results-section');
     if (resHost) renderResults(resHost, data.results);
@@ -6268,23 +6410,27 @@ async function loadHistDetail(projectDir, id, detail, record) {
 // The section inserts BEFORE .hist-actions so Delete stays last. Idempotent: any prior
 // section is removed first (a cached re-expand must never stack duplicates). Shape comes
 // straight from readPipelineExtras:
-// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]}.
-// Paint the Clarify dropdown from saved Q&A (read-only). Hidden when empty.
-function paintClarifyBar(barEl, clarify) {
+// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]};
+// stepQuestions=[{stepKey,round,agentKey,questions,answers}] (per-step ask rounds).
+// Paint the Clarify dropdown from saved clarify + stepQuestions Q&A (read-only);
+// the .sb-count badge shows the MERGED count of both. Hidden when both are empty.
+function paintClarifyBar(barEl, clarify, stepQuestions) {
   if (!barEl) return;
   const questions = Array.isArray(clarify && clarify.questions) ? clarify.questions : [];
   const answers = Array.isArray(clarify && clarify.answers) ? clarify.answers : [];
-  if (!questions.length && !answers.length) { barEl.hidden = true; return; }
+  const stepQ = Array.isArray(stepQuestions) ? stepQuestions.filter((r) => r && (r.questions || []).length) : [];
+  if (!questions.length && !answers.length && !stepQ.length) { barEl.hidden = true; return; }
   barEl.hidden = false;
-  barEl._clarify = { questions, answers };
+  barEl._clarify = { questions, answers, stepQ };
 
   const btn = barEl.querySelector('.btn-subs');
   const panel = barEl.querySelector('.clarify-panel');
   const count = barEl.querySelector('.sb-count');
-  if (count) { count.textContent = String(questions.length); count.classList.remove('grey'); }
+  const total = questions.length + stepQ.reduce((n, r) => n + r.questions.length, 0);
+  if (count) { count.textContent = String(total); count.classList.remove('grey'); }
 
   if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
-    renderClarifyPanel(panel, questions, answers); // re-render an already-open panel
+    renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers, barEl._clarify.stepQ);
   }
   if (btn && btn.dataset.bound !== '1') {
     btn.dataset.bound = '1';
@@ -6293,35 +6439,48 @@ function paintClarifyBar(barEl, clarify) {
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (panel) {
         panel.hidden = open;
-        if (!open) renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers);
+        if (!open) renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers, barEl._clarify.stepQ);
       }
     });
   }
 }
 
 // Render each question with its chosen answer into the clarify panel (idempotent).
-function renderClarifyPanel(panelEl, questions, answers) {
+function renderClarifyPanel(panelEl, questions, answers, stepQuestions) {
   panelEl.innerHTML = '';
-  const byId = new Map((answers || []).map((a) => [a.id, a]));
-  questions.forEach((q, i) => {
-    const block = document.createElement('div');
-    block.className = 'qblock';
-    const qtext = document.createElement('div');
-    qtext.className = 'qtext';
-    const qn = document.createElement('span');
-    qn.className = 'qn';
-    qn.textContent = String(i + 1);
-    qtext.appendChild(qn);
-    qtext.appendChild(document.createTextNode(typeof q.question === 'string' ? q.question : ''));
-    block.appendChild(qtext);
-    const ans = byId.get(q.id);
-    const aLine = document.createElement('div');
-    aLine.className = 'hist-answer';
-    const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
-    aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
-    block.appendChild(aLine);
-    panelEl.appendChild(block);
-  });
+  const addBlocks = (qs, as, offset) => {
+    const byId = new Map((as || []).map((a) => [a.id, a]));
+    (qs || []).forEach((q, i) => {
+      const block = document.createElement('div');
+      block.className = 'qblock';
+      const qtext = document.createElement('div');
+      qtext.className = 'qtext';
+      const qn = document.createElement('span');
+      qn.className = 'qn';
+      qn.textContent = String(offset + i + 1);
+      qtext.appendChild(qn);
+      qtext.appendChild(document.createTextNode(typeof q.question === 'string' ? q.question : ''));
+      block.appendChild(qtext);
+      const ans = byId.get(q.id);
+      const aLine = document.createElement('div');
+      aLine.className = 'hist-answer';
+      const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
+      aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
+      block.appendChild(aLine);
+      panelEl.appendChild(block);
+    });
+    return offset + (qs || []).length;
+  };
+  let n = addBlocks(questions, answers, 0);
+  for (const r of Array.isArray(stepQuestions) ? stepQuestions : []) {
+    const head = document.createElement('div');
+    head.className = 'hint';
+    head.style.margin = '8px 0 4px';
+    const cyc = String(r.stepKey || '').split('#')[1];
+    head.textContent = `${r.agentKey || 'agent'} — round ${r.round}${cyc ? ` · cycle ${cyc}` : ''}`;
+    panelEl.appendChild(head);
+    n = addBlocks(r.questions, r.answers, n);
+  }
 }
 
 // Paint the Live-logs dropdown. Hidden unless a 'live-log' artifact exists. The

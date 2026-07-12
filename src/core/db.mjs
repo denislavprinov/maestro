@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 12;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -486,6 +486,122 @@ ALTER TABLE pipelines ADD COLUMN heartbeat_at TEXT;
 `;
 
 /**
+ * Incremental v10 -> v11 migration (per-agent user questions, spec 2026-07-11).
+ * ask_questions: nullable boolean per-node override (NULL = inherit the
+ * manifest default). step_questions: one row per (pipeline, step, round) of the
+ * ask-then-resume gate — mirrors the clarify table, keyed by the step record's
+ * stable "<stepIndex>:<nodeId>[#cycle]" key plus the round number. node_id is
+ * denormalized so prior answers can be re-injected per node without parsing
+ * step_key.
+ */
+const STEP_QUESTIONS_DDL = `
+CREATE TABLE IF NOT EXISTS step_questions (
+  pipeline_id TEXT NOT NULL,
+  step_key    TEXT NOT NULL,
+  round       INTEGER NOT NULL,
+  node_id     TEXT,
+  agent_key   TEXT,
+  questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
+  answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+  PRIMARY KEY (pipeline_id, step_key, round),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+`;
+
+const SCHEMA_V11 = `
+ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
+${STEP_QUESTIONS_DDL}
+`;
+
+/**
+ * Every column ever added by an incremental ALTER step, per table. The version
+ * ladder alone cannot be trusted for these: one shared ~/.maestro DB serves every
+ * checkout, and a DIVERGENT ladder can stamp user_version past a step this build
+ * needs (it happened twice: branch ai-enablement-onboarding minted its own v11 as
+ * a data-only workflow seed and stamped a clean-v10 DB to 11, so this branch's
+ * v11 DDL was skipped forever → "no such column: ask_questions"; earlier the same
+ * collision class produced "no column named domain"). schemaGaps() diffs this map
+ * against the live schema so the gap can be healed regardless of the stamp.
+ */
+const INCREMENTAL_COLUMNS = {
+  pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT' },
+  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
+  sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
+  workflows:              { domain: 'TEXT' },
+  config_workflow_nodes:  { ask_questions: 'INTEGER' },
+};
+
+/**
+ * Return [{table, col, type}] for every INCREMENTAL_COLUMNS entry absent from the
+ * live schema, plus a `stepQuestionsTable: true` flag when the step_questions
+ * table itself is missing (its CREATE is IF-NOT-EXISTS, so it is safe to
+ * reassert on any stamped DB). Cheap and read-only: one PRAGMA table_info per
+ * known table + one sqlite_master probe, no writes. A table absent from
+ * INCREMENTAL_COLUMNS' map (table_info returns []) is skipped — creating base
+ * tables is the version ladder's job.
+ */
+function schemaGaps(db) {
+  const missing = [];
+  for (const [table, cols] of Object.entries(INCREMENTAL_COLUMNS)) {
+    const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    if (have.size === 0) continue; // base table absent entirely — not our repair
+    for (const [col, type] of Object.entries(cols)) {
+      if (!have.has(col)) missing.push({ table, col, type });
+    }
+  }
+  const hasStepQuestions = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'"
+  ).get().n > 0;
+  return { columns: missing, stepQuestionsTable: !hasStepQuestions };
+}
+
+/** Apply the gap repairs with NO transaction control of its own — the caller owns
+ *  the transaction (the ladder tx in migrate(), or reconcileSchema's own lock). */
+function repairSchemaGaps(db, gaps) {
+  for (const { table, col, type } of gaps.columns) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
+  if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
+}
+
+/**
+ * Version-independent self-heal for a DB whose user_version is already >=
+ * SCHEMA_VERSION (so the version ladder no-ops) but is missing an incremental
+ * column/table because a divergent ladder stamped it (see INCREMENTAL_COLUMNS).
+ * Reads first and returns WITHOUT taking a lock when nothing is missing — the
+ * common every-open case, so a healthy DB sees no contention. When repairs are
+ * needed it takes the write lock (BEGIN IMMEDIATE) and RE-CHECKS under the lock,
+ * so a colliding process that already repaired is a no-op, not a duplicate-column
+ * error.
+ * @param {DatabaseSync} db
+ */
+function reconcileSchema(db) {
+  const gaps = schemaGaps(db);
+  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable) return; // clean — no lock
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * Incremental v11 -> v12 REPAIR migration for the collision documented on
+ * INCREMENTAL_COLUMNS: DBs stamped 11 by the ai-enablement-onboarding branch's
+ * data-only ladder carry a clean v10 schema, so this re-applies the v11 DDL
+ * conditionally and corrects the stamp. No-op on a correct v11 DB and on the
+ * fresh path (where SCHEMA_V11 just ran in the same transaction). Future
+ * collisions of the same class are caught version-independently by
+ * reconcileSchema() on migrate()'s fast path.
+ */
+function applySchemaV12(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -500,8 +616,14 @@ ALTER TABLE pipelines ADD COLUMN heartbeat_at TEXT;
  * @param {DatabaseSync} db
  */
 export function migrate(db) {
-  // Fast path: an already-migrated DB needs no lock (the common re-open case).
-  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) return;
+  // Fast path: an already-migrated DB needs no version ladder. It is NOT a full
+  // no-op — a DB stamped to this version by a DIVERGENT ladder (second checkout,
+  // renumbered step) can still be missing an incremental column/table, so
+  // reconcile before returning (lock-free when healthy).
+  if (db.prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION) {
+    reconcileSchema(db);
+    return;
+  }
 
   // First launch may have a competing migrator. BEGIN IMMEDIATE takes the write lock
   // up front (a deferred BEGIN would not lock until the first write, letting two
@@ -510,7 +632,7 @@ export function migrate(db) {
   db.exec('BEGIN IMMEDIATE');
   try {
     const current = db.prepare('PRAGMA user_version').get().user_version; // re-check under lock
-    if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); return; }
+    if (current >= SCHEMA_VERSION) { db.exec('COMMIT'); reconcileSchema(db); return; }
     if (current < 1) db.exec(SCHEMA_V1);
     if (current < 2) db.exec(SCHEMA_V2);
     if (current < 3) db.exec(SCHEMA_V3);
@@ -521,6 +643,8 @@ export function migrate(db) {
     if (current < 8) db.exec(SCHEMA_V8);
     if (current < 9) db.exec(SCHEMA_V9);
     if (current < 10) db.exec(SCHEMA_V10);
+    if (current < 11) db.exec(SCHEMA_V11);
+    if (current < 12) applySchemaV12(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

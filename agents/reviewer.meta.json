@@ -12,5 +12,8 @@
   "produces": ["review"],
   "consumes": ["plan","code"],
   "connectsTo": ["implementer","manualTestsChecklist"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 4
 }

@@ -209,6 +209,8 @@
                 <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
                   <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
                   <div class="hint" style="margin:0 0 6px">Choose a workflow, then set model and reasoning effort per agent.</div>
+                  <!-- Config-load failure hint; app.js#setConfigError paints/clears it. -->
+                  <div id="config-error" class="hint" style="margin:0 0 6px;color:var(--red-ink)" hidden></div>
 
                   <!-- Workflow picker (Default + saved). app.js populates from GET /api/workflows. -->
                   <div class="field" style="margin-bottom:14px">
@@ -230,6 +232,7 @@
                         <div class="select-wrap"><select class="step-model select" data-role="clarify" aria-label="Clarify model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="clarify" aria-label="Clarify effort"></select></div>
                         <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="clarify" aria-label="Clarify fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="clarify" aria-label="Clarify questions"><span>Questions</span></label>
                       </div>
                       <small class="step-current" data-role="clarify"></small>
                     </div>
@@ -241,6 +244,7 @@
                         <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
                         <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="planner" aria-label="Plan fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="planner" aria-label="Plan questions"><span>Questions</span></label>
                       </div>
                       <small class="step-current" data-role="planner"></small>
                     </div>
@@ -252,6 +256,7 @@
                         <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
                         <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="refiner" aria-label="Refine fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="refiner" aria-label="Refine questions"><span>Questions</span></label>
                       </div>
                       <small class="step-current" data-role="refiner"></small>
                     </div>
@@ -263,6 +268,7 @@
                         <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
                         <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="implementer" aria-label="Implement fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="implementer" aria-label="Implement questions"><span>Questions</span></label>
                       </div>
                       <small class="step-current" data-role="implementer"></small>
                     </div>
@@ -274,6 +280,7 @@
                         <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
                         <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="reviewer" aria-label="Review fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="reviewer" aria-label="Review questions"><span>Questions</span></label>
                       </div>
                       <small class="step-current" data-role="reviewer"></small>
                     </div>
@@ -633,6 +640,9 @@
                     <div class="field"><label>Flags</label>
                       <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
                       <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label>
                     </div>
                   </div>
                   <div class="field"><label>System prompt (markdown)</label>
@@ -737,7 +747,10 @@
                 <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
                 <div class="field"><label>Flags</label>
                   <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label></div>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label></div>
               </div>
               <div class="field"><label>System prompt (markdown)</label>
                 <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea></div>

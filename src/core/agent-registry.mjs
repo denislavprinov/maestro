@@ -192,6 +192,10 @@ export function normalizeMeta(raw) {
   // safe to a VISIBLE project agent (surfaced by the palette test) rather than a
   // silently-hidden one.
   const scope = raw.scope === 'workspace-only' ? 'workspace-only' : 'project';
+  // Per-agent user questions (spec 2026-07-11): capability + lock + default.
+  // Coherence is forced HERE (single source of truth): an agent that cannot ask
+  // can be neither locked nor default-on, so UI/agent-gen never validate this.
+  const asksQuestions = !!raw.asksQuestions;
   const spec = DEFAULT_SPEC[key] || {};
   const rtFallbackConsumes = runnerType === 'verifier' ? ['code'] : ['userPrompt'];
   const consumes = channelList(raw.consumes, key, 'consumes') || spec.consumes || rtFallbackConsumes;
@@ -212,6 +216,9 @@ export function normalizeMeta(raw) {
     domain: normalizeDomain(raw.domain),   // always set; fail-safe VISIBLE default 'general'
     loopSource: !!raw.loopSource,
     fanOut: !!raw.fanOut,
+    asksQuestions,
+    questionsLocked: asksQuestions && !!raw.questionsLocked,
+    questionsDefault: asksQuestions && !!raw.questionsDefault,
     consumes,
     optionalConsumes,
     produces,
@@ -307,11 +314,18 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
  * this returns the 9 built-in project-scope steps plus any user-layer project
  * agents (without the exclusion the two workspace sidecars would add 2 more).
  * @param {Record<string, object>} registry
- * @returns {Array<{key:string,label:string,fanOut:boolean}>}
+ * @returns {Array<{key:string,label:string,fanOut:boolean,asksQuestions:boolean,questionsLocked:boolean,questionsDefault:boolean}>}
  */
 export function registryToSteps(registry) {
   return Object.values(registry || {})
     .filter((m) => m.scope !== 'workspace-only')
     .sort((a, b) => a.order - b.order)
-    .map((m) => ({ key: m.key, label: LEGACY_LABELS[m.key] || m.displayName, fanOut: !!m.fanOut }));
+    .map((m) => ({
+      key: m.key,
+      label: LEGACY_LABELS[m.key] || m.displayName,
+      fanOut: !!m.fanOut,
+      asksQuestions: !!m.asksQuestions,
+      questionsLocked: !!m.questionsLocked,
+      questionsDefault: !!m.questionsDefault,
+    }));
 }

@@ -152,6 +152,70 @@ export function readClarifyRow(pipelineId) {
 }
 
 /**
+ * Upsert one round of a node's ask-then-resume Q&A (spec 2026-07-11). Pass
+ * { questions } and/or { answers }; a partial call updates only the provided
+ * column (writeClarify pattern). stepKey is the step record's stable
+ * "<stepIndex>:<nodeId>[#cycle]" key; nodeId is denormalized for per-node
+ * re-injection. Best-effort under WAL contention.
+ * @param {string} pipelineId
+ * @param {string} stepKey
+ * @param {number} round 1-based round within one node run
+ * @param {{agentKey?:string, nodeId?:string, questions?:object, answers?:object}} payload
+ */
+export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey, nodeId, questions, answers } = {}) {
+  if (!pipelineId || !stepKey || !Number.isFinite(Number(round))) return;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        INSERT INTO step_questions (pipeline_id, step_key, round, node_id, agent_key) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(pipeline_id, step_key, round)
+        DO UPDATE SET node_id = COALESCE(excluded.node_id, node_id),
+                      agent_key = COALESCE(excluded.agent_key, agent_key)
+      `).run(pipelineId, stepKey, Number(round), nodeId ?? null, agentKey ?? null);
+      if (questions !== undefined) {
+        getDb().prepare('UPDATE step_questions SET questions = ? WHERE pipeline_id = ? AND step_key = ? AND round = ?')
+          .run(s(questions), pipelineId, stepKey, Number(round));
+      }
+      if (answers !== undefined) {
+        getDb().prepare('UPDATE step_questions SET answers = ? WHERE pipeline_id = ? AND step_key = ? AND round = ?')
+          .run(s(answers), pipelineId, stepKey, Number(round));
+      }
+    });
+  } catch (err) {
+    // Defensive: mirrors writeClarify — a transient lock must not crash a run.
+    // Anything OTHER than lock contention (e.g. schema drift that once left
+    // step_questions missing) is silent Q&A loss, so at least say so.
+    const msg = err && err.message ? err.message : String(err);
+    if (!/locked|busy/i.test(msg)) console.warn(`[artifacts] step_questions write dropped: ${msg}`);
+  }
+}
+
+/**
+ * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, in
+ * chronological insert order (rowid — lexicographic step_key would mis-order
+ * '10:' before '2:' on big workflows). Always returns an array.
+ * @param {string} pipelineId
+ * @returns {Array<{stepKey:string, round:number, nodeId:string, agentKey:string, questions:Array, answers:Array}>}
+ */
+export function readStepQuestions(pipelineId) {
+  const rows = getDb().prepare(
+    'SELECT step_key, round, node_id, agent_key, questions, answers FROM step_questions WHERE pipeline_id = ? ORDER BY rowid'
+  ).all(pipelineId);
+  return rows.map((r) => {
+    const qWrap = j(r.questions, null);
+    const aWrap = j(r.answers, null);
+    return {
+      stepKey: r.step_key,
+      round: r.round,
+      nodeId: r.node_id || '',
+      agentKey: r.agent_key || '',
+      questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
+      answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+    };
+  });
+}
+
+/**
  * Map a channels.allocate() review base name to the reviews-table `kind`. A2: the
  * kind is a 5-value OPEN set {refine, impl, plan, ws, webui} derived by stripping the
  * "-review-cycleN.json" suffix from the legacy filename; treat it as free text (an
@@ -212,9 +276,11 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * {answers:[…]} — see writeClarify); a missing clarify row yields empty arrays.
  * reviews is a flat, deterministically ordered (kind, cycle) list, each entry the
  * parsed verdict spread with its {kind,cycle} so the UI can group/label without a
- * second lookup. Always returns arrays (never null) so callers render unconditionally.
+ * second lookup. stepQuestions is the per-step ask-then-resume Q&A rounds
+ * (readStepQuestions, chronological insert order). Always returns arrays (never
+ * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -235,7 +301,7 @@ export function readPipelineExtras(pipelineId) {
       summary: typeof v.summary === 'string' ? v.summary : '',
     };
   });
-  return { clarify, reviews };
+  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
 }
 
 /**

@@ -12,6 +12,7 @@
   "produces": ["workspace"],
   "consumes": ["userPrompt"],
   "connectsTo": [],
+  "asksQuestions": false,
   "order": 0.5,
   "scope": "workspace-only"
 }

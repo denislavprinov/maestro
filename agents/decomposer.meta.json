@@ -14,5 +14,8 @@
   "consumes": ["plan"],
   "optionalConsumes": [],
   "connectsTo": ["implementer"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 2.5
 }

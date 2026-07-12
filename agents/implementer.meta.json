@@ -13,5 +13,8 @@
   "consumes": ["plan","review"],
   "optionalConsumes": ["review"],
   "connectsTo": ["reviewer","manualTestsChecklist"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 3
 }

@@ -20,6 +20,11 @@
 //   MOCK_CYCLE: <n>        loop cycle number (refiner + reviewer)
 //   MOCK_IN: <path>        input plan path (refiner; optional, used to seed -vN)
 //   MOCK_BASE: <name>      base slug (optional, used for nicer mock content)
+//   MOCK_ASK: <path>       ask-then-resume questions file (per-step user
+//                          questions). When present the mock writes ONE canned
+//                          question there and STOPS (no role side effects); the
+//                          resumed prompt carries no MOCK_ASK, so the role arm
+//                          runs then.
 //
 // Markers are matched leniently: "KEY: value" anywhere at the start of a line,
 // case-sensitive keys, value trimmed. Missing markers degrade gracefully.
@@ -474,6 +479,20 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
 
   await emitLog(onEvent, `[mock] starting role=${role || 'unknown'} cycle=${cycle}`);
   abortIfNeeded(signal);
+
+  // Ask-then-resume (spec 2026-07-11): asking replaces the role side effects
+  // for this invocation; the orchestrator gates the user and resumes. The
+  // session event above already fired, so the resume has a session id.
+  if (m.MOCK_ASK) {
+    await ensureDir(m.MOCK_ASK);
+    await writeFile(m.MOCK_ASK, JSON.stringify({
+      questions: [{ id: 'q1', question: `Mock question from ${role}?`, options: ['Option A', 'Option B'], allowFreeText: true }],
+    }, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_ASK}`, raw: { mock: true, file: m.MOCK_ASK } });
+    safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
+    await emitLog(onEvent, `[mock] questions written; stopping for answers (role=${role})`);
+    return { text: '[mock] asked questions', exitCode: 0 };
+  }
 
   let text = `[mock] role ${role} complete`;
   switch (role) {
@@ -950,6 +969,7 @@ async function mockAgentGen(m, onEvent) {
   const meta = {
     key, displayName: name, description: `mock-generated agent for ${name}`,
     color: 'amber', runnerType: 'producer', loopSource: false, fanOut: false,
+    asksQuestions: true, questionsLocked: false, questionsDefault: false,
     consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99,
   };
   if (m.MOCK_OUT) {

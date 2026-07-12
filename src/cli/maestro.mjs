@@ -357,7 +357,7 @@ async function attachAndDrive(orch, flags, start) {
     process.stderr.write(c('red', `Error: ${message}`) + '\n');
   });
 
-  orch.on('question', async ({ id, kind, questions, issues, recovery }) => {
+  orch.on('question', async ({ id, kind, questions, issues, recovery, agent }) => {
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     try {
@@ -369,6 +369,10 @@ async function attachAndDrive(orch, flags, start) {
         orch.answer(id, payload);
       } else if (kind === 'recovery') {
         const payload = await askRecovery(rl, recovery);
+        orch.answer(id, payload);
+      } else if (kind === 'questions') {
+        out(c('yellow', c('bold', `${agent || 'Agent'} has questions:`)));
+        const payload = await askClarify(rl, questions || []);
         orch.answer(id, payload);
       }
     } catch (err) {

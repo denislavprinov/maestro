@@ -11,5 +11,8 @@
   "produces": ["checklist"],
   "consumes": ["plan","code"],
   "connectsTo": ["manualWebUiTesting"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
   "order": 5
 }

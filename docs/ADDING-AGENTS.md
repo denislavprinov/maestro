@@ -113,8 +113,23 @@ and the per-project config all read from. **Every field, explained:**
 | `agentFile` | string \| null | Prompt filename in `agents/` (e.g. `"maestro-manual-web-ui-testing.md"`). `null` for a palette-only agent (no runner invoked). |
 | `runnerType` | `"producer"` \| `"verifier"` | Selects the execution function from the runner registry (Step 3). |
 | `loopSource` | boolean | `true` if this agent may **originate a feedback loop** (it emits a blocking/non-blocking verdict). Only meaningful for `verifier`. See Step 6. |
+| `asksQuestions` | boolean | `true` if the agent may pause the run to ask the user questions mid-task (ask-then-resume: it writes a questions JSON, the orchestrator gates the user, then resumes the same session with the answers). |
+| `questionsLocked` | boolean | `true` = the user cannot toggle the questions step in the New Pipeline menu; the effective state is always `questionsDefault`. Use ONLY when asking is the agent's whole purpose (e.g. `clarify`). Forced `false` when `asksQuestions` is `false`. |
+| `questionsDefault` | boolean | Initial (and, when locked, permanent) on/off state of the questions toggle. Only `clarify` ships `true`. Forced `false` when `asksQuestions` is `false`. |
 | `connectsTo` | `"*"` | Which agents it can wire to in the Composer. `"*"` (everything) for now. |
 | `order` | number | Palette render order; `loadAgentRegistry` returns the registry **sorted by `order`**. |
+
+### User questions (ask-then-resume)
+
+Set `asksQuestions: true` when the agent may need a user decision it cannot
+resolve from its inputs. At runtime (when the user enables the step's Questions
+toggle) the orchestrator appends a directive telling the agent to write a
+`questions-*.json` and stop; it then asks the user and resumes the same session
+with the answers — up to 3 rounds per run. `questionsLocked: true` removes the
+user's choice (the toggle renders disabled; the effective state is always
+`questionsDefault`) — reserve it for agents whose whole purpose is asking, like
+the builtin `clarify` (`true/true/true`). Everything else should ship
+`true/false/false`: capable, off by default, user opts in per pipeline.
 
 **Complete worked example — the shipped `agents/manualWebUiTesting.meta.json`:**
 
