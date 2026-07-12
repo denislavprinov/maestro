@@ -6361,8 +6361,10 @@ async function loadHistDetail(projectDir, id, detail, record) {
 // The section inserts BEFORE .hist-actions so Delete stays last. Idempotent: any prior
 // section is removed first (a cached re-expand must never stack duplicates). Shape comes
 // straight from readPipelineExtras:
-// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]}.
-// Paint the Clarify dropdown from saved Q&A (read-only). Hidden when empty.
+// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]};
+// stepQuestions=[{stepKey,round,agentKey,questions,answers}] (per-step ask rounds).
+// Paint the Clarify dropdown from saved clarify + stepQuestions Q&A (read-only);
+// the .sb-count badge shows the MERGED count of both. Hidden when both are empty.
 function paintClarifyBar(barEl, clarify, stepQuestions) {
   if (!barEl) return;
   const questions = Array.isArray(clarify && clarify.questions) ? clarify.questions : [];

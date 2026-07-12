@@ -77,7 +77,7 @@ function defaultConfig() {
   return { steps: {}, customModels: [] };
 }
 
-/** Keep only known step keys carrying a non-empty model/effort and/or a fanOut boolean. */
+/** Keep only known step keys carrying a non-empty model/effort and/or a fanOut/askQuestions boolean. */
 function sanitizeSteps(steps) {
   const out = {};
   const keys = stepKeys();

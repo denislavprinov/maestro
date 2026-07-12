@@ -185,14 +185,15 @@ export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey,
 }
 
 /**
- * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, ordered
- * by (step_key, round). Always returns an array.
+ * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, in
+ * chronological insert order (rowid — lexicographic step_key would mis-order
+ * '10:' before '2:' on big workflows). Always returns an array.
  * @param {string} pipelineId
  * @returns {Array<{stepKey:string, round:number, nodeId:string, agentKey:string, questions:Array, answers:Array}>}
  */
 export function readStepQuestions(pipelineId) {
   const rows = getDb().prepare(
-    'SELECT step_key, round, node_id, agent_key, questions, answers FROM step_questions WHERE pipeline_id = ? ORDER BY step_key, round'
+    'SELECT step_key, round, node_id, agent_key, questions, answers FROM step_questions WHERE pipeline_id = ? ORDER BY rowid'
   ).all(pipelineId);
   return rows.map((r) => {
     const qWrap = j(r.questions, null);
@@ -269,9 +270,11 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * {answers:[…]} — see writeClarify); a missing clarify row yields empty arrays.
  * reviews is a flat, deterministically ordered (kind, cycle) list, each entry the
  * parsed verdict spread with its {kind,cycle} so the UI can group/label without a
- * second lookup. Always returns arrays (never null) so callers render unconditionally.
+ * second lookup. stepQuestions is the per-step ask-then-resume Q&A rounds
+ * (readStepQuestions, chronological insert order). Always returns arrays (never
+ * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);

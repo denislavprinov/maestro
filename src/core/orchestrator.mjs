@@ -1614,7 +1614,7 @@ class Orchestrator extends EventEmitter {
         agentKey: node.key, nodeId: node.nodeId, questions: { questions },
       });
       this._artifact('questions', qPath);
-      await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`);
+      await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
       const payload = await this._enqueueAsk(() => this._ask({
         id: `questions-${stepKey}-r${round}`,
         kind: 'questions',
@@ -1629,7 +1629,7 @@ class Orchestrator extends EventEmitter {
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
         agentKey: node.key, nodeId: node.nodeId, answers: { answers: enriched },
       });
-      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`);
+      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`).catch(() => {});
       // Consume the processed round file: the DB row is authoritative, and a
       // surviving file would re-gate the user on a crash/pause-resumed re-run.
       await rm(qPath, { force: true }).catch(() => {});
