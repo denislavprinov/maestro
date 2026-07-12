@@ -179,3 +179,53 @@ test('parallel group: both enabled nodes complete; asks serialize through one sl
   assert.ok(st.steps.find((s) => s.nodeId === 'pa' && s.status === 'done'));
   assert.ok(st.steps.find((s) => s.nodeId === 'pb' && s.status === 'done'));
 });
+
+test('pause during a parallel question gate: the queued sibling ask never opens', async () => {
+  const dir = await makeTmpDir();
+  const orch = await primedInteractive(dir);
+  orch.registry = {
+    worker: { key: 'worker', displayName: 'Worker' },
+    helper: { key: 'helper', displayName: 'Helper' },
+  };
+  const asked = new Set();
+  orch._runners = {
+    producer: async (ctx) => {
+      if (ctx.questionsFile && !asked.has(ctx.node.nodeId)) {
+        asked.add(ctx.node.nodeId);
+        await writeFile(ctx.questionsFile, JSON.stringify({
+          questions: [{ id: 'q1', question: `${ctx.node.key}?`, options: ['A', 'B'] }],
+        }), 'utf8');
+      }
+      return { status: 'ok', summary: 'x' };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [], summary: '' } }),
+  };
+  // Deterministic scenario from the review finding: one node's prompt is OPEN and
+  // the sibling's ask is QUEUED on _askTail when pause() lands. Spy on _enqueueAsk
+  // so the pause fires only once both asks are in the tail.
+  let bothQueued;
+  const bothQueuedP = new Promise((resolve) => { bothQueued = resolve; });
+  const origEnqueue = orch._enqueueAsk.bind(orch);
+  let enqueues = 0;
+  orch._enqueueAsk = (run) => { if ((enqueues += 1) === 2) bothQueued(); return origEnqueue(run); };
+  const events = [];
+  orch.on('question', (q) => {
+    events.push(q);
+    // Pause from inside the FIRST question handler — never answer anything — as
+    // soon as the sibling's ask is queued behind this open prompt.
+    bothQueuedP.then(() => setImmediate(() => orch.pause()));
+  });
+  const res = await orch._dispatch(PLAN([
+    { nodeId: 'pa', key: 'worker', runnerType: 'producer', askQuestions: true },
+    { nodeId: 'pb', key: 'helper', runnerType: 'producer', askQuestions: true },
+  ]));
+  assert.equal(res, 'paused', 'dispatch unwound as a pause');
+  // Drain the queued sibling's unwind (pure microtasks once it was queued):
+  // Promise.all rejects on the first paused node, so _dispatch can resolve while
+  // the sibling's pauseErr is still propagating.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(events.length, 1, 'exactly one question event: the queued gate never fired on the pausing run');
+  const st = orch.getState();
+  assert.equal(st.steps.find((s) => s.nodeId === 'pa')?.status, 'paused', 'pa ended paused');
+  assert.equal(st.steps.find((s) => s.nodeId === 'pb')?.status, 'paused', 'pb ended paused');
+});

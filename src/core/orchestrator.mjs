@@ -1857,6 +1857,13 @@ class Orchestrator extends EventEmitter {
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId }) {
     this._checkAbort();
+    // No interactive prompt may OPEN on a pausing run. pause() rejects only the
+    // prompt that is currently open; a queued ask (a parallel sibling's questions
+    // or a recovery prompt behind the _askTail chain) would otherwise still fire
+    // and emit a fresh 'question' on a pausing/paused run (stale gate in the UI,
+    // readline prompt while the CLI exits). Unwind it as a pause instead — the
+    // owning node marks 'paused', exactly like every other pause path.
+    this._checkPause();
 
     // Freeze the active-time clock while we wait on the user (active-time-only).
     const frozenKey = this._runningStepKey();
