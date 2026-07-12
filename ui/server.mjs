@@ -51,6 +51,24 @@ import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import { CHANNEL_IDS } from '../src/core/channels.mjs';
+import {
+  listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
+  setPluginEnabled, doctorPlugin, buildInstallInventory,
+} from '../src/core/plugin-store.mjs';
+import { addPluginRepo, fetchCandidate, repoCacheDir } from '../src/core/plugin-repo.mjs';
+import { redactedConfig, writePluginConfig } from '../src/core/plugin-config.mjs';
+import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
+import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
+import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
+import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+// discoveryInventory below needs these four — server.mjs currently imports NONE
+// of them (verified: its node built-ins are namespace imports `fs`/`path`/`os`/
+// `fsp` only, and no `execFile`/`promisify`/`mkdtemp`/`rm`/`tmpdir` identifier
+// exists in the file, so there are no collisions):
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -541,6 +559,61 @@ export function firstInjectionSource(sourceByKey = {}) {
   return null;
 }
 
+// ── /api/run task-source dispatch (plugins §7.3) ────────────────────────────
+// SHAPE-checks body.source only. Resolution (fetching the task, building the
+// prompt text, stamping source_type/source_ref) happens inside the orchestrator
+// via resolveTaskInput (src/core/sources.mjs) so the task is fetched exactly
+// once — the server must never resolve it too.
+// Returns null when absent, else { ok:true, source } | { ok:false, error }.
+function normalizeRunSource(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'source must be an object' };
+  const type = raw.type;
+  if (type === 'prompt') {
+    if (!(typeof raw.prompt === 'string' && raw.prompt.trim())) {
+      return { ok: false, error: 'source.prompt is required for type "prompt"' };
+    }
+    return { ok: true, source: { type: 'prompt', prompt: raw.prompt } };
+  }
+  if (type === 'markdown') {
+    const promptText = typeof raw.promptText === 'string' && raw.promptText.trim() ? raw.promptText : undefined;
+    const promptFile = typeof raw.promptFile === 'string' && raw.promptFile.trim() ? raw.promptFile : undefined;
+    if (!promptText && !promptFile) {
+      return { ok: false, error: 'source.promptText or source.promptFile is required for type "markdown"' };
+    }
+    return { ok: true, source: { type: 'markdown', promptText, promptFile } };
+  }
+  if (type === 'plugin') {
+    for (const k of ['plugin', 'sourceId', 'taskId']) {
+      if (!(typeof raw[k] === 'string' && raw[k].trim())) {
+        return { ok: false, error: `source.${k} is required for type "plugin"` };
+      }
+    }
+    return {
+      ok: true,
+      source: {
+        type: 'plugin',
+        plugin: raw.plugin.trim(),
+        sourceId: raw.sourceId.trim(),
+        taskId: raw.taskId.trim(),
+        inputs: raw.inputs && typeof raw.inputs === 'object' && !Array.isArray(raw.inputs) ? raw.inputs : undefined,
+      },
+    };
+  }
+  return { ok: false, error: `unknown source.type "${type}"` };
+}
+
+// Fallback run title when the client sends none. The legacy path is unchanged
+// (first 80 chars of the prompt — effectivePrompt is guaranteed set there); a
+// plugin source starts as "<plugin>: <taskId>" until the orchestrator resolves
+// the task and settles the real title via the title event.
+function fallbackRunTitle(effectivePrompt, source) {
+  if (effectivePrompt) return effectivePrompt.slice(0, 80);
+  if (source && source.type === 'plugin') return `${source.plugin}: ${source.taskId}`;
+  const text = (source && (source.prompt || source.promptText || source.promptFile)) || 'task';
+  return String(text).slice(0, 80);
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
@@ -562,12 +635,27 @@ app.post('/api/run', async (req, res) => {
     }
 
     // ── Shared resolution (factored BEFORE the target branch, §2.6) ──────────
+    // NEW (plugins §7.3): body.source is the task-source descriptor; shape-check
+    // only and pass through — the orchestrator resolves it exactly once. Absent
+    // -> the legacy branch below runs byte-identical.
+    const sourceCheck = normalizeRunSource(body.source);
+    if (sourceCheck && !sourceCheck.ok) return badRequest(res, sourceCheck.error);
+    const source = sourceCheck ? sourceCheck.source : null;
+
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
     const promptMarkdown =
       typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
     const effectivePrompt = prompt || promptMarkdown;
-    if (!effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
+    if (source && effectivePrompt) return badRequest(res, 'provide source OR prompt/promptMarkdown, not both');
+    if (!source && !effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
+
+    // UI Markdown runs carry provenance (spec §10): absent an explicit
+    // body.source, a promptMarkdown-only body maps to the markdown source type.
+    // prompt.md bytes and every legacy guard/message stay identical; only the
+    // new source_type column differs ('markdown' instead of the default).
+    const effectiveSource = source
+      || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
 
     const mock = !!body.mock || isTruthy(process.env.MAESTRO_MOCK ?? process.env.ORCH_MOCK);
 
@@ -580,7 +668,7 @@ app.post('/api/run', async (req, res) => {
     if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
 
     const runId = randomUUID();
-    const title = (typeof body.title === 'string' && body.title.trim()) || effectivePrompt.slice(0, 80);
+    const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
     // Materialize any uploaded extra files to a temp dir; the orchestrator's
     // createPipeline copies them into <pipeline>/extras/.
@@ -652,6 +740,7 @@ app.post('/api/run', async (req, res) => {
           projects: buildWorkspaceMembers(projects, branch, sourceByKey),
         },
         prompt: effectivePrompt,
+        ...(effectiveSource ? { source: effectiveSource } : {}),
         title,
         extras,
         agentsDir: AGENTS_DIR,
@@ -697,6 +786,7 @@ app.post('/api/run', async (req, res) => {
       orch = createOrchestrator({
         projectDir,
         prompt: effectivePrompt,
+        ...(effectiveSource ? { source: effectiveSource } : {}),
         title,
         extras,
         agentsDir: AGENTS_DIR,
@@ -1776,6 +1866,7 @@ app.get('/api/agents', async (req, res) => {
 function agentErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
+  if (code === 'PLUGIN') return 400;
   if (code === 'BUILTIN' || code === 'DUPLICATE' || code === 'REFERENCED') return 409;
   return 500;
 }
@@ -1906,6 +1997,291 @@ app.delete('/api/agents/:key', async (req, res) => {
     res.json(await deleteAgent(key));
   } catch (err) {
     res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/plugins* -> plugin lifecycle, delegated to src/core/plugin-store.mjs /
+// plugin-repo.mjs / plugin-config.mjs (spec §6). Thin wrappers: all policy
+// (SHA pinning, symlink swap, uninstall guard, secret routing) lives in core.
+// ---------------------------------------------------------------------------
+// :name guard for every /api/plugins/:name route. Manifest names are kebab-case
+// (normalizeManifest, plugin-manifest.mjs), so a value failing this regex can
+// never contain '/' or '..' — pluginDir(name)/pluginCurrentDir(name) cannot
+// escape the namespace — and it reads as "not found" (mirrors the AGENT_KEY_RE
+// guard on /api/agents/:key). Existence = lockfile membership.
+const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+function requirePlugin(req, res) {
+  const name = req.params.name;
+  if (!PLUGIN_NAME_RE.test(name) || !readPluginsLock()[name]) {
+    res.status(404).json({ error: 'plugin not found' });
+    return null;
+  }
+  return name;
+}
+
+// Map plugin-core err.code -> HTTP (mirrors agentErrorStatus). The uninstall
+// guard's ReferencedError (plugin-workflows.mjs) is matched structurally so its
+// payload (the referencing list) reaches the client; everything uncoded is a
+// 500 with the verbatim message (spec §11: surface command output unchanged).
+function pluginErrorStatus(code) {
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'BAD_REQUEST') return 400;
+  if (code === 'REFERENCED') return 409;
+  return 500;
+}
+function sendPluginError(res, err) {
+  const message = err && err.message ? err.message : String(err);
+  if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
+    return res.status(409).json({ error: message, references: err.references || [] });
+  }
+  res.status(pluginErrorStatus(err && err.code)).json({ error: message });
+}
+
+// Load the installed manifest through the current/ symlink. null = broken
+// install (missing/unparseable) — routes answer 409 "run doctor", not a crash.
+function readInstalledManifest(name) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(pluginCurrentDir(name), 'maestro-plugin.json'), 'utf8'));
+    const norm = normalizeManifest(raw, { dir: pluginCurrentDir(name) });
+    return norm.ok ? norm.manifest : null;
+  } catch {
+    return null;
+  }
+}
+
+// Pre-install consent inventory (spec §6.1: agents WITH tools, sources WITH
+// requested secrets, dep count, setup commands — all BEFORE anything is
+// installed). buildInstallInventory needs a tree on disk, so export the pinned
+// SHA from the bare cache into a throwaway temp dir, inventory it, delete it.
+// Nothing lands under ~/.maestro/plugins and no plugin code runs.
+const execFileP = promisify(execFile); // execFile/promisify imported in the step-(a) block above
+async function discoveryInventory(repoUrl, sha, subdir) {
+  const tmp = await mkdtemp(path.join(tmpdir(), 'maestro-consent-'));
+  try {
+    const tar = path.join(tmp, 'x.tar');
+    await execFileP('git', ['--git-dir', repoCacheDir(repoUrl), 'archive', '--format=tar', '-o', tar,
+      ...(subdir ? [sha, subdir] : [sha])]);
+    await execFileP('tar', ['-xf', tar, '-C', tmp,
+      ...(subdir ? ['--strip-components', String(subdir.split('/').length)] : [])]);
+    await rm(tar, { force: true });
+    return buildInstallInventory(tmp);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
+app.get('/api/plugins', (req, res) => {
+  try {
+    res.json({ plugins: listInstalledPlugins() });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// POST /api/plugins/repo { url } -> discovery pick-list (§4.3). Bare clone/
+// fetch into the cache; nothing is installed and no plugin code runs.
+app.post('/api/plugins/repo', async (req, res) => {
+  const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
+  if (!url) return badRequest(res, 'url is required');
+  try {
+    const out = await addPluginRepo(url);
+    res.json({
+      repoUrl: out.repoUrl,
+      sha: out.sha,
+      discovered: await Promise.all(out.discovered.map(async (d) => ({
+        ...d,
+        inventory: await discoveryInventory(out.repoUrl, out.sha, d.subdir),
+      }))),
+    });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// POST /api/plugins/install { repoUrl, subdir, name, sha } — the consent point
+// (§6.1). installPlugin does export -> setup -> doctor -> atomic swap -> lock,
+// with cleanup on failure; the returned inventory is echoed as the UI receipt.
+app.post('/api/plugins/install', async (req, res) => {
+  const body = req.body || {};
+  for (const k of ['repoUrl', 'name', 'sha']) {
+    if (!(typeof body[k] === 'string' && body[k].trim())) return badRequest(res, `${k} is required`);
+  }
+  const subdir = typeof body.subdir === 'string' ? body.subdir : '';
+  try {
+    const out = await installPlugin({
+      repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(),
+    });
+    res.json(out); // { ok: true, inventory }
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// POST /api/plugins/:name/update — two-phase (§6.2): without { confirm: true }
+// it ONLY previews (commit log + diffstat between pinned and candidate; nothing
+// changes on disk); with it, updatePlugin performs export/setup/doctor/swap/lock.
+app.post('/api/plugins/:name/update', async (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  try {
+    if (!(req.body && req.body.confirm === true)) {
+      return res.json({ preview: await fetchCandidate(name) });
+    }
+    res.json(await updatePlugin(name));
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+app.post('/api/plugins/:name/enable', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  if (!req.body || typeof req.body.enabled !== 'boolean') {
+    return badRequest(res, 'enabled must be a boolean');
+  }
+  try {
+    setPluginEnabled(name, req.body.enabled);
+    res.json({ ok: true, enabled: req.body.enabled });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// DELETE /api/plugins/:name — uninstall; purge (body { purge: true } or
+// ?purge=1) also removes data/ (config + secrets + state). The referenced-guard
+// 409 carries the referencing list so the UI can show what blocks removal.
+app.delete('/api/plugins/:name', async (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const purge = isTruthy(req.query.purge) || !!(req.body && req.body.purge === true);
+  try {
+    await uninstallPlugin(name, { purge });
+    res.json({ ok: true, purged: purge });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+app.post('/api/plugins/:name/doctor', async (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  try {
+    res.json(await doctorPlugin(name)); // { ok, checks: [{ id, ok, detail }] }
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// GET /api/plugins/:name/config -> per-source schema + redacted values. Secrets
+// NEVER travel to the browser: redactedConfig replaces a stored secret with
+// { set: true } (§7.6).
+app.get('/api/plugins/:name/config', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const manifest = readInstalledManifest(name);
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  try {
+    const sources = (manifest.taskSources || []).map((s) => ({
+      id: s.id,
+      schema: s.configSchema,
+      values: redactedConfig(name, s.configSchema),
+    }));
+    res.json({ sources });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// PUT /api/plugins/:name/config { sourceId, values } -> writePluginConfig
+// routes secret:true keys to data/secrets.json (0600, atomic). Request values
+// are NEVER logged and NEVER echoed back (the response is a bare receipt).
+app.put('/api/plugins/:name/config', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const body = req.body || {};
+  if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
+    return badRequest(res, 'values must be an object');
+  }
+  const manifest = readInstalledManifest(name);
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const sources = manifest.taskSources || [];
+  const sourceId = typeof body.sourceId === 'string' && body.sourceId
+    ? body.sourceId
+    : (sources.length === 1 ? sources[0].id : '');
+  const source = sources.find((s) => s.id === sourceId);
+  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  try {
+    writePluginConfig(name, source.configSchema, body.values);
+    res.json({ ok: true });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/sources* -> task-source discovery + browser-driven connector calls.
+// ---------------------------------------------------------------------------
+app.get('/api/sources', (req, res) => {
+  try {
+    res.json({ sources: listTaskSources() }); // builtins + enabled plugin sources
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/sources/call { plugin, sourceId, op, args } — the New Pipeline
+// pane's data channel (task-browser search, remote-select options, Test
+// connection). op is ALLOWLISTED: the three interface ops + the ops this
+// source's manifest names in inputs[].optionsFrom. Anything else (reportResult,
+// arbitrary strings) is a 400 — the browser must not drive unadvertised
+// connector code paths.
+// Error convention: HTTP status = caller correctness (400/404, route style);
+// connector outcomes ride the 200 envelope { ok:false, error:{kind,message} }
+// because an expired token is a RESULT the pane renders inline (kind-keyed
+// message + retry) — matching the contract's { ok, result } shape.
+app.post('/api/sources/call', async (req, res) => {
+  const body = req.body || {};
+  for (const k of ['plugin', 'sourceId', 'op']) {
+    if (!(typeof body[k] === 'string' && body[k].trim())) return badRequest(res, `${k} is required`);
+  }
+  const { plugin, sourceId, op } = body;
+  const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
+  if (!PLUGIN_NAME_RE.test(plugin) || !readPluginsLock()[plugin]) {
+    return res.status(404).json({ error: 'plugin not found' });
+  }
+  const manifest = readInstalledManifest(plugin);
+  const source = manifest && (manifest.taskSources || []).find((s) => s.id === sourceId);
+  if (!source) return res.status(404).json({ error: 'task source not found' });
+  const allowed = new Set(['listTasks', 'getTask', 'validateConfig']);
+  for (const input of source.inputs || []) {
+    if (input && typeof input.optionsFrom === 'string' && input.optionsFrom) allowed.add(input.optionsFrom);
+  }
+  if (!allowed.has(op)) return badRequest(res, `op "${op}" is not allowed for this source`);
+  try {
+    const result = await callSource({ plugin, sourceId, op, args });
+    res.json({ ok: true, result });
+  } catch (err) {
+    if (err instanceof PluginOpError) {
+      return res.json({ ok: false, error: { kind: err.kind, message: err.message } });
+    }
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/pipelines/:id/report-result — manual write-back retry (§7.5). The
+// automatic write-back never blocks 'done'; this is the results-view retry
+// button. readPipelineForResume is a pure read-by-id (artifacts.mjs) -> clean
+// 404 before delegating to retryWriteback (sources.mjs, Task 13), which itself
+// never throws for connector failures.
+app.post('/api/pipelines/:id/report-result', async (req, res) => {
+  try {
+    if (!readPipelineForResume(req.params.id)) {
+      return res.status(404).json({ error: 'pipeline not found' });
+    }
+    res.json(await retryWriteback(req.params.id)); // { ok:true, skipped?:true } | { ok:false, error: string }
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 

@@ -17,7 +17,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join, basename, resolve, dirname, sep, relative } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
@@ -48,6 +48,7 @@ import {
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
 import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
+import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction } from './preflight.mjs';
@@ -60,18 +61,47 @@ import { classifyError } from './recoverable-error.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { loadAgentRegistry, collectChannelDefs } from './agent-registry.mjs';
-import { collectRequiredSkills, validateSkills, injectSkills } from './skills.mjs';
+import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } from './skills.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
   isValidSourceRef,
 } from './worktree.mjs';
+import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 
 /**
  * Default location of the agent prompt markdown files, relative to this module.
  */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 const REPO_ROOT = new URL('../../', import.meta.url).pathname; // maestro repo root; holds skills/
+
+/**
+ * §9.4 message enrichment: does a DISABLED plugin ship this agent key? Scans
+ * lock entries with enabled === false, reading key fields from each plugin's
+ * current/agents/*.meta.json. Returns the plugin name or null. try/catch
+ * throughout: no resolvable home / no lock / broken current => null (callers
+ * fall back to the generic "not installed" message).
+ * @param {string} key
+ * @returns {string|null}
+ */
+function findDisabledPluginFor(key) {
+  try {
+    const lock = readPluginsLock();
+    for (const name of Object.keys(lock).sort()) {
+      if (!lock[name] || lock[name].enabled !== false) continue;
+      const dir = join(pluginCurrentDir(name), 'agents');
+      let files;
+      try { files = readdirSync(dir); } catch { continue; }
+      for (const f of files) {
+        if (!f.endsWith('.meta.json')) continue;
+        try {
+          if (JSON.parse(readFileSync(join(dir, f), 'utf8'))?.key === key) return name;
+        } catch { /* malformed sidecar: skip */ }
+      }
+    }
+  } catch { /* no home / unreadable lock */ }
+  return null;
+}
 
 /**
  * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
@@ -133,6 +163,9 @@ export function decomposedTaskNode(implNode, task, phaseTasks, pipelineDir) {
  * @param {string} opts.projectDir
  * @param {string} [opts.prompt]
  * @param {string} [opts.promptFile]
+ * @param {object} [opts.source]  task-source descriptor (sources.mjs#resolveTaskInput):
+ *                                { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }
+ *                                | { type:'plugin', plugin, sourceId, taskId }. Absent => legacy prompt/promptFile.
  * @param {string[]} [opts.extras]
  * @param {string} [opts.title]
  * @param {object} [opts.claude]  { bin?, permissionMode="acceptEdits", model?, mock? }
@@ -369,6 +402,9 @@ class Orchestrator extends EventEmitter {
           }
         }
       }
+      // §9.4: hard-fail BEFORE the stepper snapshot / createPipeline / worktree —
+      // a missing agent key must never reach dispatch as an empty-prompt node.
+      this._preflightAgentKeys(plan);
       this.state.stepper = buildStepperManifest(plan, registry);
       this._emit('state', this.getState());
 
@@ -391,14 +427,27 @@ class Orchestrator extends EventEmitter {
           : 'No knowledge-graph tooling detected',
       );
 
-      // 2) Create the pipeline directory + audit. On a workspace run the pipeline is
-      // written to the WORKSPACE store (artifactPaths routes by workspaceKey),
-      // state.json carries the §5.2 superset, and workspace-description.md is frozen
-      // (capped at 2000) — all owned by createPipeline (M1). Absent the workspace
-      // opts the single-project call is byte-identical.
+      // 2) Resolve the task input through the source seam (sources.mjs) and create
+      // the pipeline directory + audit. Absent opts.source the legacy prompt/
+      // promptFile opts are wrapped into the equivalent descriptor — same text
+      // precedence as createPipeline's old inline resolution (non-empty inline
+      // prompt wins, else file), so feature-off prompt.md bytes and row values are
+      // identical. On a workspace run the pipeline is written to the WORKSPACE
+      // store (artifactPaths routes by workspaceKey) — all owned by createPipeline.
+      const source = this.opts.source
+        || (typeof this.opts.prompt === 'string' && this.opts.prompt
+          ? { type: 'prompt', prompt: this.opts.prompt }
+          : this.opts.promptFile
+            ? { type: 'markdown', promptFile: this.opts.promptFile }
+            : { type: 'prompt', prompt: '' });
+      const input = await resolveTaskInput(source, { projectDir: this.projectDir });
       this.pipeline = await createPipeline(this.projectDir, {
-        prompt: this.opts.prompt,
-        promptFile: this.opts.promptFile,
+        promptText: input.promptText,
+        // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
+        // text, but a passed promptFile is STILL copied verbatim into prompt.md.
+        promptFile: input.promptFile ?? this.opts.promptFile,
+        sourceType: source.type,
+        sourceMeta: input.sourceMeta || null,
         extras: this.opts.extras,
         title: this.opts.title,
         ...(this.isWorkspace ? {
@@ -494,7 +543,7 @@ class Orchestrator extends EventEmitter {
       //     unresolvable (built beside graphify's probe; does not touch it).
       const requiredSkills = collectRequiredSkills(this.registry, plan);
       if (requiredSkills.length) {
-        const skillCtx = { repoRoot: REPO_ROOT, projectDir: this.projectDir };
+        const skillCtx = { repoRoot: REPO_ROOT, projectDir: this.projectDir, pluginDirs: pluginSkillDirs() };
         const resolvedSkills = validateSkills(requiredSkills, skillCtx); // throws => caught => run ends 'error'
         // Inject ONLY into real isolated worktrees, never the main projectDir,
         // so a copy can never pollute the user's working tree.
@@ -529,6 +578,7 @@ class Orchestrator extends EventEmitter {
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
       await this._buildResults();          // refs + worktree still live here
+      await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -694,6 +744,11 @@ class Orchestrator extends EventEmitter {
         });
       }
 
+      // §9.4: the frozen (or re-resolved) plan must still resolve every agent
+      // key — the providing plugin may have been disabled or uninstalled while
+      // this run sat paused. Same gate, same messages as run().
+      this._preflightAgentKeys(plan);
+
       const dispatched = await this._dispatch(plan, { resume: rp });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
@@ -704,6 +759,7 @@ class Orchestrator extends EventEmitter {
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
       await this._buildResults();          // refs + worktree still live here
+      await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -1106,6 +1162,39 @@ class Orchestrator extends EventEmitter {
   // ── phase helpers ─────────────────────────────────────────────────────────────
 
   // ── data-driven dispatcher ─────────────────────────────────────────────────
+
+  /**
+   * §9.4 preflight gate: every workflow node key must resolve in the MERGED
+   * registry (builtin+user+plugin) BEFORE any node executes. This deliberately
+   * supersedes the silent empty-prompt degradation for ALL origins (it was a
+   * bug, not a feature) — resolveWorkflow keeps `reg[key] || {}` for library
+   * callers; runs are gated HERE, covering run() and resume(). The thrown plain
+   * Error lands in the caller's catch => status 'error' + message; the
+   * recoverable-error gate surfaces it cleanly.
+   * @param {object} plan resolveWorkflow() output (or a frozen resume plan)
+   */
+  _preflightAgentKeys(plan) {
+    const reg = this.registry || {};
+    const missing = [];
+    const seen = new Set();
+    for (const group of plan?.steps || []) {
+      for (const node of group) {
+        const key = node?.key;
+        if (!key || seen.has(key) || Object.hasOwn(reg, key)) continue;
+        seen.add(key);
+        const plugin = findDisabledPluginFor(key);
+        missing.push(plugin
+          ? `agent "${key}" comes from disabled plugin "${plugin}" — enable it`
+          : `agent "${key}" is not installed (removed plugin?)`);
+      }
+    }
+    if (missing.length) {
+      throw new Error(
+        `Preflight failed: ${missing.length} workflow agent key(s) do not resolve:\n` +
+        missing.map((m) => `  - ${m}`).join('\n'),
+      );
+    }
+  }
 
   /**
    * Walk the resolved plan's steps in order. A single-node step runs directly; a
@@ -2446,6 +2535,31 @@ class Orchestrator extends EventEmitter {
       }
     } catch (err) {
       this._log('results', 'warn', `results build failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Task-source write-back (spec §7.5): report the finished run to the plugin
+   * source that produced it. Runs right after _buildResults() on BOTH terminal
+   * done paths so results.json exists for the summary, and the row status is
+   * already persisted 'done' (statusToResult -> 'completed'). NEVER throws and
+   * never fails the run: a failure emits a warn `log` event and the results view
+   * offers a manual retry via the same retryWriteback (Task 15 endpoint, Task 21
+   * button). Prompt/markdown
+   * runs skip inside retryWriteback before any work — feature-off runs pay
+   * nothing here. Bounded by the shim's per-op timeout.
+   */
+  async _reportToSource() {
+    if (!this.pipeline) return;
+    try {
+      const outcome = await retryWriteback(this.pipeline.id);
+      if (outcome?.ok === false) {
+        this._log('writeback', 'warn', `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
+      } else if (outcome?.ok && !outcome.skipped) {
+        await appendAudit(this.pipeline.dir, 'Result reported back to the task source.').catch(() => {});
+      }
+    } catch (err) {
+      this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);
     }
   }
 

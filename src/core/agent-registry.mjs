@@ -8,10 +8,11 @@
 // config.mjs. Tolerant: a malformed sidecar, or one missing `key`/`order`, is
 // skipped rather than throwing (mirrors the tolerant readers elsewhere).
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { maestroHome } from './projects.mjs'; // user agent layer root (read fresh per call)
+import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
 
 /** Default location of the agent metadata sidecars, relative to this module. */
 const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
@@ -247,6 +248,30 @@ export function userAgentsDir() {
   try { return join(maestroHome(), 'agents'); } catch { return null; }
 }
 
+/**
+ * Third registry layer (spec §9.1): every ENABLED installed plugin's
+ * current/agents dir, in lexicographic plugin-name order — the deterministic
+ * collision winner among plugins. An entry is skipped when disabled
+ * (enabled === false in the lock) or broken (existsSync follows the current/
+ * symlink, so a missing or dangling symlink — and a version dir without
+ * agents/ — drops out). Wrapped in try/catch like userAgentsDir(): with no
+ * resolvable maestro home (bare node:test runner) or an unreadable lock this
+ * returns [] and registry loads never throw.
+ * @returns {Array<{plugin: string, dir: string}>}
+ */
+export function pluginAgentLayers() {
+  try {
+    const lock = readPluginsLock();
+    return Object.keys(lock)
+      .sort()
+      .filter((name) => lock[name] && lock[name].enabled !== false)
+      .map((name) => ({ plugin: name, dir: join(pluginCurrentDir(name), 'agents') }))
+      .filter(({ dir }) => existsSync(dir));
+  } catch {
+    return []; // no home / unreadable lock => no plugin layer (fails safe)
+  }
+}
+
 /** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath fields. */
 function scanLayer(dir, origin) {
   let files;
@@ -298,7 +323,30 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
       users.push(m);
     }
   }
-  const metas = [...builtins, ...users].sort((a, b) => a.order - b.order); // stable sort
+  // Plugin layer (spec §9.1): builtin > user > plugin; among plugins the
+  // lexicographic name order of pluginAgentLayers() decides. Same skip-on-
+  // collision + warning contract as the user layer above. scanLayer stamps the
+  // COMPUTED origin ('plugin:<name>') and agentPath (through current/, so a
+  // version swap retargets every path atomically). opts.includePlugins=false is
+  // the escape hatch for callers that must not see plugins (default true).
+  // Zero plugins installed => pluginAgentLayers() === [] => byte-identical merge.
+  const plugins = [];
+  if (opts.includePlugins !== false) {
+    const taken = new Set([...builtinKeys, ...users.map((m) => m.key)]);
+    for (const { plugin, dir } of pluginAgentLayers()) {
+      for (const m of scanLayer(dir, `plugin:${plugin}`)) {
+        if (taken.has(m.key)) {
+          console.warn(
+            `[agent-registry] plugin agent "${m.key}" (plugin "${plugin}") collides with an existing agent and was skipped`,
+          );
+          continue;
+        }
+        taken.add(m.key);
+        plugins.push(m);
+      }
+    }
+  }
+  const metas = [...builtins, ...users, ...plugins].sort((a, b) => a.order - b.order); // stable sort
   const registry = {};
   for (const m of metas) registry[m.key] = m;
   return registry;

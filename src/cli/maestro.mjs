@@ -167,6 +167,8 @@ Subcommands:
   list                        List registered projects (tab-separated; missing dirs are flagged).
   remove <name>               Remove a registered project by name (case-insensitive).
   resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
+  plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
+                              disable|doctor|link|init|validate|exec. See: maestro plugin help
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -603,9 +605,499 @@ async function cmdResume(argv) {
   return attachAndDrive(orch, { auto }, () => orch.resume());
 }
 
+// ── plugin subcommands ─────────────────────────────────────────────────────────
+// Thin wrappers over src/core/plugin-*.mjs. All imports are lazy (mirrors
+// cmdResume) so non-plugin invocations never load the plugin machinery.
+// Exit codes: 0 ok, 1 failure/abort, 2 usage/validation errors (fail()).
+
+const PLUGIN_HELP = `maestro plugin — manage maestro plugins (task sources, agents, skills, workflows)
+
+Usage:
+  maestro plugin add <repo-url>                     Discover installable plugins in a repo
+  maestro plugin install <name> [--repo <url>] [--ref <sha>] [--yes]
+  maestro plugin list                               Installed plugins (from plugins.lock.json)
+  maestro plugin update <name> [--yes] [--diff]     Preview commits, diffstat + manifest delta (--diff: full diff), then update
+  maestro plugin remove <name> [--purge]            Uninstall (--purge also deletes data/)
+  maestro plugin purge <name>                       Shorthand for remove --purge
+  maestro plugin enable <name> | disable <name>     Toggle without removing files
+  maestro plugin doctor [name] [--fix]              Health checks (--fix re-runs deterministic setup on failure)
+  maestro plugin link <dir>                         Dev mode: use a local dir as "current"
+  maestro plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
+  maestro plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
+  maestro plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]   Debug one connector op
+
+Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
+`;
+
+/** Tiny per-verb arg parser: positionals plus declared --value / --bool flags. */
+function pluginArgs(argv, valueFlags = [], boolFlags = []) {
+  const out = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    let a = argv[i];
+    let inline;
+    const eq = a.indexOf('=');
+    if (a.startsWith('--') && eq !== -1) {
+      inline = a.slice(eq + 1);
+      a = a.slice(0, eq);
+    }
+    if (valueFlags.includes(a)) {
+      const v = inline !== undefined ? inline : argv[++i];
+      if (v === undefined) fail(`Flag ${a} requires a value.`);
+      out[a.slice(2)] = v;
+    } else if (boolFlags.includes(a)) {
+      out[a.slice(2)] = true;
+    } else if (a.startsWith('-')) {
+      fail(`Unknown flag: ${a}`);
+    } else {
+      out._.push(a);
+    }
+  }
+  return out;
+}
+
+/** y/N confirm via readline; --yes short-circuits to true (scripting contract). */
+async function confirmPlugin(msg, yes) {
+  if (yes) return true;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  rl.on('SIGINT', () => { rl.close(); out(''); process.exit(130); });
+  try {
+    const a = (await question(rl, c('cyan', `${msg} [y/N] `))).trim();
+    return /^y(es)?$/i.test(a);
+  } finally {
+    rl.close();
+  }
+}
+
+/** "1 source, 2 agents, 1 skill" from an inventory/contributions bag (defensive:
+ *  accepts arrays OR the numeric counts listInstalledPlugins() produces). */
+function contribSummary(x) {
+  const n = (v) => (Array.isArray(v) ? v.length : Number.isFinite(v) ? v : 0);
+  const b = x || {};
+  const parts = [
+    [n(b.taskSources), 'source', 'sources'],
+    [n(b.agents), 'agent', 'agents'],
+    [n(b.skills), 'skill', 'skills'],
+    [n(b.workflows), 'workflow', 'workflows'],
+  ]
+    .filter(([count]) => count > 0)
+    .map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);
+  return parts.length ? parts.join(', ') : 'no contributions';
+}
+
+/** Print the post-export install inventory (spec §6.1 consent items). */
+function printInventory(inv) {
+  const i = inv || {};
+  for (const s of i.taskSources || []) {
+    out(`  task source: ${s.id} (${s.displayName})${s.secrets?.length ? ` — secrets: ${s.secrets.join(', ')}` : ''}`);
+  }
+  for (const a of i.agents || []) {
+    out(`  agent: ${a.key}${a.tools?.length ? ` (tools: ${a.tools.join(', ')})` : ''}`);
+  }
+  for (const s of i.skills || []) out(`  skill: ${s}`);
+  for (const w of i.workflows || []) out(`  workflow: ${w}`);
+  if (i.depCount != null) out(`  npm dependencies: ${i.depCount}`);
+  for (const cmd of i.setupCommands || []) out(`  setup: ${cmd}`);
+}
+
+/** kebab plugin name -> camelCase stem for the scaffolded example agent key. */
+function camelizePluginName(name) {
+  return name.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+}
+
+const INIT_PARTS = ['task-source', 'agents', 'skills', 'workflows'];
+
+/** `maestro plugin init <name>` — scaffold a complete working plugin. */
+async function pluginInit(rest) {
+  const a = pluginArgs(rest, ['--dir', '--with'], []);
+  const name = a._[0];
+  if (!name) fail('Usage: maestro plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]');
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) fail(`plugin name must be kebab-case (got "${name}")`);
+  const withParts = a.with ? a.with.split(',').map((s) => s.trim()).filter(Boolean) : INIT_PARTS;
+  for (const part of withParts) {
+    if (!INIT_PARTS.includes(part)) fail(`unknown --with part "${part}" (known: ${INIT_PARTS.join(', ')})`);
+  }
+  if (withParts.includes('workflows') && !withParts.includes('agents')) {
+    fail('--with workflows requires agents (templates may only reference the plugin\'s own agent keys)');
+  }
+  const target = resolve(process.cwd(), a.dir || name);
+  const { mkdir, writeFile, chmod, readdir } = await import('node:fs/promises');
+  try {
+    if ((await readdir(target)).length) {
+      process.stderr.write(`target dir ${target} exists and is not empty\n`);
+      return 1;
+    }
+  } catch { /* missing dir is the normal case */ }
+
+  const agentKey = camelizePluginName(name) + 'Helper';
+  const files = new Map();
+
+  const manifestObj = {
+    name,
+    version: '0.1.0',
+    description: 'Scaffolded maestro plugin — edit me',
+    engines: { 'maestro-api': '>=1 <2' },
+  };
+  if (withParts.includes('task-source')) {
+    manifestObj.taskSources = [{
+      id: 'main',
+      displayName: name,
+      module: './connector/index.mjs',
+      configSchema: [
+        { key: 'token', type: 'text', secret: true, required: false, label: 'API token', help: 'Optional. Use {"$env":"MY_TOKEN"} to read it from the environment.' },
+      ],
+      inputs: [
+        { key: 'filter', type: 'text', label: 'Filter', default: '' },
+        { key: 'task', type: 'task-browser', label: 'Task' },
+      ],
+    }];
+    files.set('connector/index.mjs', [
+      '// Mock-style task source scaffold. Replace the canned data with real API calls.',
+      '// Contract (plugin API v1): validateConfig / listTasks / getTask / reportResult / capabilities.',
+      'const TASKS = [',
+      "  { id: 'DEMO-1', title: 'First demo task', url: 'https://example.invalid/demo/1', state: 'open', labels: ['demo'], updatedAt: '2026-01-01T00:00:00.000Z' },",
+      "  { id: 'DEMO-2', title: 'Second demo task', url: 'https://example.invalid/demo/2', state: 'open', labels: [], updatedAt: '2026-01-02T00:00:00.000Z' },",
+      '];',
+      '',
+      'export default function createTaskSource(ctx) {',
+      '  return {',
+      '    async validateConfig() {',
+      '      return { ok: true };',
+      '    },',
+      '    async listTasks({ search } = {}) {',
+      "      const needle = String(search || '').trim().toLowerCase();",
+      '      const tasks = needle ? TASKS.filter((t) => t.title.toLowerCase().includes(needle)) : TASKS;',
+      '      return { tasks };',
+      '    },',
+      '    async getTask(id) {',
+      '      const t = TASKS.find((x) => x.id === id);',
+      '      if (!t) return null;',
+      "      return { ...t, body: ['## Goal', '', 'Replace this connector with real API calls.'].join('\\n'), meta: { source: 'scaffold' } };",
+      '    },',
+      '    async reportResult(id, r) {',
+      "      await ctx.state.set('lastReport', JSON.stringify({ id, status: r.status, summary: r.summary, links: r.links || [] }));",
+      '    },',
+      '    capabilities() {',
+      '      return { writeBack: true, incrementalSync: false };',
+      '    },',
+      '  };',
+      '}',
+      '',
+    ].join('\n'));
+  }
+  if (withParts.includes('agents')) {
+    files.set(`agents/${agentKey}.meta.json`, JSON.stringify({
+      key: agentKey,
+      displayName: 'Example Helper',
+      description: `Example agent installed by the ${name} plugin`,
+      color: 'amber',
+      agentFile: `${agentKey}.md`,
+      runnerType: 'producer',
+      consumes: ['userPrompt'],
+      produces: ['code'],
+      ...(withParts.includes('skills') ? { requiresSkills: ['example-skill'] } : {}),
+      order: 900,
+    }, null, 2) + '\n');
+    files.set(`agents/${agentKey}.md`, [
+      '---',
+      `name: ${agentKey}`,
+      'description: Example plugin agent. Replace with real instructions.',
+      'tools: Read, Grep, Glob',
+      'model: inherit',
+      '---',
+      '',
+      `You are an example agent shipped by the "${name}" maestro plugin.`,
+      'Acknowledge the task you were given and describe what a real agent would do here.',
+      '',
+    ].join('\n'));
+  }
+  if (withParts.includes('skills')) {
+    files.set('skills/example-skill/SKILL.md', [
+      '---',
+      'name: example-skill',
+      `description: Example helper skill shipped by the ${name} plugin. Agents run helper.sh via Bash.`,
+      '---',
+      '',
+      '# example-skill',
+      '',
+      'Run ./helper.sh (relative to this skill directory) to print a deterministic marker line.',
+      '',
+    ].join('\n'));
+    files.set('skills/example-skill/helper.sh', '#!/bin/sh\necho "example-skill helper ok"\n');
+  }
+  if (withParts.includes('workflows')) {
+    files.set('workflows/example-flow.json', JSON.stringify({
+      name: `${name} example flow`,
+      version: 1,
+      domain: 'general',
+      steps: [[{ id: 's0_0', key: agentKey }]],
+      feedbacks: [],
+    }, null, 2) + '\n');
+  }
+  files.set('maestro-plugin.json', JSON.stringify(manifestObj, null, 2) + '\n');
+
+  for (const [rel, content] of files) {
+    const dest = join(target, rel);
+    await mkdir(dirname(dest), { recursive: true });
+    await writeFile(dest, content, 'utf8');
+  }
+  if (files.has('skills/example-skill/helper.sh')) {
+    await chmod(join(target, 'skills/example-skill/helper.sh'), 0o755);
+  }
+
+  // Belt-and-suspenders: the scaffold must lint clean, strictly.
+  const { validatePluginDir } = await import('../core/plugin-manifest.mjs');
+  const v = validatePluginDir(target, { strict: true });
+  if (!v.ok) {
+    for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
+    return 1;
+  }
+  out(`scaffolded ${name} at ${target}`);
+  out('next steps:');
+  out(`  maestro plugin link ${target}`);
+  if (withParts.includes('task-source')) out(`  MAESTRO_MOCK=1 maestro plugin exec ${name} main listTasks`);
+  return 0;
+}
+
+/** `maestro plugin <verb> …` — dispatch. */
+async function cmdPlugin(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  if (!verb || verb === 'help') {
+    process.stdout.write(PLUGIN_HELP);
+    return 0;
+  }
+
+  const store = await import('../core/plugin-store.mjs');
+  const repoMod = await import('../core/plugin-repo.mjs');
+  const manifestMod = await import('../core/plugin-manifest.mjs');
+
+  try {
+    switch (verb) {
+      case 'add': {
+        const a = pluginArgs(rest);
+        const url = a._[0];
+        if (!url) fail('Usage: maestro plugin add <repo-url>');
+        const found = await repoMod.addPluginRepo(url);
+        out(`repo ${found.repoUrl} @ ${found.sha.slice(0, 7)}`);
+        if (!found.discovered.length) {
+          out('no maestro-plugin.json found at depth 0 or 1');
+          return 1;
+        }
+        out('discovered plugins:');
+        for (const d of found.discovered) {
+          out(`  ${d.manifest.name}\t${d.manifest.version || found.sha.slice(0, 7)}\t${d.manifest.description || ''}`);
+        }
+        out(`install with: maestro plugin install <name> --repo ${found.repoUrl}`);
+        return 0;
+      }
+
+      case 'install': {
+        const a = pluginArgs(rest, ['--repo', '--ref'], ['--yes']);
+        const name = a._[0];
+        if (!name) fail('Usage: maestro plugin install <name> [--repo <url>] [--ref <sha>] [--yes]');
+        const { readPluginsLock } = await import('../core/plugins-lock.mjs');
+        const repoUrl = a.repo || readPluginsLock()[name]?.repo;
+        if (!repoUrl) fail(`plugin "${name}" is not in the lock — pass --repo <url>`);
+        const found = await repoMod.addPluginRepo(repoUrl);
+        const entry = found.discovered.find((d) => d.name === name);
+        if (!entry) {
+          process.stderr.write(`plugin "${name}" not found in ${repoUrl} (discovered: ${found.discovered.map((d) => d.name).join(', ') || 'none'})\n`);
+          return 1;
+        }
+        const sha = a.ref || found.sha;
+        // Consent summary: everything knowable from the manifest BEFORE any code
+        // is exported or any setup runs (the web UI shows the richer exported
+        // inventory via its endpoint; the CLI prints the store's ground-truth
+        // inventory right after install).
+        const m = entry.manifest;
+        out(`will install ${m.name} ${m.version || ''} @ ${sha.slice(0, 7)} from ${repoUrl}`);
+        if (m.description) out(`  ${m.description}`);
+        for (const s of m.taskSources || []) {
+          const secrets = (s.configSchema || []).filter((f) => f.secret).map((f) => f.key);
+          out(`  task source: ${s.id} (${s.displayName})${secrets.length ? ` — requests secrets: ${secrets.join(', ')}` : ''}`);
+        }
+        if (m.setup?.node) out('  setup: npm ci --prefix <versionDir> --ignore-scripts --omit=dev');
+        if (m.setup?.python) out('  setup: uv sync --project <versionDir>');
+        if (!(await confirmPlugin('Install?', !!a.yes))) {
+          out('aborted (nothing installed)');
+          return 1;
+        }
+        const res = await store.installPlugin({ repoUrl, subdir: entry.subdir, name, sha });
+        out('installed:');
+        printInventory(res.inventory);
+        return 0;
+      }
+
+      case 'list': {
+        const plugins = store.listInstalledPlugins();
+        if (!plugins.length) {
+          out('No plugins installed. Use `maestro plugin add <repo-url>` to discover some.');
+          return 0;
+        }
+        for (const p of plugins) {
+          const version = p.linked ? 'linked' : p.version || (p.pinnedSha || '').slice(0, 7);
+          const flags = [p.enabled ? 'enabled' : 'disabled', ...(p.linked ? ['linked'] : [])].join(', ');
+          out(`${p.name}\t${version}\t${flags}\t${contribSummary(p.contributions)}`);
+        }
+        return 0;
+      }
+
+      case 'update': {
+        const a = pluginArgs(rest, [], ['--yes', '--diff']);
+        const name = a._[0];
+        if (!name) fail('Usage: maestro plugin update <name> [--yes] [--diff]');
+        const cand = await repoMod.fetchCandidate(name, { fullDiff: !!a.diff });
+        if (cand.candidateSha === cand.pinnedSha) {
+          out(`${name} is already up to date (${cand.pinnedSha.slice(0, 7)})`);
+          return 0;
+        }
+        out(`${name}: ${cand.pinnedSha.slice(0, 7)} -> ${cand.candidateSha.slice(0, 7)}`);
+        for (const commit of cand.commits) out(`  ${commit.sha.slice(0, 7)} ${commit.subject}`);
+        if (cand.diffstat) out(cand.diffstat);
+        // §6.2 manifest delta — the red-flag review lines.
+        const delta = cand.manifestDelta || {};
+        for (const k of delta.newSecrets || []) out(c('red', `  NEW SECRET requested: ${k}`));
+        for (const s of delta.newTaskSources || []) out(c('yellow', `  new task source: ${s}`));
+        for (const ag of delta.newAgents || []) out(c('yellow', `  new agent: ${ag}`));
+        if (delta.setupChanged) out(c('yellow', '  setup commands changed'));
+        if (a.diff && cand.diffFull) out(cand.diffFull);
+        if (!(await confirmPlugin('Update?', !!a.yes))) {
+          out('aborted (still pinned)');
+          return 1;
+        }
+        await store.updatePlugin(name);
+        out(`updated ${name} to ${cand.candidateSha.slice(0, 7)}`);
+        return 0;
+      }
+
+      case 'remove':
+      case 'purge': {
+        const a = pluginArgs(rest, [], ['--purge']);
+        const name = a._[0];
+        if (!name) fail(`Usage: maestro plugin ${verb} <name>${verb === 'remove' ? ' [--purge]' : ''}`);
+        const purge = verb === 'purge' || !!a.purge;
+        await store.uninstallPlugin(name, { purge });
+        out(`removed ${name}`);
+        out(purge ? 'data/ purged (config, secrets, state)' : `data/ kept — remove it with: maestro plugin purge ${name}`);
+        return 0;
+      }
+
+      case 'enable':
+      case 'disable': {
+        const a = pluginArgs(rest);
+        const name = a._[0];
+        if (!name) fail(`Usage: maestro plugin ${verb} <name>`);
+        store.setPluginEnabled(name, verb === 'enable');
+        out(`${verb}d ${name}`);
+        return 0;
+      }
+
+      case 'doctor': {
+        const a = pluginArgs(rest, [], ['--fix']);
+        const names = a._[0] ? [a._[0]] : store.listInstalledPlugins().map((p) => p.name);
+        if (!names.length) {
+          out('No plugins installed.');
+          return 0;
+        }
+        let allOk = true;
+        for (const name of names) {
+          const report = await store.doctorPlugin(name);
+          out(`${report.ok ? c('green', 'OK  ') : c('red', 'FAIL')} ${name}`);
+          for (const check of report.checks) {
+            out(`  ${check.ok ? c('green', '✓') : c('red', '✗')} ${check.id}${check.detail ? c('gray', ` — ${check.detail}`) : ''}`);
+          }
+          if (!report.ok) allOk = false;
+        }
+        // §6.4 heal path: --fix re-runs the DETERMINISTIC setup steps (npm ci /
+        // uv sync — never plugin-chosen commands) for every unhealthy plugin.
+        if (!allOk && a.fix) {
+          const { readFileSync } = await import('node:fs');
+          const { pluginCurrentDir } = await import('../core/plugins-lock.mjs');
+          for (const name of names) {
+            try {
+              const cur = pluginCurrentDir(name);
+              const norm = manifestMod.normalizeManifest(
+                JSON.parse(readFileSync(join(cur, 'maestro-plugin.json'), 'utf8')), { dir: cur });
+              if (norm.ok) {
+                await store.runSetup(cur, norm.manifest);
+                out(`re-ran setup for ${name}`);
+              }
+            } catch (err) {
+              process.stderr.write(`fix ${name}: ${err?.message || err}\n`);
+            }
+          }
+          return 0;
+        }
+        return allOk ? 0 : 1;
+      }
+
+      case 'link': {
+        const a = pluginArgs(rest);
+        const dir = a._[0];
+        if (!dir) fail('Usage: maestro plugin link <dir>');
+        const abs = resolve(process.cwd(), dir);
+        const v = manifestMod.validatePluginDir(abs);
+        if (!v.ok) {
+          for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
+          return 2;
+        }
+        store.linkPlugin(v.manifest.name, abs);
+        out(`linked ${v.manifest.name} -> ${abs} (dev mode; doctor will warn)`);
+        return 0;
+      }
+
+      case 'init':
+        return await pluginInit(rest);
+
+      case 'validate': {
+        const a = pluginArgs(rest, [], ['--strict']);
+        const dir = a._[0];
+        if (!dir) fail('Usage: maestro plugin validate <dir> [--strict]');
+        const v = manifestMod.validatePluginDir(resolve(process.cwd(), dir), { strict: !!a.strict });
+        for (const p of v.problems) {
+          out(`${p.level === 'error' ? c('red', 'error') : c('yellow', 'warn ')}: ${p.message}`);
+        }
+        if (!v.ok) return 2;
+        const warns = v.problems.length;
+        out(`OK: ${v.manifest.name}${warns ? ` (${warns} warning${warns === 1 ? '' : 's'})` : ''}`);
+        return 0;
+      }
+
+      case 'exec': {
+        const a = pluginArgs(rest, ['--args'], ['--inspect']);
+        const [name, sourceId, op] = a._;
+        if (!name || !sourceId || !op) fail("Usage: maestro plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]");
+        if (a.inspect) process.env.MAESTRO_PLUGIN_INSPECT = '1'; // shim spawns the child with --inspect-brk
+        let args = {};
+        if (a.args) {
+          try {
+            args = JSON.parse(a.args);
+          } catch {
+            fail('--args must be valid JSON');
+          }
+        }
+        const { callSource } = await import('../core/plugin-shim.mjs');
+        const result = await callSource({ plugin: name, sourceId, op, args });
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n'); // stdout = result ONLY
+        return 0;
+      }
+
+      default:
+        fail(`Unknown plugin subcommand: ${verb}\n\n${PLUGIN_HELP}`);
+    }
+  } catch (err) {
+    const kind = err?.kind ? `[${err.kind}] ` : '';
+    process.stderr.write(`maestro plugin ${verb}: ${kind}${err?.message || err}\n`);
+    for (const ref of err?.references || []) {
+      process.stderr.write(`  referenced by: ${typeof ref === 'string' ? ref : JSON.stringify(ref)}\n`);
+    }
+    return 1;
+  }
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'plugin']);
 
 async function main() {
   const sub = process.argv[2];
@@ -615,6 +1107,7 @@ async function main() {
     if (sub === 'list') return cmdList();
     if (sub === 'remove') return cmdRemove(rest);
     if (sub === 'resume') return cmdResume(rest);
+    if (sub === 'plugin') return cmdPlugin(rest);
   }
 
   const flags = parseArgs(process.argv.slice(2));

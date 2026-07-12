@@ -748,6 +748,10 @@ function resolveAgainst(base, p) {
  * @param {object} opts
  * @param {string} [opts.prompt]      inline prompt text
  * @param {string} [opts.promptFile]  path to a markdown file to use as the prompt
+ * @param {string} [opts.promptText]  precomputed prompt body (sources.mjs seam);
+ *                                    used when inline `prompt` is absent/empty
+ * @param {string} [opts.sourceType]  'prompt' | 'markdown' | 'plugin' (defaults derived)
+ * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -760,6 +764,7 @@ function resolveAgainst(base, p) {
 export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
+    promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -771,8 +776,13 @@ export async function createPipeline(projectDir, opts = {}) {
   const key = projectKey(projectDir);
   const projectName = (paths.meta && paths.meta.name) || basename(resolve(projectDir));
 
-  // Resolve the prompt text from inline text or a markdown file.
+  // Resolve the prompt text. Precedence: inline `prompt` (legacy callers) >
+  // precomputed `promptText` (the sources.mjs seam) > `promptFile` read (direct
+  // CLI/test callers that pass only a path — kept so pre-seam callers behave
+  // byte-identically; the seam passes both promptText AND promptFile so the
+  // verbatim copy below is unchanged).
   let promptText = typeof prompt === 'string' ? prompt : '';
+  if (!promptText && typeof precomputedPromptText === 'string') promptText = precomputedPromptText;
   if (!promptText && promptFile) {
     try {
       promptText = await readFile(resolveAgainst(projectDir, promptFile), 'utf8');
@@ -838,6 +848,10 @@ export async function createPipeline(projectDir, opts = {}) {
     updatedAt: startedAt,
     prompt: promptText, // persisted to the pipelines.prompt column (was prompt.md only)
     artifacts: [],
+    // Task-source provenance (spec §10). Derivation covers direct legacy callers;
+    // the orchestrator passes sourceType explicitly through the sources.mjs seam.
+    sourceType: sourceType || (sourceMeta ? 'plugin' : (promptFile ? 'markdown' : 'prompt')),
+    sourceMeta: sourceMeta || null,
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
@@ -941,11 +955,11 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * A11(a): the ON CONFLICT(id) DO UPDATE clause SETs ONLY the columns that
  * legitimately mutate during a run. It deliberately does NOT touch the
  * creation-immutable identity columns (project_key, prompt, target, title,
- * workspace_key, started_at) — the orchestrator's this.state omits several of
- * them (orchestrator.mjs:174-191), so a blanket "SET <every column>=excluded.
- * <column>" would null them on the first post-create persist (and _persist's
- * catch{} would hide the loss). The INSERT arm still writes every column; only
- * the UPDATE arm is curated.
+ * workspace_key, started_at, source_type, source_ref) — the orchestrator's
+ * this.state omits several of them (orchestrator.mjs:174-191), so a blanket
+ * "SET <every column>=excluded.<column>" would null them on the first
+ * post-create persist (and _persist's catch{} would hide the loss). The INSERT
+ * arm still writes every column; only the UPDATE arm is curated.
  *
  * 3.5 fix: base_name/date_prefix are the one exception that must still be in the
  * UPDATE arm — createPipeline's INSERT leaves them NULL (state has neither field,
@@ -971,10 +985,12 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare(`
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
-        total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point)
+        total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
+        source_type, source_ref)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
-        @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point)
+        @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
+        @source_type,@source_ref)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1284,6 +1300,8 @@ function toPipelineRow(o) {
     stepper: s(o.stepper),
     tools: s(o.tools),
     resume_point: o.resumePoint == null ? null : s(o.resumePoint),
+    source_type: o.sourceType ?? 'prompt',
+    source_ref: s(o.sourceMeta),
   };
 }
 

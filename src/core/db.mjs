@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 /** Absolute path to the database file: <maestroHome>/maestro.db. */
 export function dbPath() {
@@ -524,10 +524,11 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT' },
+  pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
+                            source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT' },
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
-  workflows:              { domain: 'TEXT' },
+  workflows:              { domain: 'TEXT', origin: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER' },
 };
 
@@ -602,6 +603,22 @@ function applySchemaV12(db) {
 }
 
 /**
+ * Incremental v12 -> v13 migration (plugin task-sources, spec 2026-07-12 §10):
+ *   pipelines.source_type TEXT DEFAULT 'prompt'  -- 'prompt' | 'markdown' | 'plugin'
+ *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,url,title}; NULL unless plugin
+ *   workflows.origin      TEXT                   -- 'plugin:<name>' provenance; NULL = user-created
+ * Implemented as a CONDITIONAL repair (same shape as applySchemaV12), NOT a plain
+ * DDL string: the three columns live in INCREMENTAL_COLUMNS (hard rule above), so
+ * on any ladder pass from <12 applySchemaV12's version-independent heal has ALREADY
+ * added them — an unconditional ALTER here would then throw "duplicate column" on
+ * every fresh DB. repairSchemaGaps re-probes under the ladder's transaction and
+ * adds only what is missing, which also self-heals divergent cross-branch stamps.
+ */
+function applySchemaV13(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -645,6 +662,7 @@ export function migrate(db) {
     if (current < 10) db.exec(SCHEMA_V10);
     if (current < 11) db.exec(SCHEMA_V11);
     if (current < 12) applySchemaV12(db);
+    if (current < 13) applySchemaV13(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

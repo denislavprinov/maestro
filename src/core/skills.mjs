@@ -15,31 +15,65 @@ import { existsSync } from 'node:fs';
 import { cp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin skill roots (Task 2)
+
+/**
+ * Ordered plugin skill roots for resolveSkill's ctx.pluginDirs: every ENABLED
+ * plugin's current/skills dir that exists, lexicographic by plugin name (the
+ * same determinism as pluginAgentLayers). try/catch mirrors userAgentsDir():
+ * no resolvable home / no lock => [] — zero plugins is byte-identical to today.
+ * @returns {Array<{plugin: string, dir: string}>}
+ */
+export function pluginSkillDirs() {
+  try {
+    const lock = readPluginsLock();
+    return Object.keys(lock)
+      .sort()
+      .filter((name) => lock[name] && lock[name].enabled !== false)
+      .map((name) => ({ plugin: name, dir: join(pluginCurrentDir(name), 'skills') }))
+      .filter(({ dir }) => existsSync(dir));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Resolve a skill name to its source, in priority order:
+ *   0. plugin (OWNER)  — <plugins>/<name>/current/skills/<skill>/SKILL.md, only for
+ *                        the plugin named by ctx.origin ('plugin:<name>' — the
+ *                        requesting agent's registry origin)
  *   1. bundle  — <repoRoot>/skills/<name>/SKILL.md     (injectSkills copies this into the worktree)
  *   2. global  — <homeDir>/.claude/skills/<name>/SKILL.md   (already on the scan path)
  *   3. project — <projectDir>/.claude/skills/<name>/SKILL.md (committed; already on the scan path)
- *   4. none    — unresolvable
- * Pure: only existsSync probes, no mutation. `searched` lists every path tried,
- * for actionable error messages.
+ *   4. plugin (others) — every remaining ctx.pluginDirs entry, in given order
+ *   5. none    — unresolvable
+ * pluginDirs entries are { plugin, dir } (pluginSkillDirs()); a plain-string dir is
+ * tolerated (never owner, source 'plugin'). pluginDirs=[] + origin=null keeps the
+ * legacy 3-path chain and 3-entry `searched` byte-identical. Pure: existsSync only.
  * @param {string} name
- * @param {{repoRoot:string, projectDir:string, homeDir?:string}} ctx
- * @returns {{source:'bundle'|'global'|'project'|null, path:string|null, searched:string[]}}
+ * @param {{repoRoot:string, projectDir:string, homeDir?:string,
+ *          pluginDirs?:Array<{plugin:string,dir:string}|string>, origin?:string|null}} ctx
+ * @returns {{source:string|null, path:string|null, searched:string[]}}
  */
-export function resolveSkill(name, { repoRoot, projectDir, homeDir = homedir() }) {
-  const bundleDir    = join(repoRoot, 'skills', name);
-  const globalDir    = join(homeDir, '.claude', 'skills', name);
-  const projSkillDir  = join(projectDir, '.claude', 'skills', name);
-  const searched = [
-    join(bundleDir, 'SKILL.md'),
-    join(globalDir, 'SKILL.md'),
-    join(projSkillDir, 'SKILL.md'),
+export function resolveSkill(name, { repoRoot, projectDir, homeDir = homedir(), pluginDirs = [], origin = null }) {
+  const dirs = (Array.isArray(pluginDirs) ? pluginDirs : [])
+    .map((p) => (typeof p === 'string' ? { plugin: null, dir: p } : p))
+    .filter((p) => p && typeof p.dir === 'string' && p.dir);
+  const ownerName = typeof origin === 'string' && origin.startsWith('plugin:')
+    ? origin.slice('plugin:'.length)
+    : null;
+  const asHit = (p) => ({ source: p.plugin ? `plugin:${p.plugin}` : 'plugin', dir: join(p.dir, name) });
+  const chain = [
+    ...dirs.filter((p) => p.plugin !== null && p.plugin === ownerName).map(asHit), // owner FIRST
+    { source: 'bundle',  dir: join(repoRoot, 'skills', name) },
+    { source: 'global',  dir: join(homeDir, '.claude', 'skills', name) },
+    { source: 'project', dir: join(projectDir, '.claude', 'skills', name) },
+    ...dirs.filter((p) => p.plugin === null || p.plugin !== ownerName).map(asHit), // others LAST
   ];
-  if (existsSync(searched[0])) return { source: 'bundle',  path: bundleDir,    searched };
-  if (existsSync(searched[1])) return { source: 'global',  path: globalDir,    searched };
-  if (existsSync(searched[2])) return { source: 'project', path: projSkillDir, searched };
+  const searched = chain.map((c) => join(c.dir, 'SKILL.md'));
+  for (let i = 0; i < chain.length; i++) {
+    if (existsSync(searched[i])) return { source: chain[i].source, path: chain[i].dir, searched };
+  }
   return { source: null, path: null, searched };
 }
 
@@ -65,10 +99,16 @@ export function collectRequiredSkills(registry, plan) {
       bySkill.get(skill).add(key);
     }
   }
-  return [...bySkill.keys()].sort().map((skill) => ({
-    skill,
-    requiredBy: [...bySkill.get(skill)].sort(),
-  }));
+  return [...bySkill.keys()].sort().map((skill) => {
+    const requiredBy = [...bySkill.get(skill)].sort();
+    // Owner attribution for plugin-first search: the FIRST (sorted) requiring
+    // agent whose registry meta carries a plugin origin. The key is OMITTED when
+    // none does, so legacy fixtures/deepEqual call sites are byte-identical.
+    const origin = requiredBy
+      .map((k) => registry?.[k]?.origin)
+      .find((o) => typeof o === 'string' && o.startsWith('plugin:'));
+    return origin ? { skill, requiredBy, origin } : { skill, requiredBy };
+  });
 }
 
 /**
@@ -85,8 +125,8 @@ export function collectRequiredSkills(registry, plan) {
 export function validateSkills(required, ctx) {
   const resolved = new Map();
   const missing = [];
-  for (const { skill, requiredBy } of required) {
-    const r = resolveSkill(skill, ctx);
+  for (const { skill, requiredBy, origin } of required) {
+    const r = resolveSkill(skill, { ...ctx, origin: origin ?? null });
     if (r.source === null) missing.push({ skill, requiredBy, searched: r.searched });
     else resolved.set(skill, { source: r.source, path: r.path, requiredBy });
   }
@@ -121,7 +161,7 @@ export function validateSkills(required, ctx) {
 export async function injectSkills(resolutions, { worktrees }) {
   const injected = [];
   for (const [skill, r] of resolutions) {
-    if (r.source !== 'bundle') continue;
+    if (r.source !== 'bundle' && !String(r.source || '').startsWith('plugin:')) continue;
     for (const wt of worktrees) {
       await cp(r.path, join(wt, '.claude', 'skills', skill), { recursive: true });
     }
