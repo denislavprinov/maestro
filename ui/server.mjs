@@ -299,7 +299,27 @@ function summarizeRuns() {
     scanId: r.scanId || null,
     genId: r.genId || null,
     workspaceId: r.workspaceId || null,
+    projectNames: r.projectNames || null,
   }));
+}
+
+// Birth announcement for a freshly-registered run: broadcasts the metadata that
+// otherwise only travels in a hello snapshot (projectDir, kind, workspace
+// attribution, member names), so tabs that did NOT start the run render its
+// child row/card correctly without a reload. Not buffered: late joiners get the
+// same fields from summarizeRuns().
+function announceRun(entry) {
+  broadcast({
+    type: 'run-created',
+    runId: entry.id,
+    title: entry.title,
+    projectDir: entry.projectDir,
+    kind: entry.kind || 'run',
+    workspaceId: entry.workspaceId || null,
+    projectNames: entry.projectNames || null,
+    status: entry.status,
+    startedAt: entry.startedAt,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +666,7 @@ app.post('/api/run', async (req, res) => {
         projectDir: projects[0].projectDir, // primary, for back-compat readers
         workspaceId: ws.id,
         kind: 'workspace-run',
+        projectNames: projects.map((p) => p.projectName),
         title,
         status: 'starting',
         startedAt: new Date().toISOString(),
@@ -699,6 +720,7 @@ app.post('/api/run', async (req, res) => {
 
     runs.set(runId, entry);
     wireRun(entry);
+    announceRun(entry);
 
     // Fire-and-forget; all progress is surfaced through events.
     Promise.resolve()
@@ -833,7 +855,13 @@ app.post('/api/resume', async (req, res) => {
       id: runId,
       orch,
       projectDir,
-      ...(workspace ? { workspaceId: workspace.id, kind: 'workspace-run' } : { kind: 'run' }),
+      ...(workspace
+        ? {
+            workspaceId: workspace.id,
+            kind: 'workspace-run',
+            projectNames: workspace.projects.map((p) => p.projectName || path.basename(p.projectDir || '')),
+          }
+        : { kind: 'run' }),
       title: saved.row.title,
       status: 'starting',
       startedAt: new Date().toISOString(),
@@ -843,6 +871,7 @@ app.post('/api/resume', async (req, res) => {
     };
     runs.set(runId, entry);
     wireRun(entry);
+    announceRun(entry);
 
     // Evict the superseded paused/interrupted lineage for this pipeline. The old
     // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on

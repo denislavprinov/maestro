@@ -57,7 +57,7 @@ test('phase track exposes graph/investigate/synthesize data-phase chips', () => 
 test('beginRun is positional with an opts 4th arg (C2), single legacy call site passes {} ', () => {
   assert.match(js, /function beginRun\(runId, projectDir, title, opts = \{\}\)/, 'beginRun must stay positional with opts=4th');
   // The project-mode call site passes {} (byte-identical project behavior).
-  assert.match(js, /beginRun\(data\.runId, projectDir, title, target === 'workspace' \? \{ workspaceId, workspaceName \} : \{\}\)/);
+  assert.match(js, /beginRun\(data\.runId, projectDir, title,\s*target === 'workspace' \? \{ workspaceId, workspaceName, projectNames: workspaceProjectNames \} : \{\}\)/);
 });
 
 test('VIEW_NAMES is the 10-entry array with composer preserved + projects (C1)', () => {
