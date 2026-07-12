@@ -181,7 +181,13 @@ export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey,
           .run(s(answers), pipelineId, stepKey, Number(round));
       }
     });
-  } catch { /* defensive: mirrors writeClarify — a transient lock must not crash a run */ }
+  } catch (err) {
+    // Defensive: mirrors writeClarify — a transient lock must not crash a run.
+    // Anything OTHER than lock contention (e.g. schema drift that once left
+    // step_questions missing) is silent Q&A loss, so at least say so.
+    const msg = err && err.message ? err.message : String(err);
+    if (!/locked|busy/i.test(msg)) console.warn(`[artifacts] step_questions write dropped: ${msg}`);
+  }
 }
 
 /**

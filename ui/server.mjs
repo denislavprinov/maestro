@@ -1558,9 +1558,14 @@ app.post('/api/config', async (req, res) => {
   const projectDir = resolveProjectDir(body.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
-    const config = await setStep(projectDir, body.step, {
+    await setStep(projectDir, body.step, {
       model: body.model, effort: body.effort, fanOut: body.fanOut, askQuestions: body.askQuestions,
     });
+    // Respond with the FULL run-config (mirrors PATCH): setStep's return value is
+    // the legacy {steps, customModels} view only, and clients assign the response
+    // to their whole config state — echoing the narrow view dropped workflows/
+    // activeWorkflowId and made saved node models paint as unconfigured.
+    const config = await readRunConfig(projectDir);
     res.json({ config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.

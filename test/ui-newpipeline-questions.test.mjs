@@ -51,14 +51,15 @@ const STEPS = [
   { key: 'implementer', label: 'Implement', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
   { key: 'reviewer', label: 'Review', fanOut: false, asksQuestions: true, questionsLocked: false, questionsDefault: false },
 ];
-const configFetch = (extraConfig = {}) => (url, opts) => {
+const configFetch = (extraConfig = {}, models = []) => (url, opts) => {
   if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
     return Promise.resolve({ ok: true, status: 200, json: async () => ({
-      config: { steps: {}, customModels: [], ...extraConfig }, models: [], efforts: [], steps: STEPS,
+      config: { steps: {}, customModels: [], ...extraConfig }, models, efforts: [], steps: STEPS,
     }) });
   }
   return null;
 };
+const OPUS = [{ id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['high', 'max'] }];
 
 test('default rows: clarify locked-checked; planner editable-unchecked; refiner hidden', async () => {
   const { window } = await boot({ fetchHandler: configFetch() });
@@ -84,7 +85,9 @@ test('toggling a default row posts askQuestions with the row model preserved', a
         config: { steps: { planner: { model: 'claude-opus-4-8', askQuestions: true } }, customModels: [] },
       }) });
     }
-    return configFetch({ steps: { planner: { model: 'claude-opus-4-8' } } })(url, opts);
+    // The saved model must be in the models list so the row's select can show
+    // it — the toggle echoes the LIVE select (WYSIWYG), not state.config.
+    return configFetch({ steps: { planner: { model: 'claude-opus-4-8' } } }, OPUS)(url, opts);
   } });
   selectProjectAnd(window); // saveStep needs a selected project
   await new Promise((r) => setTimeout(r, 0));
@@ -114,6 +117,77 @@ test('buildNodeConfigRows: hidden / locked / editable matrix', async () => {
   assert.equal(rows[1].askQuestions, true, 'locked follows manifest default');
   assert.equal(rows[1].questionsLocked, true);
   assert.equal(rows[2].askQuestions, null, 'no capability => no checkbox');
+});
+
+// Regression: a failing GET /api/config must NOT dead-end the whole form (the
+// live bug: a 500 left the static markup — Default-only dropdown, empty selects,
+// unconfigured Questions toggles). The workflow dropdown must still populate
+// from /api/workflows, and the capability-unknown questions toggles must hide.
+test('GET /api/config failure still populates the workflow dropdown and hides questions toggles', async () => {
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'no such column: ask_questions' }) });
+    }
+    if (url.includes('/api/workflows') && !url.includes('/api/workflows/')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [
+        { id: 'wf_default', name: 'Default' }, { id: 'wf_1', name: 'My Custom Pipeline' },
+      ] }) });
+    }
+    return null;
+  } });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  const options = [...doc.querySelector('#workflowSelect').options].map((o) => o.textContent);
+  assert.deepEqual(options, ['Default', 'My Custom Pipeline'], 'dropdown populated despite config failure');
+  for (const cb of doc.querySelectorAll('.step-questions[data-role]')) {
+    assert.equal(cb.closest('.questions-toggle').hidden, true, `${cb.dataset.role} toggle hidden when capability unknown`);
+  }
+  const hint = doc.querySelector('#config-error');
+  assert.equal(hint.hidden, false, 'error hint visible');
+  assert.match(hint.textContent, /no such column: ask_questions/, 'hint carries the server error');
+});
+
+// The static markup must ship the questions toggles hidden: before ANY JS runs
+// (or when it fails), an interactable-looking checkbox would misrepresent
+// capability (refiner has none; clarify is locked-on).
+test('index.html ships the default-stage questions toggles hidden', () => {
+  const html = readFileSync(htmlPath, 'utf8');
+  const toggles = html.match(/class="fanout-toggle questions-toggle"[^>]*/g) || [];
+  assert.equal(toggles.length, 5, 'five static questions toggles');
+  for (const t of toggles) assert.match(t, /\bhidden\b/, `static toggle not hidden: ${t}`);
+});
+
+// Toggling questions must echo the LIVE selects, not state.config — state lags
+// one in-flight save, so echoing it can revert a model picked moments earlier.
+test('toggling questions sends the model currently shown in the select, not stale state', async () => {
+  const posts = [];
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && opts && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      // Respond with a STALE config (the pre-change model) so state.config lags.
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        config: { steps: { planner: { model: 'claude-opus-4-8' } }, customModels: [] },
+      }) });
+    }
+    return configFetch({ steps: { planner: { model: 'claude-opus-4-8' } } })(url, opts);
+  } });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  // User picks a new model (select now shows it; state.config still has the old one)...
+  const modelSel = doc.querySelector('.step-model[data-role="planner"]');
+  modelSel.appendChild(new window.Option('New Model', 'my-new-model'));
+  modelSel.value = 'my-new-model';
+  // ...then immediately toggles Questions.
+  const cb = doc.querySelector('.step-questions[data-role="planner"]');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const qPost = posts.find((p) => 'askQuestions' in p);
+  assert.ok(qPost, 'questions POST fired');
+  assert.equal(qPost.model, 'my-new-model', 'live select value sent, not stale state.config');
 });
 
 test('renderNodeRows: locked checkbox disabled; unsupported row has no checkbox', async () => {

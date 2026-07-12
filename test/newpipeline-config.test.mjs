@@ -578,3 +578,51 @@ test('toggling a default-row fan-out checkbox POSTs the step fanOut', async () =
   assert.equal(posts[0].step, 'planner');
   assert.equal(posts[0].fanOut, true);
 });
+
+// A transient /api/workflows failure must not silently rebuild the dropdown to
+// Default-only — that would reroute the next run submit to wf_default while the
+// user believes their saved workflow is active.
+test('a failing GET /api/workflows keeps the dropdown entries and the active selection', async () => {
+  let failList = false;
+  const base = workflowFetch();
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (failList && String(url).includes('/api/workflows') && !String(url).includes('/api/workflows/')) {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+    }
+    return base(url, opts);
+  } });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  failList = true;
+  selectProjectAnd(window); // re-entry -> loadConfig -> loadWorkflowsInto hits the failing list
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const sel = window.document.querySelector('#workflowSelect');
+  const values = [...sel.options].map((o) => o.value);
+  assert.ok(values.includes('wf_x'), 'saved workflow entry kept in the dropdown');
+  assert.equal(sel.value, 'wf_x', 'active selection preserved');
+  assert.ok(!window.document.querySelector('#wf-node-config').classList.contains('hidden'), 'node rows still rendered');
+});
+
+// An empty registry is a failed /api/agents fetch, not a real state: painting
+// rows against it silently strips capability (labels degrade to raw keys, all
+// questions toggles vanish). It must paint the could-not-load hint instead.
+test('a failing GET /api/agents paints the could-not-load hint instead of capability-stripped rows', async () => {
+  const base = workflowFetch();
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (String(url).includes('/api/agents')) {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+    }
+    return base(url, opts);
+  } });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const host = window.document.querySelector('#wf-node-config');
+  assert.match(host.textContent, /Could not load this workflow/, 'hint painted');
+  assert.equal(host.querySelectorAll('.step-model').length, 0, 'no capability-stripped rows');
+});

@@ -99,6 +99,7 @@ const el = {
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
+  configError: $('#config-error'),
   workflowSelect: $('#workflowSelect'),
   wfDefaultStages: $('#wf-default-stages'),
   wfNodeConfig: $('#wf-node-config'),
@@ -1337,6 +1338,16 @@ function onStepGraphify(r, msg) {
 // ---------------------------------------------------------------------------
 // Per-step model + effort config
 // ---------------------------------------------------------------------------
+
+// Paint (or clear) the config-panel error hint (#config-error), the visible
+// counterpart of appendLog for config-load failures (mirrors the inline
+// "Could not load this workflow." hint in renderWorkflowConfig).
+function setConfigError(text) {
+  if (!el.configError) return;
+  el.configError.textContent = text || '';
+  el.configError.hidden = !text;
+}
+
 async function loadConfig(projectDir) {
   try {
     // No project => omit projectDir; the server replies with the built-in models
@@ -1344,21 +1355,37 @@ async function loadConfig(projectDir) {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const res = await fetch(`/api/config${qs}`);
     const data = await safeJson(res);
-    if (!res.ok) return;
-    state.config = data.config || { steps: {}, customModels: [] };
-    state.models = Array.isArray(data.models) ? data.models : [];
-    state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
-    state.stepDefaults = {};
-    if (Array.isArray(data.steps)) {
-      for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
-        fanOut: !!s.fanOut,
-        asksQuestions: !!s.asksQuestions,
-        questionsLocked: !!s.questionsLocked,
-        questionsDefault: !!s.questionsDefault,
-      };
+    if (res.ok) {
+      state.config = data.config || { steps: {}, customModels: [] };
+      state.models = Array.isArray(data.models) ? data.models : [];
+      state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
+      state.stepDefaults = {};
+      if (Array.isArray(data.steps)) {
+        for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
+          fanOut: !!s.fanOut,
+          asksQuestions: !!s.asksQuestions,
+          questionsLocked: !!s.questionsLocked,
+          questionsDefault: !!s.questionsDefault,
+        };
+      }
+      setConfigError('');
+    } else {
+      // Surface the failure but DO fall through to loadWorkflowsInto below: an
+      // early return here left the whole form dead (static Default-only dropdown,
+      // empty pickers) when /api/config 500ed. Reset the per-project layers so a
+      // previous project's config is never painted — or echoed back by a later
+      // save — and render defaults with a visible explanation.
+      state.config = { steps: {}, customModels: [] };
+      state.stepDefaults = {};
+      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+      setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
     }
   } catch {
-    /* keep last-known config */
+    // Network-level failure: same reset as the non-ok branch (a previous
+    // project's config must not linger), but keep last-known models/efforts.
+    state.config = { steps: {}, customModels: [] };
+    state.stepDefaults = {};
+    setConfigError('Could not load saved config (network error) — showing defaults.');
   }
   // Seed the active workflow from per-project run-config (activeWorkflowId),
   // then populate the dropdown + render the chosen workflow's config. This
@@ -2275,12 +2302,16 @@ function renderStepConfigs() {
 // ---------------------------------------------------------------------------
 
 // --- API wrappers (existing fetch()/safeJson style) ---
+// Returns the workflow list, or null on failure — callers must distinguish
+// "the server has no saved workflows" ([]) from "the list could not be
+// fetched" (null), or a transient failure silently rebuilds the dropdown to
+// Default-only and reroutes the next run to wf_default.
 async function listWorkflowsApi() {
   try {
     const res = await fetch('/api/workflows');
     const data = await safeJson(res);
-    return res.ok && Array.isArray(data.workflows) ? data.workflows : [];
-  } catch { return []; }
+    return res.ok && Array.isArray(data.workflows) ? data.workflows : null;
+  } catch { return null; }
 }
 
 async function getWorkflowApi(id) {
@@ -2311,6 +2342,14 @@ async function loadWorkflowsInto(selectId) {
   const sel = el.workflowSelect;
   if (!sel) return;
   const workflows = await listWorkflowsApi();
+  if (workflows === null) {
+    // List fetch failed: keep whatever the dropdown already shows (do NOT
+    // rebuild to Default-only — that would silently reroute the next run) and
+    // still render the current selection's config.
+    appendLog({ source: 'ui', level: 'error', text: 'workflows: list failed', ts: Date.now() });
+    await renderWorkflowConfig(state.workflowId);
+    return;
+  }
   const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
   const want = selectId || state.workflowId || 'wf_default';
   sel.innerHTML = '';
@@ -2338,7 +2377,10 @@ async function renderWorkflowConfig(workflowId) {
   }
 
   const [wf, registry] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
-  if (!wf) {
+  // An empty registry is a failed /api/agents fetch, not a real state — painting
+  // rows against it silently strips capability (labels degrade to raw keys, all
+  // questions toggles vanish), so treat it like a failed workflow fetch.
+  if (!wf || !Object.keys(registry).length) {
     if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
     return;
@@ -2600,7 +2642,9 @@ el.pipelineConfig.addEventListener('change', (e) => {
   }
 
   // Fan-out toggles (checkboxes). Send the row's current model/effort alongside
-  // fanOut so the replace-on-model/effort setters don't wipe them.
+  // fanOut so the replace-on-model/effort setters don't wipe them. Both paths
+  // read the LIVE selects, not state.config — state lags one in-flight save, so
+  // echoing it could revert a model picked moments earlier.
   if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-fanout')) {
     const fanOut = !!t.checked;
     if (t.dataset.nodeId) {
@@ -2609,15 +2653,17 @@ el.pipelineConfig.addEventListener('change', (e) => {
       const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
       saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
     } else if (t.dataset.role) {
-      const cur = state.config.steps[t.dataset.role] || {};
-      saveStep(t.dataset.role, cur.model || '', cur.effort || '', fanOut);
+      const role = t.dataset.role;
+      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
+      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
     }
     return;
   }
 
   // Questions toggles (checkboxes). Mirror step-fanout: send the row's current
-  // model/effort along so the replace-semantics setters don't wipe them; omit
-  // fanOut (undefined) so the setters preserve it.
+  // model/effort (live selects) along so the replace-semantics setters don't
+  // wipe them; omit fanOut (undefined) so the setters preserve it.
   if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-questions')) {
     const askQuestions = !!t.checked;
     if (t.dataset.nodeId) {
@@ -2626,8 +2672,10 @@ el.pipelineConfig.addEventListener('change', (e) => {
       const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
       saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
     } else if (t.dataset.role) {
-      const cur = state.config.steps[t.dataset.role] || {};
-      saveStep(t.dataset.role, cur.model || '', cur.effort || '', undefined, askQuestions);
+      const role = t.dataset.role;
+      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
+      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
     }
     return;
   }
@@ -2664,8 +2712,9 @@ el.pipelineConfig.addEventListener('change', (e) => {
     if (t.value === '__add__') return addModelFlow(role);
     saveStep(role, t.value, '');
   } else if (t.classList.contains('step-effort')) {
-    const model = (state.config.steps[role] || {}).model || '';
-    saveStep(role, model, t.value);
+    // Live model select, not state.config — state lags one in-flight save.
+    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
+    saveStep(role, modelSel ? modelSel.value : '', t.value);
   }
 });
 

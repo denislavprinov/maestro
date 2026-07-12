@@ -115,3 +115,17 @@ test('POST /api/config passes askQuestions through to setStep', async () => {
   const { config } = await r.json();
   assert.equal(config.steps.planner.askQuestions, true);
 });
+
+test('POST /api/config responds with the FULL run-config shape (workflows layer, mirrors PATCH)', async () => {
+  // Clients assign the response to their whole config state; setStep's legacy
+  // {steps, customModels} view dropped config.workflows and made saved node
+  // models paint as unconfigured after any default-stage edit.
+  const r = await fetch(`${base}/api/config`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectDir: proj, step: 'refiner', model: 'claude-opus-4-8' }),
+  });
+  assert.equal(r.status, 200);
+  const { config } = await r.json();
+  assert.ok(config.workflows && typeof config.workflows === 'object', 'run-config workflows layer present');
+  assert.equal(config.steps.refiner.model, 'claude-opus-4-8');
+});
