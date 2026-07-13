@@ -156,6 +156,19 @@ test('createWorktree throws a useful error when sourceBranch does not resolve', 
   );
 });
 
+test('createWorktree rejects featureBranch equal to sourceBranch (hang guard)', async () => {
+  const repo = await freshRepo();
+  await assert.rejects(
+    () => createWorktree({ projectDir: repo, pipelineId: 'same', sourceBranch: 'main', featureBranch: 'main' }),
+    /must differ/,
+  );
+  // Case variants collapse to the same sanitized name and are rejected too.
+  await assert.rejects(
+    () => createWorktree({ projectDir: repo, pipelineId: 'same2', sourceBranch: 'Main', featureBranch: 'Main' }),
+    /must differ/,
+  );
+});
+
 // currentBranch sanity (separate so failure points are obvious).
 test('currentBranch returns the HEAD branch name', async () => {
   const repo = await freshRepo();
