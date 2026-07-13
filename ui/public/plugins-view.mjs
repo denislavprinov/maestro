@@ -102,15 +102,23 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
 
 // renderUpdatePreview(preview) — fetchCandidate result: pinned→candidate shas,
 // commit log, diffstat, confirm button (.pl-confirm-update; app.js wires it).
+// No new commits -> a plain up-to-date state: badge + hint, no shas/diffstat/button.
 export function renderUpdatePreview(preview, { doc = globalThis.document } = {}) {
   const p = preview || {};
   const root = h(doc, 'div', 'pl-update');
+  if (!(p.commits || []).length) {
+    const row = h(doc, 'div', 'pl-uptodate');
+    row.appendChild(h(doc, 'span', 'badge green', 'up to date'));
+    const at = sha7(p.pinnedSha || p.candidateSha);
+    row.appendChild(h(doc, 'span', 'hint', `You are on the latest version${at ? ` (${at})` : ''}.`));
+    root.appendChild(row);
+    return root;
+  }
   root.appendChild(h(doc, 'div', 'pl-update-shas mono', `${sha7(p.pinnedSha)} → ${sha7(p.candidateSha)}`));
   const list = h(doc, 'div', 'pl-commits');
-  for (const c of p.commits || []) list.appendChild(h(doc, 'div', 'pl-commit mono', `${sha7(c.sha)} ${c.subject}`));
-  if (!(p.commits || []).length) list.appendChild(h(doc, 'div', 'hint', 'No new commits — already up to date.'));
+  for (const c of p.commits) list.appendChild(h(doc, 'div', 'pl-commit mono', `${sha7(c.sha)} ${c.subject}`));
   root.appendChild(list);
-  root.appendChild(h(doc, 'pre', 'pl-diffstat mono', p.diffstat || ''));
+  if (p.diffstat) root.appendChild(h(doc, 'pre', 'pl-diffstat mono', p.diffstat));
   // Manifest delta — the §6.2 red-flag review lines: new secrets/agents/sources.
   const d = p.manifestDelta || {};
   const flags = [
@@ -126,7 +134,6 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
   }
   const btn = h(doc, 'button', 'btn btn-primary btn-mini pl-confirm-update', 'Apply update');
   btn.type = 'button';
-  btn.disabled = !(p.commits || []).length;
   root.appendChild(btn);
   return root;
 }

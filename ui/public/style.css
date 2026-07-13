@@ -311,9 +311,9 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
-/* add-project path row (input + Browse) */
-.add-project .path-row{display:flex;gap:9px;align-items:center;}
-.add-project .path-row input{flex:1 1 auto;min-width:0;}
+/* path row (input + trailing button) — shared by add-project, project modal, plugin add */
+.path-row{display:flex;gap:9px;align-items:center;}
+.path-row input{flex:1 1 auto;min-width:0;}
 
 /* segmented toggle */
 .seg{display:inline-flex;background:var(--field);border-radius:12px;padding:4px;gap:4px;}
@@ -1083,9 +1083,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .confirm-modal .card{width:min(440px,100%);}
 .confirm-message{margin:4px 0 18px;color:var(--ink-2);font-size:14px;line-height:1.5;white-space:pre-line;}
 .confirm-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:14px;}
-/* The base .path-row is scoped to .add-project; re-declare it for our modal. */
-.confirm-modal .path-row{display:flex;gap:9px;align-items:center;}
-.confirm-modal .path-row input{flex:1 1 auto;min-width:0;}
 
 /* ── domain tag: palette sections + filter chips, workflow badge + filter ── */
 .pal-chips{display:flex;flex-wrap:wrap;gap:6px;width:100%;margin-bottom:8px;}
@@ -1130,7 +1127,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-setup-cmd{background:var(--chip-bg,#f7f7fa);border-radius:8px;padding:4px 8px;margin-top:3px;}
 .pl-diffstat{background:var(--chip-bg,#f7f7fa);border-radius:10px;padding:10px 12px;font-size:12px;overflow-x:auto;max-height:220px;}
 .pl-commit{font-size:12px;padding:2px 0;}
-.pl-doc-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12.5px;}
+.pl-doc-row{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:12.5px;}
+.pl-doc-row .hint{margin-top:0;}
+.pl-uptodate{display:flex;align-items:baseline;gap:8px;padding:4px 0;}
+.pl-uptodate .hint{margin-top:0;font-size:13px;}
 .pl-refs-list{margin:6px 0 0 18px;font-size:12.5px;}
 .plugin-card .mono,.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
 .pl-manifest-delta{margin:8px 0;}

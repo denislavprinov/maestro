@@ -5604,14 +5604,14 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
     setPluginsMsg(`Running doctor on ${name}…`);
     const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/doctor`);
     setPluginsMsg('');
+    // No footer actions — the modal header already has a Close button.
     pluginModal(`Doctor: ${name}`,
-      renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }),
-      [['Close', 'btn btn-ghost btn-mini', closePluginModal]]);
+      renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }));
   } else if (t.classList.contains('pl-update')) {
     const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
     if (!ok) return setPluginsMsg(data.error || 'update preview failed', 'err');
     const body = renderUpdatePreview(data);
-    pluginModal(`Update ${name}`, body, [['Close', 'btn btn-ghost btn-mini', closePluginModal]]);
+    pluginModal(`Update ${name}`, body);  // header Close only
     const confirmBtn = body.querySelector('.pl-confirm-update');
     if (confirmBtn) confirmBtn.addEventListener('click', async () => {
       confirmBtn.disabled = true;
@@ -5631,8 +5631,7 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
     if (!sure) return;
     const { ok, status, data } = await pluginApi('DELETE', `/api/plugins/${encodeURIComponent(name)}`);
     if (status === 409) {
-      pluginModal(`Cannot uninstall ${name}`, renderReferences409(data.references || []),
-        [['Close', 'btn btn-ghost btn-mini', closePluginModal]]);
+      pluginModal(`Cannot uninstall ${name}`, renderReferences409(data.references || []));
       return;
     }
     if (!ok) return setPluginsMsg(data.error || 'uninstall failed', 'err');

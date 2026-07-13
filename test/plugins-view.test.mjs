@@ -60,8 +60,21 @@ test('update preview shows commit subjects + diffstat + enabled confirm', () => 
   assert.match(el.querySelector('.pl-delta-secret').textContent, /NEW SECRET requested: github\.webhook_secret/);
   const btn = el.querySelector('.pl-confirm-update');
   assert.ok(btn && !btn.disabled);
-  // No new commits -> confirm disabled.
-  assert.equal(renderUpdatePreview({ commits: [] }, { doc }).querySelector('.pl-confirm-update').disabled, true);
+});
+
+test('update preview with no new commits shows up-to-date state, no confirm button', () => {
+  const el = renderUpdatePreview({ pinnedSha: 'a1b2c3d4e5f6', candidateSha: 'a1b2c3d4e5f6', commits: [] }, { doc });
+  assert.equal(el.querySelector('.pl-confirm-update'), null, 'no apply button when nothing to apply');
+  assert.equal(el.querySelector('.pl-diffstat'), null, 'no empty diffstat box');
+  assert.equal(el.querySelector('.pl-update-shas'), null, 'no sha arrow when nothing changes');
+  const badge = el.querySelector('.pl-uptodate .badge');
+  assert.ok(badge, 'up-to-date badge must render');
+  assert.match(badge.textContent, /up to date/i);
+  assert.match(el.querySelector('.pl-uptodate .hint').textContent, /latest version \(a1b2c3d\)/);
+  // Missing shas (defensive) -> still renders the badge, hint without sha.
+  const bare = renderUpdatePreview({ commits: [] }, { doc });
+  assert.ok(bare.querySelector('.pl-uptodate .badge'));
+  assert.match(bare.querySelector('.pl-uptodate .hint').textContent, /latest version/);
 });
 
 test('plugin list shows enabled toggle, disabled state, broken badge, contributions', () => {
