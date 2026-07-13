@@ -1,5 +1,10 @@
 # Enable Readiness App v1 Frontend Implementation Plan
 
+> **SUPERSEDED (2026-07-14, unexecuted):** branch `enable-app` already ships the complete,
+> reviewed, live-validated frontend (history, pause/resume, workspace picker, responsive
+> layout). This plan and the P2 wip commit `9d88ad1` duplicated that work from a stale
+> merge-base. Do not execute. Canonical app: `enable-app` branch, `apps/enable/`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the missing `apps/enable/public/` frontend — Setup → Running → Report SPA consuming the WS event stream from `apps/enable/server.mjs` — per spec `docs/superpowers/specs/2026-07-13-enable-frontend-design.md`.

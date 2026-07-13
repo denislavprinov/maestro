@@ -1,7 +1,7 @@
 # Enable Readiness App: v1 frontend
 
 Date: 2026-07-13
-Status: approved (brainstorming) — pending implementation plan
+Status: SUPERSEDED — enable-app branch already ships this (see plan header note)
 
 ## Problem
 
