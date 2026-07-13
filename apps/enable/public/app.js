@@ -735,10 +735,45 @@ function renderResults(r) {
   const gaps = r.gaps || [];
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
+  resetTodoButton(gaps.map((g) => (typeof g === 'string' ? g : g.title || JSON.stringify(g))));
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
   refreshGraphButtons(lastProjectDir);   // graph may have been (re)built during the run
   renderStats(r._stats || (currentRunId ? liveStats() : null));
   if (currentRunId) loadChanges(`/api/enable/runs/${currentRunId}/changes`);
+}
+
+// ---------- gaps -> TODO.md ----------
+let todoGaps = [];
+
+function resetTodoButton(gaps) {
+  todoGaps = gaps;
+  const btn = document.querySelector('#todo-btn');
+  btn.hidden = !lastProjectDir;   // no known project -> nowhere to write
+  btn.disabled = false;
+  btn.textContent = 'Create tasks in TODO.md';
+  document.querySelector('#todo-error').hidden = true;
+}
+
+async function createTodoTasks() {
+  const btn = document.querySelector('#todo-btn');
+  const errEl = document.querySelector('#todo-error');
+  errEl.hidden = true;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/enable/todo', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: lastProjectDir, gaps: todoGaps }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    btn.textContent = body.written > 0
+      ? `✓ Added to TODO.md (${body.written})`
+      : '✓ Already in TODO.md';
+  } catch (err) {
+    btn.disabled = false;
+    errEl.textContent = `Could not write TODO.md: ${err.message}`;
+    errEl.hidden = false;
+  }
 }
 
 // ---------- what changed ----------
@@ -1028,6 +1063,7 @@ function init() {
   document.querySelector('#mock-toggle').addEventListener('change', refreshEstimate);
 
   document.querySelector('#browse-btn').addEventListener('click', openPicker);
+  document.querySelector('#todo-btn').addEventListener('click', createTodoTasks);
   const picker = document.querySelector('#picker-modal');
   picker.addEventListener('click', (e) => {
     if (e.target.closest('[data-pclose]')) { closePicker(); return; }
