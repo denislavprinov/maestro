@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
+  renderOrphanList,
 } from '../ui/public/plugins-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -104,4 +105,23 @@ test('doctor report + references-409 render rows', () => {
   const refs = renderReferences409([{ type: 'workflow', name: 'My triage flow' }, 'project config: orchestrator'], { doc });
   assert.equal(refs.querySelectorAll('li').length, 2);
   assert.match(refs.textContent, /My triage flow/);
+});
+
+test('orphan list: row per orphan with Purge button; empty input -> empty container', () => {
+  const el = renderOrphanList(
+    [{ name: 'ghost-src', dataDir: '/home/u/.maestro/plugins/ghost-src/data' }],
+    { doc },
+  );
+  assert.equal(el.className, 'pl-orphans');
+  const rows = el.querySelectorAll('.pl-orphan-row');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.pl-name').textContent, 'ghost-src');
+  assert.match(rows[0].querySelector('.hint').textContent, /uninstalled — config\/secrets remain/);
+  const btn = rows[0].querySelector('button.pl-purge-orphan');
+  assert.ok(btn, 'purge button present');
+  assert.equal(btn.dataset.name, 'ghost-src');
+  assert.equal(btn.textContent, 'Purge');
+
+  assert.equal(renderOrphanList([], { doc }).childElementCount, 0);
+  assert.equal(renderOrphanList(undefined, { doc }).childElementCount, 0);
 });

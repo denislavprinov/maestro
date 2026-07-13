@@ -64,6 +64,27 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
   return root;
 }
 
+// renderOrphanList(orphans) -> <div.pl-orphans> of "leftover data" rows.
+// Purge buttons carry data-name + .pl-purge-orphan for app.js's delegated
+// listener. Empty/nullish input -> childless container (app.js skips mounting).
+export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
+  const root = h(doc, 'div', 'pl-orphans');
+  if (!orphans || !orphans.length) return root;
+  root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
+  for (const o of orphans) {
+    const row = h(doc, 'div', 'card pl-orphan-row');
+    row.dataset.name = o.name;
+    row.appendChild(h(doc, 'b', 'pl-name', o.name));
+    row.appendChild(h(doc, 'small', 'hint', 'uninstalled — config/secrets remain'));
+    const btn = h(doc, 'button', 'btn-ghost pl-purge-orphan', 'Purge');
+    btn.type = 'button';
+    btn.dataset.name = o.name;
+    row.appendChild(btn);
+    root.appendChild(row);
+  }
+  return root;
+}
+
 // renderInstallConsent(entry, inventory) — spec §6.1 "Will install" ceremony.
 // entry: { name, repoUrl, sha } (a /api/plugins/repo discovery row + repo/sha);
 // inventory: buildInstallInventory shape. Secrets render red; setup commands verbatim.

@@ -13,11 +13,14 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock } from '../src/core/plugins-lock.mjs';
+import {
+  pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, pluginsRoot, writePluginsLock,
+} from '../src/core/plugins-lock.mjs';
 import { writePluginConfig } from '../src/core/plugin-config.mjs';
 import {
   installPlugin, buildInstallInventory, runSetup, updatePlugin, uninstallPlugin,
   setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin,
+  listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
 
 useTempHome(after);
@@ -252,4 +255,60 @@ test('buildInstallInventory works directly against any version dir', () => {
   assert.deepEqual(inv.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
   assert.equal(inv.depCount, 1);
   assert.equal(inv.setupCommands.length, 1);
+});
+
+// --- orphan data listing + purge (spec: docs/superpowers/specs/2026-07-13-plugin-purge-ui-design.md) ---
+
+test('listOrphanPluginData: empty root, ignores installed + dataless + bad-name dirs', () => {
+  // clean slate: whatever earlier tests left, remember it to restore after
+  const lockBefore = readPluginsLock();
+  assert.deepEqual(
+    listOrphanPluginData().filter((o) => o.name === 'ghost-a'), [],
+    'no ghost-a orphan yet',
+  );
+  // orphan: dir + data/, NOT in lock
+  mkdirSync(join(pluginDataDir('ghost-a')), { recursive: true });
+  writeFileSync(join(pluginDataDir('ghost-a'), 'secrets.json'), '{"token":"x"}');
+  // dataless leftover: dir but no data/ -> not an orphan
+  mkdirSync(join(pluginsRoot(), 'ghost-empty'), { recursive: true });
+  // invalid name -> skipped even with data/
+  mkdirSync(join(pluginsRoot(), 'Bad_Name', 'data'), { recursive: true });
+  // names that pass a naive lowercase check but fail the safeName gate
+  // (digit-first, >64 chars) -> skipped, and the listing must not throw
+  mkdirSync(join(pluginsRoot(), '9ghost', 'data'), { recursive: true });
+  mkdirSync(join(pluginsRoot(), 'a'.repeat(65), 'data'), { recursive: true });
+  // installed: in lock -> not an orphan even with data/
+  writePluginsLock({ ...lockBefore, 'ghost-installed': { pinnedSha: 'x'.repeat(40), enabled: true } });
+  mkdirSync(join(pluginDataDir('ghost-installed')), { recursive: true });
+
+  const names = listOrphanPluginData().map((o) => o.name);
+  assert.ok(names.includes('ghost-a'), 'orphan with data/ listed');
+  assert.ok(!names.includes('ghost-empty'), 'dir without data/ skipped');
+  assert.ok(!names.includes('Bad_Name'), 'invalid name skipped');
+  assert.ok(!names.includes('9ghost'), 'digit-first name skipped without throwing');
+  assert.ok(!names.includes('a'.repeat(65)), 'over-long name skipped without throwing');
+  assert.ok(!names.includes('ghost-installed'), 'installed plugin skipped');
+  const ghost = listOrphanPluginData().find((o) => o.name === 'ghost-a');
+  assert.equal(ghost.dataDir, pluginDataDir('ghost-a'));
+
+  writePluginsLock(lockBefore); // restore for later tests
+});
+
+test('purgePluginData: removes orphan dir; refuses installed; unknown throws', () => {
+  const lockBefore = readPluginsLock();
+  assert.equal(existsSync(pluginDir('ghost-a')), true, 'fixture from previous test present');
+  const r = purgePluginData('ghost-a');
+  assert.equal(r.ok, true);
+  assert.equal(existsSync(pluginDir('ghost-a')), false, 'whole plugin dir gone');
+
+  // still installed -> refuse with code INSTALLED
+  writePluginsLock({ ...lockBefore, 'ghost-installed': { pinnedSha: 'x'.repeat(40), enabled: true } });
+  assert.throws(() => purgePluginData('ghost-installed'), (e) => e.code === 'INSTALLED');
+  writePluginsLock(lockBefore);
+
+  // nothing there -> plain error
+  assert.throws(() => purgePluginData('never-existed'), /nothing to purge/);
+
+  // safeName-invalid name -> same "nothing to purge" contract, never "invalid plugin name"
+  assert.throws(() => purgePluginData('9ghost'), /nothing to purge/);
 });

@@ -64,6 +64,7 @@ import {
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
+  renderOrphanList,
 } from './plugins-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 
@@ -185,6 +186,9 @@ const el = {
   confirmMessage: $('#confirm-message'),
   confirmOk: $('#confirm-ok'),
   confirmCancel: $('#confirm-cancel'),
+  confirmCheckboxWrap: $('#confirm-checkbox-wrap'),
+  confirmCheckbox: $('#confirm-checkbox'),
+  confirmCheckboxLabel: $('#confirm-checkbox-label'),
 
   // Add-project modal
   projectAddModal: $('#project-add-modal'),
@@ -4966,22 +4970,29 @@ function renderProjectsList() {
 }
 
 // ---- Reusable confirmation modal -> Promise<boolean> ------------------------
-function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel' } = {}) {
+// With opts.checkbox: { label } it resolves { ok, checked } instead.
+function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', checkbox = null } = {}) {
   return new Promise((resolve) => {
     el.confirmTitle.textContent = title;
     el.confirmMessage.textContent = message;
     el.confirmOk.textContent = confirmLabel;
     el.confirmCancel.textContent = cancelLabel;
+    // opt-in checkbox: shown only when requested, always reset to unchecked
+    el.confirmCheckboxWrap.classList.toggle('hidden', !checkbox);
+    el.confirmCheckbox.checked = false;
+    el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
     el.confirmOk.focus();
 
     const done = (val) => {
+      const checked = el.confirmCheckbox.checked;
       el.confirmModal.classList.add('hidden');
+      el.confirmCheckboxWrap.classList.add('hidden');
       el.confirmOk.removeEventListener('click', onOk);
       el.confirmCancel.removeEventListener('click', onCancel);
       el.confirmModal.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
-      resolve(val);
+      resolve(checkbox ? { ok: val, checked } : val);
     };
     const onOk = () => done(true);
     const onCancel = () => done(false);
@@ -5518,7 +5529,9 @@ async function loadPluginsView() {
     const res = await fetch('/api/plugins');
     const data = await safeJson(res);
     if (!res.ok) return setPluginsMsg(data.error || `HTTP ${res.status}`, 'err');
-    el.pluginsList.replaceChildren(renderPluginList(data.plugins || []));
+    const parts = [renderPluginList(data.plugins || [])];
+    if (Array.isArray(data.orphans) && data.orphans.length) parts.push(renderOrphanList(data.orphans));
+    el.pluginsList.replaceChildren(...parts);
   } catch (e) { setPluginsMsg(e.message, 'err'); }
 }
 
@@ -5589,7 +5602,7 @@ async function openPluginSettings(name) {
   ]);
 }
 
-// One delegated listener: enable toggle + Settings/Doctor/Update/Remove.
+// One delegated listener: enable toggle + Settings/Doctor/Update/Remove + orphan Purge.
 if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
   const t = e.target;
   const name = t && t.dataset ? t.dataset.name : '';
@@ -5624,20 +5637,40 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
       loadPluginsView();
     });
   } else if (t.classList.contains('pl-remove')) {
-    const sure = await confirmModal({
+    const res = await confirmModal({
       title: 'Uninstall plugin',
-      message: `Uninstall "${name}"?\nIts config/secrets under data/ are kept (purge later removes them).`,
+      message: `Uninstall "${name}"?`,
       confirmLabel: 'Uninstall',
+      checkbox: { label: 'Also delete config, secrets and state (purge — cannot be undone)' },
     });
-    if (!sure) return;
-    const { ok, status, data } = await pluginApi('DELETE', `/api/plugins/${encodeURIComponent(name)}`);
+    if (!res.ok) return;
+    const purge = res.checked;
+    const { ok, status, data } = await pluginApi(
+      'DELETE', `/api/plugins/${encodeURIComponent(name)}${purge ? '?purge=1' : ''}`,
+    );
     if (status === 409) {
       pluginModal(`Cannot uninstall ${name}`, renderReferences409(data.references || []));
       return;
     }
     if (!ok) return setPluginsMsg(data.error || 'uninstall failed', 'err');
-    setPluginsMsg(`Uninstalled ${name}. Leftover data kept under ~/.maestro/plugins/${name}/data.`, 'ok');
+    setPluginsMsg(
+      purge
+        ? `Uninstalled ${name} and purged its data.`
+        : `Uninstalled ${name}. Leftover data kept under ~/.maestro/plugins/${name}/data.`,
+      'ok',
+    );
     invalidateAgentCaches();
+    loadPluginsView();
+  } else if (t.classList.contains('pl-purge-orphan')) {
+    const sure = await confirmModal({
+      title: 'Purge plugin data',
+      message: `Delete config, secrets and state for "${name}"? This cannot be undone.`,
+      confirmLabel: 'Purge',
+    });
+    if (!sure) return;
+    const { ok, data } = await pluginApi('DELETE', `/api/plugins/${encodeURIComponent(name)}/data`);
+    if (!ok) return setPluginsMsg(data.error || 'purge failed', 'err');
+    setPluginsMsg(`Purged leftover data for ${name}.`, 'ok');
     loadPluginsView();
   }
 });

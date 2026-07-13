@@ -54,6 +54,7 @@ import { CHANNEL_IDS } from '../src/core/channels.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
   setPluginEnabled, doctorPlugin, buildInstallInventory,
+  listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
 import { addPluginRepo, fetchCandidate, repoCacheDir } from '../src/core/plugin-repo.mjs';
 import { redactedConfig, writePluginConfig } from '../src/core/plugin-config.mjs';
@@ -2073,7 +2074,7 @@ async function discoveryInventory(repoUrl, sha, subdir) {
 
 app.get('/api/plugins', (req, res) => {
   try {
-    res.json({ plugins: listInstalledPlugins() });
+    res.json({ plugins: listInstalledPlugins(), orphans: listOrphanPluginData() });
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -2159,6 +2160,22 @@ app.delete('/api/plugins/:name', async (req, res) => {
     await uninstallPlugin(name, { purge });
     res.json({ ok: true, purged: purge });
   } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// DELETE /api/plugins/:name/data — purge an ORPHAN's leftover data/ (config +
+// secrets + state). requirePlugin is unusable here: orphans are by definition
+// NOT in the lock. 409 while installed (purge flows through uninstall), 404
+// when there is nothing to purge.
+app.delete('/api/plugins/:name/data', (req, res) => {
+  const name = req.params.name;
+  if (!PLUGIN_NAME_RE.test(name)) return res.status(404).json({ error: 'plugin not found' });
+  try {
+    res.json(purgePluginData(name));
+  } catch (err) {
+    if (err && err.code === 'INSTALLED') return res.status(409).json({ error: err.message });
+    if (err && /nothing to purge/.test(err.message || '')) return res.status(404).json({ error: err.message });
     sendPluginError(res, err);
   }
 });

@@ -17,7 +17,8 @@ import { join, resolve } from 'node:path';
 import { MAESTRO_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, validatePluginDir, apiSatisfies } from './plugin-manifest.mjs';
 import {
-  pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
+  pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
+  DIR_NAME_RE,
 } from './plugins-lock.mjs';
 import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
 import { importPluginWorkflows, removePluginWorkflows, referencedPluginAgents } from './plugin-workflows.mjs';
@@ -304,6 +305,39 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
     ok: true, dataKept,
     note: dataKept ? `config/secrets/state kept at ${dataDir} — "maestro plugin purge ${name}" removes them` : null,
   };
+}
+
+/** Leftover data/ dirs from past non-purge uninstalls: dir under pluginsRoot,
+ *  valid name, NOT in the lock, data/ present. Sorted; [] when root missing.
+ *  Name filter is plugins-lock's DIR_NAME_RE — single-sourced so it can never
+ *  disagree with the safeName gate inside pluginDataDir. */
+export function listOrphanPluginData() {
+  const root = pluginsRoot();
+  if (!existsSync(root)) return [];
+  const lock = readPluginsLock();
+  return readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && DIR_NAME_RE.test(d.name) && !lock[d.name])
+    .filter((d) => existsSync(join(root, d.name, 'data')))
+    .map((d) => ({ name: d.name, dataDir: pluginDataDir(d.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Purge an ORPHAN's leftovers (spec §6.3 tail). Installed plugins purge via
+ *  uninstallPlugin({purge:true}) — refusing here keeps one purge path each. */
+export function purgePluginData(name) {
+  if (readPluginsLock()[name]) {
+    throw Object.assign(
+      new Error(`plugin "${name}" is still installed — uninstall with purge instead`),
+      { code: 'INSTALLED' },
+    );
+  }
+  // Invalid name -> maestro never created a dir for it (safeName gate), so
+  // there are no leftovers; same coercion as safeName keeps the two in lockstep.
+  if (!DIR_NAME_RE.test(String(name ?? ''))) throw new Error(`plugin "${name}": nothing to purge`);
+  const dir = pluginDir(name); // cannot throw: guarded above
+  if (!existsSync(dir)) throw new Error(`plugin "${name}": nothing to purge`);
+  rmSync(dir, { recursive: true, force: true });
+  return { ok: true, name };
 }
 
 /** Enable/disable (spec §6.5): lockfile flag only; no file removal. */

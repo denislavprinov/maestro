@@ -14,7 +14,7 @@ import { randomBytes } from 'node:crypto';
 import { maestroHome } from './projects.mjs';
 
 /** Anti-traversal guard: a plugin name is a bare kebab dir stem, never a path. */
-const DIR_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
+export const DIR_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 function safeName(name) {
   const n = String(name ?? '');
   if (!DIR_NAME_RE.test(n)) throw new Error(`invalid plugin name "${n}"`);
