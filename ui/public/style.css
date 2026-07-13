@@ -258,7 +258,7 @@ body.view-history .main{padding-top:0;}
 
 /* ---------- Grid ---------- */
 .grid{display:grid;grid-template-columns:minmax(360px,1fr) minmax(420px,1.25fr);gap:22px;align-items:start;}
-.grid.single{grid-template-columns:minmax(0,720px);justify-content:center;}
+.grid.single{grid-template-columns:minmax(0,864px);justify-content:center;}
 .view[data-view="new"] .topbar{justify-content:center;text-align:center;}
 .col{display:flex;flex-direction:column;gap:22px;}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
@@ -384,10 +384,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stage-cfg{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:15px 0;border-top:1px solid var(--line);}
 .stage-cfg:first-of-type{border-top:none;padding-top:4px;}
 .stage-cfg .acc{width:10px;height:38px;border-radius:6px;flex:0 0 auto;}
-.stage-cfg .meta{flex:1;min-width:0;}
+/* .meta keeps a floor width so long node labels can't collapse under .picks;
+   past the floor the row wraps (.stage-cfg is flex-wrap) instead of overlapping. */
+.stage-cfg .meta{flex:1 1 150px;min-width:150px;}
 .stage-cfg .meta b{display:block;font-weight:600;font-size:14.5px;}
 .stage-cfg .meta small{color:var(--ink-3);font-size:12px;}
-.stage-cfg .picks{display:flex;gap:10px;flex:0 0 auto;}
+.stage-cfg .meta b,.stage-cfg .meta small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.stage-cfg .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;flex:0 1 auto;min-width:0;}
 .stage-cfg .select-wrap{width:180px;}
 .stage-cfg .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
 .acc.violet{background:var(--violet);} .acc.green{background:var(--green);}

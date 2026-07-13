@@ -2482,6 +2482,7 @@ function renderNodeRows(rows) {
     meta.className = 'meta';
     const b = document.createElement('b');
     b.textContent = row.label;
+    b.title = row.label; // full name on hover when the label ellipsizes
     const small = document.createElement('small');
     small.textContent = row.parallel ? `Step ${row.stepIndex + 1} · parallel` : `Step ${row.stepIndex + 1}`;
     meta.append(b, small);
