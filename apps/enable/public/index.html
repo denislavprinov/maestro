@@ -104,68 +104,85 @@
         <p id="sr-status" class="sr-only" role="status" aria-live="polite"></p>
         <div class="journey" id="journey" aria-hidden="true"></div>
 
-        <div class="ring-wrap" aria-hidden="true">
-          <svg viewBox="0 0 180 180" class="ring" aria-hidden="true">
-            <circle cx="90" cy="90" r="74" class="ring-track" />
-            <circle id="ring-ghost" cx="90" cy="90" r="74" class="ring-ghost" />
-            <circle id="ring-fill" cx="90" cy="90" r="74" class="ring-fill" />
-          </svg>
-          <div class="ring-center">
-            <div id="ring-score" class="ring-score">—</div>
-            <div id="pass-label" class="ring-sub">starting…</div>
+        <div class="progress-cols">
+          <div class="progress-left">
+            <div class="ring-wrap" aria-hidden="true">
+              <svg viewBox="0 0 180 180" class="ring" aria-hidden="true">
+                <circle cx="90" cy="90" r="74" class="ring-track" />
+                <circle id="ring-ghost" cx="90" cy="90" r="74" class="ring-ghost" />
+                <circle id="ring-fill" cx="90" cy="90" r="74" class="ring-fill" />
+              </svg>
+              <div class="ring-center">
+                <div id="ring-score" class="ring-score">—</div>
+                <div id="pass-label" class="ring-sub">starting…</div>
+              </div>
+            </div>
+
+            <div id="run-meter" class="run-meter" hidden></div>
+
+            <div class="progress-actions">
+              <button id="pause-btn" class="ghost-btn small" type="button" hidden>Pause run</button>
+            </div>
+          </div>
+
+          <div class="progress-right">
+            <div id="paused-banner" class="paused-banner" role="status" hidden>
+              <p id="paused-reason">Run paused — resume when you're ready.</p>
+              <button id="resume-btn" class="primary-btn" type="button">Resume run</button>
+            </div>
+
+            <div id="gate-wrap" class="gate-card" role="alertdialog" aria-labelledby="gate-title" hidden>
+              <h3 id="gate-title"></h3>
+              <p id="gate-detail" class="lede"></p>
+              <ul id="gate-issues" class="gate-issues"></ul>
+              <div class="row">
+                <button id="gate-secondary" class="ghost-btn" type="button"></button>
+                <button id="gate-primary" class="primary-btn" type="button"></button>
+              </div>
+            </div>
+
+            <div id="feed" class="feed" aria-live="polite"></div>
+
+            <button id="details-toggle" class="ghost-btn small" aria-expanded="false" aria-controls="raw-log">Show details</button>
+            <pre id="raw-log" class="raw-log" hidden></pre>
           </div>
         </div>
-
-        <div id="run-meter" class="run-meter" hidden></div>
-
-        <div class="progress-actions">
-          <button id="pause-btn" class="ghost-btn small" type="button" hidden>Pause run</button>
-        </div>
-        <div id="paused-banner" class="paused-banner" role="status" hidden>
-          <p id="paused-reason">Run paused — resume when you're ready.</p>
-          <button id="resume-btn" class="primary-btn" type="button">Resume run</button>
-        </div>
-
-        <div id="gate-wrap" class="gate-card" role="alertdialog" aria-labelledby="gate-title" hidden>
-          <h3 id="gate-title"></h3>
-          <p id="gate-detail" class="lede"></p>
-          <ul id="gate-issues" class="gate-issues"></ul>
-          <div class="row">
-            <button id="gate-secondary" class="ghost-btn" type="button"></button>
-            <button id="gate-primary" class="primary-btn" type="button"></button>
-          </div>
-        </div>
-
-        <div id="feed" class="feed" aria-live="polite"></div>
-
-        <button id="details-toggle" class="ghost-btn small" aria-expanded="false" aria-controls="raw-log">Show details</button>
-        <pre id="raw-log" class="raw-log" hidden></pre>
       </div>
     </section>
 
     <!-- RESULTS -->
     <section id="results" class="screen">
       <div class="card">
-        <div class="result-head">
-          <h2 class="result-label" tabindex="-1">Readiness</h2>
-          <div id="hero" class="hero-score">—</div>
+        <div class="results-top">
+          <button class="ghost-btn small" data-back="home">← Run another</button>
+          <button id="results-graph-btn" class="ghost-btn small" type="button" hidden>View knowledge graph</button>
         </div>
-        <div id="bars" class="bars"></div>
-        <div class="gaps-wrap" id="gaps-wrap" hidden>
-          <h3>Still worth doing</h3>
-          <ul id="gaps"></ul>
-        </div>
-        <div class="changes-wrap" id="changes-wrap" hidden>
-          <h3>What changed</h3>
-          <div id="changes-summary" class="changes-summary"></div>
-          <ul id="changes-files" class="changes-files"></ul>
-          <button id="patch-toggle" class="ghost-btn small" type="button" aria-expanded="false" aria-controls="patch-view">Show patch</button>
-        </div>
-        <div id="result-stats" class="result-stats"></div>
-        <div id="result-branch" class="branch-line"></div>
-        <div class="row">
-          <button class="primary-btn" data-back="home">Run another</button>
-          <button id="results-graph-btn" class="ghost-btn" type="button" hidden>View knowledge graph</button>
+        <div class="results-cols">
+          <div class="results-main">
+            <div class="result-head">
+              <h2 class="result-label" tabindex="-1">Readiness</h2>
+              <div id="hero" class="hero-score">—</div>
+            </div>
+            <div id="bars" class="bars"></div>
+            <div id="result-stats" class="result-stats"></div>
+            <div id="result-branch" class="branch-line"></div>
+          </div>
+          <div class="results-side">
+            <div class="gaps-wrap" id="gaps-wrap" hidden>
+              <div class="gaps-head">
+                <h3>Still worth doing</h3>
+                <button id="todo-btn" class="ghost-btn small" type="button">Create tasks in TODO.md</button>
+              </div>
+              <ul id="gaps"></ul>
+              <p id="todo-error" class="error-line" hidden></p>
+            </div>
+            <div class="changes-wrap" id="changes-wrap" hidden>
+              <h3>What changed</h3>
+              <div id="changes-summary" class="changes-summary"></div>
+              <ul id="changes-files" class="changes-files"></ul>
+              <button id="patch-toggle" class="ghost-btn small" type="button" aria-expanded="false" aria-controls="patch-view">Show patch</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>

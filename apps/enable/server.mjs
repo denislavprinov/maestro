@@ -2,7 +2,7 @@ import express from 'express';
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -358,6 +358,37 @@ app.post('/api/enable/answer', (req, res) => {
     broadcast(frame);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
+});
+
+// turn "Still worth doing" gaps into checkbox tasks in the project's TODO.md.
+// Items already present (checked or not) are skipped so re-clicking is a no-op.
+app.post('/api/enable/todo', (req, res) => {
+  const { dir: rawDir, gaps } = req.body || {};
+  if (typeof rawDir !== 'string' || !rawDir) return res.status(400).json({ error: 'dir required' });
+  if (!Array.isArray(gaps) || gaps.length === 0 || gaps.some((g) => typeof g !== 'string' || !g.trim()))
+    return res.status(400).json({ error: 'gaps must be a non-empty array of strings' });
+  // accept either an absolute project path or a bare project name under PROJECTS_ROOT
+  // (history entries sometimes only carry the name)
+  const dir = path.isAbsolute(rawDir) ? rawDir : resolveProjectDir(rawDir);
+  if (!dir) return res.status(400).json({ error: `unknown project: ${rawDir}` });
+  try { if (!statSync(dir).isDirectory()) throw new Error('not a directory'); }
+  catch { return res.status(400).json({ error: `not a directory: ${dir}` }); }
+
+  const file = path.join(dir, 'TODO.md');
+  let existing = '';
+  try { existing = readFileSync(file, 'utf8'); } catch {}
+  const have = new Set(existing.split('\n')
+    .map((l) => { const m = l.match(/^- \[[ xX]\] (.*)$/); return m && m[1].trim(); })
+    .filter(Boolean));
+  const fresh = [...new Set(gaps.map((g) => g.trim()))].filter((g) => !have.has(g));
+  if (fresh.length === 0) return res.json({ written: 0, skipped: gaps.length, path: file });
+
+  const date = new Date().toISOString().slice(0, 10);
+  const section = `## Enable — still worth doing (${date})\n\n${fresh.map((g) => `- [ ] ${g}`).join('\n')}\n`;
+  const text = existing ? `${existing.replace(/\n*$/, '\n\n')}${section}` : section;
+  try { writeFileSync(file, text); }
+  catch (err) { return res.status(500).json({ error: String(err && err.message || err) }); }
+  res.json({ written: fresh.length, skipped: gaps.length - fresh.length, path: file });
 });
 
 // --- knowledge graph view -------------------------------------------------
