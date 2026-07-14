@@ -854,7 +854,8 @@ async function vendorSkill(btn) {
 const MAX_FILE_ROWS = 12;
 
 function esc(s) {
-  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 function statBar(added, removed) {

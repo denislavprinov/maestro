@@ -118,3 +118,15 @@ test('clicking Add POSTs /api/enable/vendor and flips the button', async () => {
   assert.equal(JSON.parse(vendorPosts[0]).name, 'executing-plans');
   assert.match(btn.textContent, /Added/);
 });
+
+test('suggested tool name with a double quote cannot break out of the Add button attribute (XSS)', async () => {
+  const document = await boot();
+  const evilName = 'x" onmouseover="alert(1)';
+  const tools = { installed: [], skipped: [], suggested: [{ name: evilName, reason: 'r', source: 'catalog' }] };
+  window.__enableTest.setRun('r1', 'p1');
+  window.__enableTest.handle(finalFrame({ tools, tasks: null }));
+  await tick();
+  const btn = document.querySelector('#tools-suggested .vendor-btn');
+  assert.equal(btn.hasAttribute('onmouseover'), false);
+  assert.equal(btn.dataset.name, evilName);
+});
