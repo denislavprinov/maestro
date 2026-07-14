@@ -39,8 +39,20 @@ let answeredQuestions = new Set();   // per-run; guards against replayed frames
 // ---------- screen switching ----------
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === id);
+  // sidebar: "New" highlights on the fresh-run flow; a Past entry keeps its own
+  // highlight (set in showHistoryDetail) while its result view is open.
+  document.querySelector('#nav-new')?.classList.toggle('active', id !== 'results' || !viewingHistoryId);
+  if (id !== 'results') markHistoryActive(null);
   // move focus to the screen's heading so keyboard/SR users land in context
   document.querySelector(`#${id} h1[tabindex], #${id} h2[tabindex]`)?.focus();
+}
+
+let viewingHistoryId = null;
+function markHistoryActive(id) {
+  viewingHistoryId = id;
+  for (const b of document.querySelectorAll('#history-list .hist-btn')) {
+    b.classList.toggle('active', id != null && b.dataset.histId === String(id));
+  }
 }
 
 // screen-reader narration of run progress (the journey/ring are aria-hidden)
@@ -936,6 +948,18 @@ function renderChanges(c) {
 }
 
 // ---------- history ----------
+// Engine pipeline status -> [color family, label]; same statuses (and the same
+// family colors) as the main Maestro UI's statusPill.
+function historyPill(status) {
+  if (status === 'done') return ['green', 'Done'];
+  if (status === 'paused' || status === 'pausing') return ['amber', 'Paused'];
+  if (status === 'interrupted') return ['amber', 'Interrupted'];
+  if (status === 'error') return ['red', 'Error'];
+  if (status === 'stopped') return ['red', 'Stopped'];
+  if (status === 'running' || status === 'starting') return ['blue', 'Running'];
+  return ['dim', status || 'Unknown'];
+}
+
 async function loadHistory() {
   const wrap = document.querySelector('#history-wrap');
   let hist;
@@ -951,14 +975,11 @@ async function loadHistory() {
   for (const h of hist.slice(0, 20)) {
     const li = document.createElement('li');
     const when = h.startedAt ? new Date(h.startedAt).toLocaleDateString() : '';
-    const r = h.readiness;
-    const score = r && r.score != null
-      ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
-      : h.status;
+    const [family, text] = historyPill(h.status);
     const name = h.projectName || h.title;
-    li.innerHTML = `<button type="button" class="hist-btn">
+    li.innerHTML = `<button type="button" class="hist-btn" data-hist-id="${h.id}">
       <span class="hist-project">${name}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>` +
+      <span class="hist-pill ${family}"><i class="pdot"></i>${text}</span></button>` +
       (h.resumable ? `<button type="button" class="hist-resume"
         aria-label="Resume the ${name} run from ${when}" title="Resume run">Resume</button>` : '') +
       `<button type="button" class="hist-delete" aria-label="Delete the ${name} run from ${when}" title="Delete run">✕</button>`;
@@ -995,6 +1016,7 @@ async function showHistoryDetail(id) {
   if (ws) { try { ws.close(); } catch {} ws = null; }
   stopLiveMeter();
   currentRunId = null;                       // disk view, no live socket
+  markHistoryActive(id);
   const e = d.entry || {};
   lastProjectDir = e.projectDir || e.projectName || '';   // for the graph button on this view
   const est = e.estimatedCost;
@@ -1095,6 +1117,12 @@ function init() {
   document.querySelector('#setup-form').addEventListener('submit', (e) => {
     e.preventDefault();
     start(currentTarget(), collectAnswers());
+  });
+
+  document.querySelector('#nav-new').addEventListener('click', () => {
+    if (ws) { try { ws.close(); } catch {} }
+    loadHistory();
+    show('home');
   });
 
   for (const b of document.querySelectorAll('[data-back]')) {
