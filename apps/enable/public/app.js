@@ -10,10 +10,11 @@ const STAGES = [
   { node: 's_infra',   label: 'Build',      color: '#46d39a' },
   { node: 's_tests',   label: 'Add tests',  color: '#f2a25c' },
   { node: 's_eval',    label: 'Review',     color: '#f5b833' },
+  { node: 's_execute', label: 'Fix gaps',   color: '#a78bfa' },
   { node: 's_canary',  label: 'Test-drive', color: '#46d39a' },
 ];
 
-// The 5 fixed set-up questions. value === the choice string sent to the engine.
+// The 7 fixed set-up questions. value === the choice string sent to the engine.
 const SETUP_QUESTIONS = {
   testTier: { type: 'single', options: [
     { value: 'scaffold', label: 'Scaffold (recommended)' }, { value: 'docs-only', label: 'Docs only' },
@@ -26,6 +27,15 @@ const SETUP_QUESTIONS = {
     { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md (Codex & others)' }],
     defaults: ['cursor', 'copilot', 'agents'] },
   canary: { type: 'single', options: [{ value: 'yes', label: 'Yes (recommended)' }, { value: 'no', label: 'No' }] },
+  optionalTools: { type: 'multi', options: [
+    { value: 'writing-plans', label: 'Writing plans' },
+    { value: 'executing-plans', label: 'Executing plans' },
+    { value: 'requesting-code-review', label: 'Requesting code review' }],
+    defaults: [] },
+  executeTasks: { type: 'single', options: [
+    { value: 'up-to-3', label: 'Yes — up to 3 tasks (recommended)' },
+    { value: 'up-to-1', label: 'Yes — 1 task' },
+    { value: 'none', label: 'No' }] },
 };
 
 let baseline = null;
@@ -285,6 +295,10 @@ function collectAnswers() {
   }
   const scope = document.querySelector('input[data-free="scopeConstraints"]').value.trim();
   a.scopeConstraints = scope;
+  // optionalTools rides the clarify answer as ONE comma-joined string ('none' = none)
+  const opt = [...document.querySelectorAll('input[name="optionalTools"]:checked')].map((el) => el.value);
+  a.optionalTools = opt.length ? opt.join(', ') : 'none';
+  a.executeTasks = document.querySelector('input[name="executeTasks"]:checked')?.value;
   return a;
 }
 
