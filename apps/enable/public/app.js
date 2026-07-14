@@ -35,12 +35,25 @@ let currentRunId = null;
 let currentPipelineId = null;        // engine pipeline id, from state frames
 let lastWarnLine = null;             // pause reason candidate (session limit etc.)
 let answeredQuestions = new Set();   // per-run; guards against replayed frames
+let currentHistoryId = null;         // set when viewing a past run from disk (no live socket); .md preview reads from this run's dir
 
 // ---------- screen switching ----------
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === id);
+  // sidebar: "New" highlights on the fresh-run flow; a Past entry keeps its own
+  // highlight (set in showHistoryDetail) while its result view is open.
+  document.querySelector('#nav-new')?.classList.toggle('active', id !== 'results' || !viewingHistoryId);
+  if (id !== 'results') markHistoryActive(null);
   // move focus to the screen's heading so keyboard/SR users land in context
   document.querySelector(`#${id} h1[tabindex], #${id} h2[tabindex]`)?.focus();
+}
+
+let viewingHistoryId = null;
+function markHistoryActive(id) {
+  viewingHistoryId = id;
+  for (const b of document.querySelectorAll('#history-list .hist-btn')) {
+    b.classList.toggle('active', id != null && b.dataset.histId === String(id));
+  }
 }
 
 // screen-reader narration of run progress (the journey/ring are aria-hidden)
@@ -155,7 +168,7 @@ async function openGraph(name, returnTo) {
     report.innerHTML = '<p class="hint-line">Loading report…</p>';
     try {
       const md = await (await fetch(`/api/enable/graph/report?project=${encodeURIComponent(name)}`)).text();
-      report.innerHTML = renderMarkdown(md);
+      report.innerHTML = renderGraphMarkdown(md);
     } catch { report.innerHTML = '<p class="hint-line">Could not load the report.</p>'; }
   } else {
     report.innerHTML = '<p class="hint-line">No <code>GRAPH_REPORT.md</code> — run <code>/graphify</code> to generate one.</p>';
@@ -166,7 +179,7 @@ async function openGraph(name, returnTo) {
 // Tiny markdown renderer for GRAPH_REPORT.md (headings, bullet lists, hr,
 // paragraphs, inline code / bold / links). Source is escaped first so report
 // content can never inject markup.
-function renderMarkdown(md) {
+function renderGraphMarkdown(md) {
   const inline = (s) => esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -357,6 +370,7 @@ async function start(target, answers) {
 function connectRun(runId) {
   if (ws) { try { ws.close(); } catch {} }   // drop the previous run's socket
   currentRunId = runId;
+  currentHistoryId = null;                     // a live run supersedes any disk view
   ws = new WebSocket(`ws://${location.host}/ws?runId=${runId}`);
   ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch {} };
   ws.onerror = () => showError('Lost connection to the Enable server.');
@@ -834,6 +848,109 @@ function splitPatch(patch) {
   return chunks.map((c) => ({ path: c.path, text: c.lines.join('\n') }));
 }
 
+// ---------- markdown preview ----------
+const mdCache = new Map();   // path -> { ok, content }; reset per results render
+
+function isMarkdown(p) { return /\.(md|markdown)$/i.test(p || ''); }
+
+// Where to fetch a changed file's full content from — the live run, else the
+// disk-backed history view. Null when neither is active (nothing to preview).
+function fileEndpoint(p) {
+  const q = `?path=${encodeURIComponent(p)}`;
+  if (currentRunId) return `/api/enable/runs/${currentRunId}/file${q}`;
+  if (currentHistoryId) return `/api/enable/history/${currentHistoryId}/file${q}`;
+  return null;
+}
+
+async function loadMdContent(p) {
+  if (mdCache.has(p)) return mdCache.get(p);
+  const url = fileEndpoint(p);
+  let out = { ok: false, content: '' };
+  if (url) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) out = { ok: true, content: (await res.json()).content || '' };
+    } catch { /* leave as unavailable */ }
+  }
+  mdCache.set(p, out);
+  return out;
+}
+
+// Only same-origin/relative or http(s) links survive; everything else (javascript:,
+// data:, quotes that could break out of the attribute) is dropped to plain text.
+function safeHref(u) {
+  const t = String(u).trim();
+  if (/["'<>]/.test(t) || /^\s*javascript:/i.test(t)) return null;
+  if (/^(https?:\/\/|\/|#|\.?\.?\/)/i.test(t) || /^[\w./#-]+$/.test(t)) return esc(t);
+  return null;
+}
+
+// Inline spans. Code spans are lifted out to NUL sentinels first so nothing inside
+// them is re-parsed AND so emphasis/links that straddle a code span still match;
+// they are restored last. Everything else is HTML-escaped before markup is added.
+function inlineMd(raw) {
+  const codes = [];
+  let s = String(raw).replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return ` ${codes.length - 1} `; });
+  s = esc(s);
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => {
+    const href = safeHref(url);
+    return href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>` : text;
+  });
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>').replace(/(^|[^_\w])_([^_]+)_/g, '$1<em>$2</em>');
+  return s.replace(/ (\d+) /g, (m, i) => `<code>${esc(codes[Number(i)])}</code>`);
+}
+
+// Compact, safe Markdown -> HTML for the preview pane. Covers the constructs that
+// show up in repo docs (headings, lists, fenced code, blockquotes, rules, inline
+// emphasis/links); anything else falls through as a paragraph. Not CommonMark.
+function renderMarkdown(src) {
+  const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let para = [];
+  let listType = null;   // 'ul' | 'ol' | null
+  const flushPara = () => { if (para.length) { out.push(`<p>${inlineMd(para.join(' '))}</p>`); para = []; } };
+  const flushList = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^\s*```(.*)$/);
+    if (fence) {
+      flushPara(); flushList();
+      const body = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) body.push(lines[i++]);
+      out.push(`<pre class="md-code"><code>${esc(body.join('\n'))}</code></pre>`);
+      continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { flushPara(); flushList(); const n = h[1].length; out.push(`<h${n}>${inlineMd(h[2].trim())}</h${n}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); flushList(); out.push('<hr>'); continue; }
+    const bq = line.match(/^\s*>\s?(.*)$/);
+    if (bq) {
+      flushPara(); flushList();
+      const buf = [bq[1]];
+      while (i + 1 < lines.length) { const m = lines[i + 1].match(/^\s*>\s?(.*)$/); if (!m) break; buf.push(m[1]); i++; }
+      out.push(`<blockquote>${inlineMd(buf.join(' '))}</blockquote>`);
+      continue;
+    }
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (ul || ol) {
+      flushPara();
+      const t = ul ? 'ul' : 'ol';
+      if (listType && listType !== t) flushList();
+      if (!listType) { listType = t; out.push(`<${t}>`); }
+      out.push(`<li>${inlineMd((ul ? ul[1] : ol[1]).trim())}</li>`);
+      continue;
+    }
+    if (/^\s*$/.test(line)) { flushPara(); flushList(); continue; }
+    flushList();
+    para.push(line.trim());
+  }
+  flushPara(); flushList();
+  return out.join('\n');
+}
+
 // ---------- diff modal ----------
 let diffState = { files: [], chunks: [] };
 
@@ -864,9 +981,19 @@ function openDiffModal(focusIndex = 0) {
   }).join('');
   paneEl.innerHTML = chunks.map((ch, i) => {
     const { st, sign } = statusGlyph(statusOf(ch.path));
-    return `<section id="diff-file-${i}" class="diff-file">
-      <header class="diff-file-head"><span class="file-status status-${st}">${sign}</span> ${esc(ch.path)}</header>
+    // Markdown files that still exist can be previewed rendered/raw, not just as a diff.
+    const previewable = isMarkdown(ch.path) && st !== 'D';
+    const toggle = previewable
+      ? `<span class="diff-view-toggle" role="group">
+          <button type="button" data-view="diff" class="active">Diff</button>
+          <button type="button" data-view="rendered">Rendered</button>
+          <button type="button" data-view="raw">Raw</button>
+        </span>`
+      : '';
+    return `<section id="diff-file-${i}" class="diff-file" data-path="${esc(ch.path)}">
+      <header class="diff-file-head"><span class="file-status status-${st}">${sign}</span> ${esc(ch.path)}${toggle}</header>
       <pre class="diff-body">${renderPatch(ch.text)}</pre>
+      ${previewable ? '<div class="md-preview" hidden></div>' : ''}
     </section>`;
   }).join('');
   const modal = document.querySelector('#diff-modal');
@@ -898,6 +1025,25 @@ function closeDiffModal() {
   toggle.textContent = 'Show patch';
 }
 
+// Switch a .md file section between its diff, rendered preview, and raw source.
+async function switchDiffView(btn) {
+  const sec = btn.closest('.diff-file');
+  if (!sec) return;
+  const view = btn.dataset.view;
+  for (const b of sec.querySelectorAll('.diff-view-toggle [data-view]'))
+    b.classList.toggle('active', b === btn);
+  const body = sec.querySelector('.diff-body');
+  const prev = sec.querySelector('.md-preview');
+  if (!prev) return;
+  if (view === 'diff') { body.hidden = false; prev.hidden = true; return; }
+  body.hidden = true; prev.hidden = false;
+  prev.classList.toggle('rendered', view === 'rendered');
+  const { ok, content } = await loadMdContent(sec.dataset.path);
+  if (btn.classList.contains('active') === false) return;   // user switched away mid-fetch
+  if (!ok) { prev.innerHTML = '<p class="md-empty">Preview unavailable.</p>'; return; }
+  prev.innerHTML = view === 'rendered' ? renderMarkdown(content) : `<pre class="md-raw">${esc(content)}</pre>`;
+}
+
 async function loadChanges(url) {
   const wrap = document.querySelector('#changes-wrap');
   wrap.hidden = true;
@@ -927,6 +1073,7 @@ function renderChanges(c) {
   list.innerHTML = files.slice(0, MAX_FILE_ROWS).map(fileRow).join('') +
     (files.length > MAX_FILE_ROWS ? `<li class="file-more">…and ${files.length - MAX_FILE_ROWS} more</li>` : '');
 
+  mdCache.clear();
   diffState = { files, chunks: splitPatch(c.patch) };
   const toggle = document.querySelector('#patch-toggle');
   toggle.hidden = !c.patch;
@@ -936,6 +1083,18 @@ function renderChanges(c) {
 }
 
 // ---------- history ----------
+// Engine pipeline status -> [color family, label]; same statuses (and the same
+// family colors) as the main Maestro UI's statusPill.
+function historyPill(status) {
+  if (status === 'done') return ['green', 'Done'];
+  if (status === 'paused' || status === 'pausing') return ['amber', 'Paused'];
+  if (status === 'interrupted') return ['amber', 'Interrupted'];
+  if (status === 'error') return ['red', 'Error'];
+  if (status === 'stopped') return ['red', 'Stopped'];
+  if (status === 'running' || status === 'starting') return ['blue', 'Running'];
+  return ['dim', status || 'Unknown'];
+}
+
 async function loadHistory() {
   const wrap = document.querySelector('#history-wrap');
   let hist;
@@ -951,14 +1110,11 @@ async function loadHistory() {
   for (const h of hist.slice(0, 20)) {
     const li = document.createElement('li');
     const when = h.startedAt ? new Date(h.startedAt).toLocaleDateString() : '';
-    const r = h.readiness;
-    const score = r && r.score != null
-      ? (r.baselineScore != null ? `${Math.round(r.baselineScore)} → ${Math.round(r.score)}` : `${Math.round(r.score)}`)
-      : h.status;
+    const [family, text] = historyPill(h.status);
     const name = h.projectName || h.title;
-    li.innerHTML = `<button type="button" class="hist-btn">
+    li.innerHTML = `<button type="button" class="hist-btn" data-hist-id="${h.id}">
       <span class="hist-project">${name}</span>
-      <span class="hist-when">${when}</span><span class="hist-score">${score}</span></button>` +
+      <span class="hist-pill ${family}"><i class="pdot"></i>${text}</span></button>` +
       (h.resumable ? `<button type="button" class="hist-resume"
         aria-label="Resume the ${name} run from ${when}" title="Resume run">Resume</button>` : '') +
       `<button type="button" class="hist-delete" aria-label="Delete the ${name} run from ${when}" title="Delete run">✕</button>`;
@@ -995,6 +1151,8 @@ async function showHistoryDetail(id) {
   if (ws) { try { ws.close(); } catch {} ws = null; }
   stopLiveMeter();
   currentRunId = null;                       // disk view, no live socket
+  markHistoryActive(id);
+  currentHistoryId = id;                      // .md preview reads from this run's dir
   const e = d.entry || {};
   lastProjectDir = e.projectDir || e.projectName || '';   // for the graph button on this view
   const est = e.estimatedCost;
@@ -1097,6 +1255,12 @@ function init() {
     start(currentTarget(), collectAnswers());
   });
 
+  document.querySelector('#nav-new').addEventListener('click', () => {
+    if (ws) { try { ws.close(); } catch {} }
+    loadHistory();
+    show('home');
+  });
+
   for (const b of document.querySelectorAll('[data-back]')) {
     b.addEventListener('click', () => {
       if (ws) { try { ws.close(); } catch {} }
@@ -1115,7 +1279,9 @@ function init() {
 
   const modal = document.querySelector('#diff-modal');
   modal.addEventListener('click', (e) => {
-    if (e.target.closest('[data-close]')) closeDiffModal();
+    if (e.target.closest('[data-close]')) { closeDiffModal(); return; }
+    const view = e.target.closest('.diff-view-toggle [data-view]');
+    if (view) { switchDiffView(view); return; }
     const item = e.target.closest('.diff-file-item');
     if (item) focusDiffFile(Number(item.dataset.idx));
   });

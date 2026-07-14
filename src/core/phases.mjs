@@ -13,10 +13,12 @@
 // If an agent .md body is missing/empty, each runner falls back to a sensible inline role
 // prompt so the system prompt is never empty. Interface is locked by docs/ARCHITECTURE.md §3.5.
 
+import { readFile, writeFile } from 'node:fs/promises';
 import { runClaude } from './claude-runner.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderAttachmentsBlock } from './channels.mjs';
+import { normalizeReadiness, normalizeGraphSummary } from './onboarding-contracts.mjs';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
@@ -957,6 +959,52 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
   );
 }
 
+// channel id -> { pathOf(outputs), normalize } for validateContractOutputs.
+const CONTRACT_VALIDATORS = {
+  readiness: { pathOf: (outputs) => outputs.readiness?.jsonPath, normalize: normalizeReadiness },
+  graph: { pathOf: (outputs) => outputs.graph?.path, normalize: normalizeGraphSummary },
+};
+
+/**
+ * Schema-validate (repair + warn; hard-fail only when unusable) every declared
+ * output channel that has a contract validator (readiness, graph). Called at
+ * the end of runGenericProducer/runGenericVerifier, after the agent has run.
+ *   - file missing            -> console.warn only (null-tolerant readers stay so).
+ *   - unparseable/fatal-invalid -> throws, surfaces through the recoverable-error gate.
+ *   - repairs performed       -> rewrite the file in place (2-space JSON), warn each repair.
+ *   - clean                   -> file left byte-identical.
+ * @param {{outputs?: object}} ctx
+ */
+async function validateContractOutputs(ctx) {
+  const outputs = ctx.outputs || {};
+  for (const [channel, { pathOf, normalize }] of Object.entries(CONTRACT_VALIDATORS)) {
+    const path = pathOf(outputs);
+    if (!path) continue;
+    let text;
+    try {
+      text = await readFile(path, 'utf8');
+    } catch {
+      console.warn(`[contracts] ${channel}: output file missing (${path})`);
+      continue;
+    }
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`[contracts] ${channel}: unparseable JSON (${path}): ${err.message}`);
+    }
+    const result = normalize(raw);
+    if (!result.ok) {
+      const reason = result.warnings[0] || 'invalid contract';
+      throw new Error(`[contracts] ${channel}: ${reason} (${path})`);
+    }
+    if (result.warnings.length > 0) {
+      for (const warning of result.warnings) console.warn(`[contracts] ${channel}: ${warning}`);
+      await writeFile(path, JSON.stringify(result.value, null, 2) + '\n', 'utf8');
+    }
+  }
+}
+
 /**
  * Generic producer — any metadata-declared producer with no bespoke branch.
  * Prompt = taskHeader + role hints + Inputs/Outputs channel->path lists; the
@@ -986,6 +1034,7 @@ export async function runGenericProducer(ctx) {
   const { text } = await runClaude(
     runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
   );
+  await validateContractOutputs(ctx);
   return { summary: (text || '').trim() || `Agent ${key} completed.` };
 }
 
@@ -1026,6 +1075,7 @@ export async function runGenericVerifier(ctx) {
     mockMarkers({ MOCK_ROLE: 'generic-verifier', MOCK_OUT: reviewMdPath, MOCK_JSON: reviewJsonPath, MOCK_CYCLE: cycle });
 
   await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
+  await validateContractOutputs(ctx);
 
   const review = await readReview(reviewJsonPath);
   return { review, reviewMdPath };

@@ -7,10 +7,19 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
+  <aside class="sidebar">
     <div class="brand"><span class="dot"></span> Enable</div>
-    <button id="theme-toggle" class="ghost-btn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
-  </header>
+    <nav class="sidenav" aria-label="Main">
+      <button id="nav-new" class="nav-item active" type="button">＋ New</button>
+      <div class="nav-group" id="history-wrap" hidden>
+        <h2 class="minor nav-heading">Past</h2>
+        <ul id="history-list" class="history-list"></ul>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <button id="theme-toggle" class="ghost-btn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+    </div>
+  </aside>
 
   <main>
     <!-- HOME -->
@@ -62,10 +71,6 @@
         <button id="home-graph-btn" class="ghost-btn" type="button" hidden>View knowledge graph</button>
         <p id="home-graph-hint" class="hint-line" hidden>Run <code>/graphify</code> on this project to build its knowledge graph first.</p>
         <p id="home-error" class="error-line" hidden></p>
-      </div>
-      <div class="card history-card" id="history-wrap" hidden>
-        <h2 class="minor">Past runs</h2>
-        <ul id="history-list" class="history-list"></ul>
       </div>
     </section>
 

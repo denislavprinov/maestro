@@ -32,8 +32,12 @@ async function bootEnable(opts = {}) {
     status: 'done', startedAt: '2026-07-06T15:00:00Z', branch: 'maestro/enable-project-for-ai-ab12cd34',
     projectName: 'tinytool', readiness: { score: 91, baselineScore: 30, delta: 61, dimensions: {}, gaps: [] },
   };
+  const MD_CONTENT = '# Enable\n\nDocs for **AI**.\n\n- one\n- two\n\n`npm test`\n\n[site](https://example.com)\n';
   window.fetch = (url, opts) => {
     const u = String(url);
+    if (u.includes('/file')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: 'CLAUDE.md', content: MD_CONTENT }) });
+    }
     if (u.includes('/api/enable/history/ab12cd34')) {
       return Promise.resolve({ ok: true, status: 200, json: async () =>
         ({ entry: HISTORY_ENTRY, readiness: HISTORY_ENTRY.readiness, changes: CHANGES_FIXTURE }) });
@@ -196,7 +200,7 @@ test('home lists past runs; clicking one opens the results view from disk', asyn
   const item = document.querySelector('#history-list li .hist-btn');
   assert.ok(item, 'one history row button (keyboard reachable)');
   assert.match(item.textContent, /tinytool/);
-  assert.match(item.textContent, /91/);
+  assert.match(item.textContent, /Done/, 'row shows the run status, not the score');
 
   item.click();
   await new Promise((r) => setTimeout(r, 0));
@@ -267,6 +271,68 @@ test('Esc, backdrop and ✕ all close the diff modal', async () => {
   document.querySelector('#patch-toggle').click();
   document.querySelector('#diff-modal-close').click();
   assert.equal(modal.hidden, true, '✕ closes');
+});
+
+test('.md files get a Diff/Rendered/Raw toggle; non-.md files do not', async () => {
+  const { document } = await bootEnable({ changes: MULTI_CHANGES });
+  await toResults(document);
+  document.querySelector('#patch-toggle').click();
+
+  // diff-file-0 = CLAUDE.md (markdown), diff-file-1 = package.json (not markdown)
+  assert.ok(document.querySelector('#diff-file-0 .diff-view-toggle'), 'markdown file has a view toggle');
+  assert.equal(document.querySelector('#diff-file-1 .diff-view-toggle'), null, 'non-markdown file has none');
+  assert.ok(document.querySelector('#diff-file-0 [data-view="rendered"]'), 'Rendered button present');
+  assert.equal(document.querySelector('#diff-file-0 [data-view="diff"]').classList.contains('active'), true,
+    'Diff is the default active view');
+});
+
+test('Rendered view renders markdown to HTML; Raw shows the source; Diff returns', async () => {
+  const { document } = await bootEnable({ changes: MULTI_CHANGES });
+  await toResults(document);
+  document.querySelector('#patch-toggle').click();
+  const sec = document.querySelector('#diff-file-0');
+  const body = sec.querySelector('.diff-body');
+  const prev = sec.querySelector('.md-preview');
+  assert.equal(prev.hidden, true, 'preview hidden until asked for');
+
+  sec.querySelector('[data-view="rendered"]').click();
+  await tick();
+  assert.equal(body.hidden, true, 'diff body hidden in rendered view');
+  assert.equal(prev.hidden, false, 'preview shown');
+  assert.equal(prev.querySelector('h1').textContent, 'Enable', 'heading rendered');
+  assert.equal(prev.querySelector('strong').textContent, 'AI', 'bold rendered');
+  assert.equal(prev.querySelectorAll('li').length, 2, 'list items rendered');
+  assert.equal(prev.querySelector('code').textContent, 'npm test', 'inline code rendered');
+  assert.equal(prev.querySelector('a').getAttribute('href'), 'https://example.com', 'safe link rendered');
+
+  sec.querySelector('[data-view="raw"]').click();
+  await tick();
+  assert.ok(prev.querySelector('pre.md-raw'), 'raw view is a <pre>');
+  assert.match(prev.textContent, /# Enable/, 'raw shows the markdown source verbatim');
+  assert.match(prev.textContent, /\*\*AI\*\*/, 'raw keeps the asterisks');
+
+  sec.querySelector('[data-view="diff"]').click();
+  assert.equal(body.hidden, false, 'Diff restores the patch view');
+  assert.equal(prev.hidden, true, 'preview hidden again');
+});
+
+test('markdown renderer escapes HTML and drops unsafe links', async () => {
+  const evil = '# <img src=x onerror=alert(1)>\n\n[x](javascript:alert(1))\n\n<script>bad()</script>\n';
+  const { document } = await bootEnable({ changes: MULTI_CHANGES });
+  // the app fetches via the global `fetch`; swap it to serve hostile file content
+  globalThis.fetch = ((orig) => (url, opts) => String(url).includes('/file')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ path: 'CLAUDE.md', content: evil }) })
+    : orig(url, opts))(globalThis.fetch);
+  await toResults(document);
+  document.querySelector('#patch-toggle').click();
+  const sec = document.querySelector('#diff-file-0');
+  sec.querySelector('[data-view="rendered"]').click();
+  await tick();
+  const prev = sec.querySelector('.md-preview');
+  assert.equal(prev.querySelector('img'), null, 'raw HTML is escaped, not injected');
+  assert.equal(prev.querySelector('script'), null, 'no script element is created');
+  assert.equal(prev.querySelector('a'), null, 'javascript: link falls back to text');
+  assert.match(prev.textContent, /alert\(1\)/, 'the escaped text is still visible');
 });
 
 test('per-dimension rows render ghost (baseline) and current bars at distinct widths', async () => {
