@@ -145,3 +145,14 @@ test('409 already-live with liveRunId rejoins the stream instead of erroring', a
   assert.equal(w.document.querySelector('#paused-banner').hidden, true, 'no error banner over a live run');
   assert.equal(w.document.querySelector('#errored').classList.contains('active'), false);
 });
+
+// The hidden attribute only works via the UA rule `display: none`; the author
+// rule `.paused-banner { display: flex }` overrides it in real browsers (author
+// origin beats UA origin), so the banner rendered on every progress screen.
+// JSDOM does not model that cascade, so pin the explicit [hidden] guard rule
+// the same way picker-modal and diff-modal do.
+test('styles.css carries the .paused-banner[hidden] display:none guard', () => {
+  const css = readFileSync(join(here, '../apps/enable/public/styles.css'), 'utf8');
+  assert.match(css, /\.paused-banner\[hidden\]\s*\{\s*display:\s*none\s*;?\s*\}/,
+    'needs .paused-banner[hidden] { display: none; } or hidden runs never hide the banner');
+});
