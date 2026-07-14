@@ -33,6 +33,7 @@ import {
   runGenericVerifier,
 } from './phases.mjs';
 import { hasBlocking, blockingIssues } from './protocol.mjs';
+import { runShellGate } from './shell-gate.mjs';
 
 /** Normalize a protocol review into the RunnerResult verdict fields. */
 function verdict(review) {
@@ -153,6 +154,13 @@ async function verifier(ctx) {
       });
       // CONV-5: thread the review markdown path (web-UI loop source → implementer fix mode).
       return { ...verdict(review), reviewMdPath: ctx.reviewMdPath };
+    }
+    case 'shellGate': {
+      // Deterministic shell gate: no Claude spawn. Same verdict wrap + md-path
+      // threading (CONV-5) as every other verifier, so a loop rewind puts the
+      // implementer in fix mode consuming the gate's review.
+      const { review, reviewMdPath } = await runShellGate(ctx);
+      return { ...verdict(review), reviewMdPath };
     }
     default: {
       // Generic branch: a metadata-declared verifier emits the standard protocol

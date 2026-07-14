@@ -1,0 +1,15 @@
+{
+  "key": "shellGate",
+  "domain": "coding",
+  "displayName": "Validation Gate",
+  "description": "Runs the configured shell validation commands; failure blocks like a critical review.",
+  "color": "amber",
+  "icon": "shield-check",
+  "runnerType": "verifier",
+  "loopSource": true,
+  "fanOut": false,
+  "consumes": ["code"],
+  "produces": ["review"],
+  "connectsTo": ["implementer", "reviewer"],
+  "order": 9
+}

@@ -11,13 +11,13 @@ test('loadAgentRegistry returns all shipped agents (16 project + 2 workspace)', 
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
+    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'shellGate', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 18); // +1: enableClarifier (Enable app)
+  assert.equal(Object.keys(reg).length, 19); // +1: enableClarifier (Enable app); +1: shellGate (shell validation gate)
   // The two workspace agents are scope:'workspace-only'; the rest are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
-    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer']);
+    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'shellGate']);
 });
 
 test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
@@ -87,7 +87,9 @@ test('registry insertion order follows .order ascending', () => {
     'clarify', 'workspaceScanner', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'workspaceReviewer',
     'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'projectOnboarding',
     'onboardingClarifier', 'enableClarifier', 'onboardingAnalyzer', 'onboardingTests', 'onboardingEvaluator', 'onboardingCanary',
+    'shellGate',
   ]); // enableClarifier (order 8.15) sorts between onboardingClarifier (8.1) and onboardingAnalyzer (8.2)
+  // shellGate (order 9) sorts last, after onboardingCanary (8.5).
 });
 
 test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => {
@@ -110,7 +112,7 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 16); // +1: enableClarifier (Enable app)
+  assert.equal(steps.length, 17); // +1: enableClarifier (Enable app); +1: shellGate (shell validation gate)
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true });
   assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true });
   assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
@@ -119,10 +121,18 @@ test('registryToSteps appends the new agents with their display names', () => {
   assert.deepEqual(steps[9], { key: 'projectOnboarding', label: 'Project Onboarding', fanOut: true });
 });
 
+// shellGate is a deterministic, promptless verifier (src/core/shell-gate.mjs) — it
+// never spawns Claude, so it intentionally ships with no agentFile.
+const PROMPTLESS_AGENTS = new Set(['shellGate']);
+
 test('every agentFile points at an existing prompt under agents/', () => {
   const reg = loadAgentRegistry();
   const agentsDir = new URL('../agents/', import.meta.url).pathname;
   for (const m of Object.values(reg)) {
+    if (PROMPTLESS_AGENTS.has(m.key)) {
+      assert.ok(!m.agentFile, `${m.key} is promptless and must not declare an agentFile`);
+      continue;
+    }
     assert.ok(m.agentFile, `${m.key} has no agentFile`);
     assert.ok(
       existsSync(join(agentsDir, m.agentFile)),
@@ -149,7 +159,7 @@ test('exactly the verifiers are loopSources; producers are not', () => {
   const reg = loadAgentRegistry();
   const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
   // workspaceReviewer is the workspace-run review loop source (mirrors reviewer).
-  assert.deepEqual(loopSources, ['manualWebUiTesting', 'onboardingEvaluator', 'planReviewer', 'reviewer', 'workspaceReviewer']);
+  assert.deepEqual(loopSources, ['manualWebUiTesting', 'onboardingEvaluator', 'planReviewer', 'reviewer', 'shellGate', 'workspaceReviewer']);
   for (const m of Object.values(reg)) {
     if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
   }
