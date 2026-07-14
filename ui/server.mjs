@@ -38,6 +38,7 @@ import {
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { listLocalBranches, currentBranch, isValidSourceRef } from '../src/core/worktree.mjs';
+import { detectValidationCommands } from '../src/core/validate-detect.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import {
@@ -573,6 +574,11 @@ app.post('/api/run', async (req, res) => {
         ? body.featureBranch.trim() : null,
     };
 
+    // Deterministic shell validation gate (spec 2026-07-15): per-run commands,
+    // run after Implement/Review; failure sends the loop back to Implement.
+    const validateCommands = (Array.isArray(body.validateCommands) ? body.validateCommands : [])
+      .map(String).map((s) => s.trim()).filter(Boolean);
+
     let orch, entry;
 
     if (hasWorkspace) {
@@ -637,6 +643,7 @@ app.post('/api/run', async (req, res) => {
         agentsDir: AGENTS_DIR,
         workflowId,
         branch,
+        validateCommands,
         claude: { permissionMode: 'acceptEdits', mock },
       });
 
@@ -681,6 +688,7 @@ app.post('/api/run', async (req, res) => {
         agentsDir: AGENTS_DIR,
         workflowId,
         branch,
+        validateCommands,
         claude: { permissionMode: 'acceptEdits', mock },
       });
 
@@ -1215,6 +1223,14 @@ app.get('/api/branches', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// Static detection (no LLM, no process spawn) used to prefill the new-run
+// form's validation-commands textarea; detection never auto-enables the gate.
+app.get('/api/validate-detect', async (req, res) => {
+  const projectDir = typeof req.query.projectDir === 'string' ? req.query.projectDir.trim() : '';
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  res.json({ commands: await detectValidationCommands(projectDir) });
 });
 
 app.get('/api/projects', async (_req, res) => {

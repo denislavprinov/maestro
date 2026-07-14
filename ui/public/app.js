@@ -85,6 +85,7 @@ const el = {
   title: $('#title'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
+  validateCommands: $('#validateCommands'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
   markdownPane: $('#markdown-pane'),
@@ -3403,12 +3404,25 @@ function onProjectChanged() {
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
     loadConfig(path);        // (per-project history load removed — History is independent now)
     refreshBranches(path);
+    prefillValidate(path);
   } else {
     state.projectDir = '';
     // No project yet: still load the built-in models so the picker isn't empty.
     loadConfig('');
     refreshBranches('');
   }
+}
+
+// Best-effort validation-command suggestion (static detection, Task 5) for the
+// selected project. User text always wins — only fill an empty textarea, and a
+// fetch failure must never break the run-form UX.
+async function prefillValidate(projectDir) {
+  if (!el.validateCommands || el.validateCommands.value.trim()) return; // user text wins
+  try {
+    const r = await fetch(`/api/validate-detect?projectDir=${encodeURIComponent(projectDir)}`);
+    const { commands } = await r.json();
+    if (Array.isArray(commands) && commands.length) el.validateCommands.value = commands.join('\n');
+  } catch { /* prefill is best-effort */ }
 }
 
 // Seed any branch <select> with a single placeholder option. Empty value === "let
@@ -5026,6 +5040,8 @@ el.form.addEventListener('submit', async (e) => {
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
+    validateCommands: (el.validateCommands?.value || '')
+      .split('\n').map((s) => s.trim()).filter(Boolean),
   };
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
