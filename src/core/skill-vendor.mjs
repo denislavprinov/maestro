@@ -6,14 +6,18 @@
 
 /** Always-vendored known-good floor (run-config overridable). */
 export const CURATED_BASELINE = Object.freeze([
-  'graphify', 'test-driven-development', 'systematic-debugging', 'verification-before-completion',
+  'graphify', 'caveman', 'test-driven-development', 'systematic-debugging', 'verification-before-completion',
+]);
+
+/** Optional add-ons: offered at clarify (Q6) and suggested on the results screen.
+ *  Invariant (tested): subset of the allowlist, disjoint from the baseline. */
+export const OPTIONAL_CATALOG = Object.freeze([
+  'writing-plans', 'executing-plans', 'requesting-code-review',
 ]);
 
 /** Vetted allowlist the pipeline is permitted to vendor (superset of the baseline).
  *  Extend deliberately; membership — not physical location — is the gate. */
-export const CURATED_ALLOWLIST = Object.freeze([
-  ...CURATED_BASELINE, 'writing-plans', 'executing-plans', 'requesting-code-review',
-]);
+export const CURATED_ALLOWLIST = Object.freeze([...CURATED_BASELINE, ...OPTIONAL_CATALOG]);
 
 const SKILL_REF_PATTERNS = [
   /Skill\(\s*{[^}]*skill\s*:\s*['"]([a-z0-9][a-z0-9-]*)['"]/gi, // Skill({skill:'x'})
