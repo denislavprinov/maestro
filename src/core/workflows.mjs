@@ -258,6 +258,8 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   if (!tpl) throw new Error(`workflow not found: ${workflowId}`);
   const reg = registry && typeof registry === 'object' ? registry : {};
   const isWorkspace = !!(opts && opts.isWorkspace);
+  const validateCommands = (Array.isArray(opts?.validateCommands) ? opts.validateCommands : [])
+    .map(String).map((s) => s.trim()).filter(Boolean);
   const { nodes: nodeCfg, feedbacks: fbCfg } = await resolveRunConfig(projectDir, workflowId);
   // Legacy per-role config (what the Default-workflow UI writes) applies ONLY to
   // the default workflow's nodes — this is what makes its per-agent model/effort/
@@ -323,7 +325,61 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
     gate: 'hasBlocking',
   }));
 
-  return { id: tpl.id, name: tpl.name, steps, feedbacks };
+  const plan = { id: tpl.id, name: tpl.name, steps, feedbacks };
+  if (validateCommands.length) insertShellGate(plan, reg, validateCommands);
+  return plan;
+}
+
+/**
+ * Insert the deterministic shell validation gate into a resolved plan (MUTATES
+ * plan). Anchor: the first feedback edge whose `from` node is a verifier and
+ * whose target differs (the implement→review loop shape). The gate lands in its
+ * own step directly before the anchor verifier's step; `fb_gate` rewinds to the
+ * anchor's target with the same maxCycles, and both edges share loopGroup 'impl'
+ * so the dispatcher draws them from ONE cycle budget. No anchor → plan.gateSkipped
+ * (the orchestrator audits the ignored commands; the plan is otherwise untouched).
+ */
+function insertShellGate(plan, reg, commands) {
+  const nodeStep = new Map();
+  plan.steps.forEach((group, i) => group.forEach((n) => nodeStep.set(n.nodeId, i)));
+  const anchor = plan.feedbacks.find((fb) => {
+    if (fb.from === fb.to) return false;
+    const fromNode = plan.steps.flat().find((n) => n.nodeId === fb.from);
+    return fromNode?.runnerType === 'verifier';
+  });
+  if (!anchor) { plan.gateSkipped = true; return; }
+
+  const meta = reg.shellGate || {};
+  const gateNode = {
+    nodeId: 's_gate',
+    key: 'shellGate',
+    uiPhase: 'shellGate',
+    runnerType: 'verifier',
+    agentFile: null,
+    agentPrompt: '',
+    promptHints: '',
+    model: undefined,
+    effort: undefined,
+    fanOut: false,
+    tools: [],
+    loopSource: true,
+    consumes: meta.consumes || ['code'],
+    optionalConsumes: [],
+    produces: meta.produces || ['review'],
+    connectsTo: meta.connectsTo || '*',
+    commands,
+  };
+  const verifierIdx = nodeStep.get(anchor.from);
+  plan.steps.splice(verifierIdx, 0, [gateNode]);
+  anchor.loopGroup = 'impl';
+  plan.feedbacks.push({
+    id: 'fb_gate',
+    from: 's_gate',
+    to: anchor.to,
+    maxCycles: anchor.maxCycles,
+    gate: 'hasBlocking',
+    loopGroup: 'impl',
+  });
 }
 
 /**
