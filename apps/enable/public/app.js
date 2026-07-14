@@ -764,6 +764,8 @@ function renderResults(r) {
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
   resetTodoButton(gaps.map((g) => (typeof g === 'string' ? g : g.title || JSON.stringify(g))));
+  renderTools(r.tools || null);
+  renderTasksNote(r.tasks || null);
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
   refreshGraphButtons(lastProjectDir);   // graph may have been (re)built during the run
   renderStats(r._stats || (currentRunId ? liveStats() : null));
@@ -800,6 +802,50 @@ async function createTodoTasks() {
   } catch (err) {
     btn.disabled = false;
     errEl.textContent = `Could not write TODO.md: ${err.message}`;
+    errEl.hidden = false;
+  }
+}
+
+// ---------- installed / suggested tools ----------
+function renderTools(tools) {
+  const wrap = document.querySelector('#tools-wrap');
+  const installed = Array.isArray(tools?.installed) ? tools.installed : [];
+  const suggested = Array.isArray(tools?.suggested) ? tools.suggested : [];
+  wrap.hidden = installed.length === 0 && suggested.length === 0;
+  document.querySelector('#tools-installed').innerHTML = installed.map((t) =>
+    `<li class="tool-row"><code>${esc(t.name)}</code>${t.mandatory ? ' <span class="tool-badge">mandatory</span>' : ''}</li>`).join('');
+  const sWrap = document.querySelector('#suggested-wrap');
+  sWrap.hidden = suggested.length === 0;
+  document.querySelector('#vendor-error').hidden = true;
+  document.querySelector('#tools-suggested').innerHTML = suggested.map((t) =>
+    `<li class="tool-row"><code>${esc(t.name)}</code>` +
+    `${t.reason ? ` <span class="tool-reason">${esc(t.reason)}</span>` : ''}` +
+    `<button type="button" class="ghost-btn small vendor-btn" data-name="${esc(t.name)}"${lastProjectDir ? '' : ' disabled'}>Add</button></li>`).join('');
+}
+
+function renderTasksNote(tasks) {
+  const el = document.querySelector('#tasks-note');
+  const done = Number(tasks?.completed) || 0;
+  el.hidden = done === 0;
+  el.textContent = done ? `${done} task${done === 1 ? '' : 's'} already done during enablement.` : '';
+}
+
+async function vendorSkill(btn) {
+  const errEl = document.querySelector('#vendor-error');
+  errEl.hidden = true;
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  try {
+    const res = await fetch('/api/enable/vendor', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: lastProjectDir, name: btn.dataset.name }) });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    btn.textContent = body.already ? '✓ Already added' : '✓ Added';
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Add';
+    errEl.textContent = `Could not add ${btn.dataset.name}: ${err.message}`;
     errEl.hidden = false;
   }
 }
@@ -1178,7 +1224,7 @@ async function showHistoryDetail(id) {
     estLow: est?.low, estHigh: est?.high,
     tokens: null,                            // not persisted for past runs
   };
-  renderResults({ ...(d.readiness || {}), branch: e.branch ?? null, _stats });
+  renderResults({ ...(d.readiness || {}), tools: d.tools ?? null, tasks: d.tasks ?? null, branch: e.branch ?? null, _stats });
   renderChanges(d.changes);
 }
 
@@ -1236,6 +1282,10 @@ function init() {
 
   document.querySelector('#browse-btn').addEventListener('click', openPicker);
   document.querySelector('#todo-btn').addEventListener('click', createTodoTasks);
+  document.querySelector('#tools-suggested').addEventListener('click', (e) => {
+    const btn = e.target.closest('.vendor-btn');
+    if (btn && !btn.disabled) vendorSkill(btn);
+  });
   const picker = document.querySelector('#picker-modal');
   picker.addEventListener('click', (e) => {
     if (e.target.closest('[data-pclose]')) { closePicker(); return; }
