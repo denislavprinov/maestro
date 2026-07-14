@@ -90,6 +90,27 @@ export function readFinalReadiness(pipelineDir) {
   };
 }
 
+// tools.json / tasks-report.json are custom pipeline-dir channels; a loop rewind
+// writes a -cycleN suffixed sibling (channels.mjs default branch), so "latest
+// cycle wins" here. null when the run predates the channel (old runs).
+function readLatestCycleJson(pipelineDir, stem) {
+  let latest = readJsonSafe(join(pipelineDir, `${stem}.json`));
+  for (let c = 2; ; c++) {
+    const next = readJsonSafe(join(pipelineDir, `${stem}-cycle${c}.json`));
+    if (!next) break;
+    latest = next;
+  }
+  return latest;
+}
+
+export function readToolsReport(pipelineDir) {
+  return readLatestCycleJson(pipelineDir, 'tools');
+}
+
+export function readTasksReport(pipelineDir) {
+  return readLatestCycleJson(pipelineDir, 'tasks-report');
+}
+
 // phase event identifies a node by nodeId (workflow node id) primarily; the phase
 // string (uiPhase||key) is a defensive fallback for the legacy _phase path.
 function matchNode(ev, nodeId, key) {
@@ -225,6 +246,8 @@ function wireOnboardingRun(orch, { answers = {}, interactive = false, kick, repl
         delta: readiness?.delta ?? null,
         dimensions: readiness?.dimensions ?? {},
         gaps: readiness?.gaps ?? [],
+        tools: dir ? readToolsReport(dir) : null,       // installed/suggested tools (null on old runs)
+        tasks: dir ? readTasksReport(dir) : null,       // executor's gap-task report (null when skipped)
         branch: feature,                     // results screen renders this
       });
     }
