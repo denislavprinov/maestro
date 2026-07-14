@@ -5,5 +5,5 @@
   "agentFile": "maestro-onboarding-evaluator.md",
   "runnerType": "verifier", "loopSource": true, "fanOut": true,
   "consumes": ["code", "graph", "clarify"], "produces": ["review", "readiness"],
-  "connectsTo": ["onboardingCanary"], "order": 8.4
+  "connectsTo": ["onboardingExecutor", "onboardingCanary"], "order": 8.4
 }

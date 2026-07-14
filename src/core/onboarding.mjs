@@ -23,13 +23,21 @@ export const ENABLE_WORKFLOW = Object.freeze({
     [{ id: 's_infra',   key: 'projectOnboarding' }],  // reused
     [{ id: 's_tests',   key: 'onboardingTests' }],    // reused
     [{ id: 's_eval',    key: 'onboardingEvaluator' }],// reused
+    [{ id: 's_execute', key: 'onboardingExecutor' }], // opt-in gap executor (self-no-ops off toggle)
     [{ id: 's_canary',  key: 'onboardingCanary' }],   // reused
   ],
-  feedbacks: [{ id: 'fb_eval', from: 's_eval', to: 's_infra' }], // resolveWorkflow adds gate:'hasBlocking'
+  feedbacks: [
+    { id: 'fb_eval', from: 's_eval', to: 's_infra' },   // resolveWorkflow adds gate:'hasBlocking'
+    // fb_exec: the executor's single "Re-score required" major issue rewinds to the
+    // evaluator for one honest re-score; the executor's cycle guard then emits a
+    // clean review so the loop terminates on the second pass.
+    { id: 'fb_exec', from: 's_execute', to: 's_eval' },
+  ],
 });
 
 export const ENABLE_QUESTION_IDS = Object.freeze([
   'testTier', 'vendoringDepth', 'multiToolTargets', 'canary', 'scopeConstraints',
+  'optionalTools', 'executeTasks',
 ]);
 
 // dimension key -> friendly label (renderer + tests share this)

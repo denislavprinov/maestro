@@ -2,7 +2,7 @@
   "key": "enableClarifier",
   "domain": "coding",
   "displayName": "Enable Set-up",
-  "description": "Deterministic clarifier: always emits the 5 fixed Enable set-up questions with stable ids.",
+  "description": "Deterministic clarifier: always emits the 7 fixed Enable set-up questions with stable ids.",
   "color": "red",
   "icon": "<path d=\"M4 8h8M16 8h4M4 16h4M12 16h8\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"14\" cy=\"8\" r=\"2\" fill=\"none\"/><circle cx=\"10\" cy=\"16\" r=\"2\" fill=\"none\"/>",
   "agentFile": "maestro-enable-clarifier.md",

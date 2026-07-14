@@ -34,8 +34,8 @@ test('runOnboarding seeds wf_enable idempotently and pins the run to it', async 
   assert.equal((await again.done).status, 'done');
 });
 
-// 2. drift guard — prompt embeds EXACTLY the 5 fixed ids in its first json block
-test('enableClarifier prompt declares exactly the 5 fixed question ids', () => {
+// 2. drift guard — prompt embeds EXACTLY the 7 fixed ids in its first json block
+test('enableClarifier prompt declares exactly the 7 fixed question ids', () => {
   const md = readFileSync(fileURLToPath(new URL('../agents/maestro-enable-clarifier.md', import.meta.url)), 'utf8');
   const block = md.match(/```json\s*([\s\S]*?)```/);
   assert.ok(block, 'prompt must embed a json question block');
