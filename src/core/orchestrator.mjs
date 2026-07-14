@@ -180,6 +180,9 @@ class Orchestrator extends EventEmitter {
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
+    // Deterministic shell validation gate (spec 2026-07-15): per-run commands.
+    this.validateCommands = (Array.isArray(this.opts.validateCommands) ? this.opts.validateCommands : [])
+      .map(String).map((s) => s.trim()).filter(Boolean);
     // Clarify needs orchestrator state (this._ask / this._writeClarifyAnswers), so it is a
     // bound runner rather than a pure runners.mjs entry. Put it first so opts.runners may
     // still override it in tests.
@@ -350,6 +353,7 @@ class Orchestrator extends EventEmitter {
       // pass isWorkspace:false, so the resolved plan is byte-identical to today.
       const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry, undefined, {
         isWorkspace: this.isWorkspace,
+        validateCommands: this.validateCommands,
       });
       // Workspace fan-out forcing (§5.5, C4): the ONLY in-orchestrator topology change a
       // workspace run makes — force fanOut=true on the eligible nodes so they fan out
@@ -458,6 +462,10 @@ class Orchestrator extends EventEmitter {
       this._startHeartbeat(); // claim ownership + begin liveness heartbeat (crash detection)
       this._artifact('pipeline', this.pipeline.dir);
       await appendAudit(this.pipeline.dir, `Pipeline created (id ${this.pipeline.id}).`);
+      if (plan.gateSkipped) {
+        await appendAudit(this.pipeline.dir,
+          `Validation gate: no implement/review loop in workflow "${this.workflowId}"; --validate commands ignored.`);
+      }
       if (tools.tool) {
         await appendAudit(
           this.pipeline.dir,
@@ -685,6 +693,7 @@ class Orchestrator extends EventEmitter {
       if (!plan) {
         plan = await resolveWorkflow(this.projectDir, this.workflowId, this.registry, undefined, {
           isWorkspace: this.isWorkspace,
+          validateCommands: this.validateCommands,
         });
       }
 
@@ -1110,7 +1119,8 @@ class Orchestrator extends EventEmitter {
    * forward. When a loop's cycles are exhausted, gate the user (continue/stop)
    * exactly as the legacy _reviewLoop did.
    *
-   * Per-loop state lives in `loopState[fb.id] = { cycle }`; the per-step run cycle
+   * Per-loop state lives in `loopState[fb.loopGroup || fb.id] = { cycle }` (edges
+   * sharing a loopGroup draw from one cycle budget); the per-step run cycle
    * passed to nodes is bumped while a loop is replaying through that step (so a
    * node's artifacts/keys are unique per re-run), defaulting to 1.
    * @param {object} plan ExecutablePlan
@@ -1212,7 +1222,7 @@ class Orchestrator extends EventEmitter {
           const g = pendingGate;
           pendingGate = null;
           if (fb) {
-            const st = (loopState[fb.id] ||= { cycle: g.cycle || 1 });
+            const st = (loopState[fb.loopGroup || fb.id] ||= { cycle: g.cycle || 1 });
             this._pauseGate = { ...g };
             const decision = await this._gate(fb.id, g.cycle, g.issues || []);
             this._pauseGate = null;
@@ -1241,7 +1251,7 @@ class Orchestrator extends EventEmitter {
         for (const fb of loops) {
           const fired = this._loopFired(fb, results); // CONV-3: gate off the loop's `from` node
           if (!fired) continue;
-          const st = (loopState[fb.id] ||= { cycle: 1 });
+          const st = (loopState[fb.loopGroup || fb.id] ||= { cycle: 1 });
           if (st.cycle < fb.maxCycles) {
             st.cycle += 1;
             for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle; // re-runs bump cycle
