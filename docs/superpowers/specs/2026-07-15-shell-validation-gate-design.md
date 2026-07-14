@@ -86,7 +86,9 @@ New runner branch in `verifier()` (runners.mjs) dispatching on key `shellGate`
   implementer, which binds the review path and enters FIX mode. The implementer
   prompt requires zero changes.
 - Review artifacts named `shellGate-review-cycleN.{md,json}` in the pipeline
-  store; reviews table `kind` enum gains `'gate'` (ARCHITECTURE §5.3 extension).
+  dir (custom-verifier default from `channels.allocate`); the reviews table
+  `kind` is an open set, so the verdict persists as `shellGate-review` with no
+  schema change (ARCHITECTURE §5.3 note only).
 
 ## 4. Cycle-cap sharing
 
