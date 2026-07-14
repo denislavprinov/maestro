@@ -35,7 +35,31 @@ test('resolveSkill: bundle, global, project, and miss in priority order', async 
   const hit = resolveSkill('imagegen', ctx);
   assert.equal(hit.source, 'bundle');
   assert.equal(hit.path, join(repoRoot, 'skills', 'imagegen'));
-  assert.equal(hit.searched.length, 3);
+  assert.equal(hit.searched.length, 4);
+});
+
+test('resolveSkill: plugin-cache source, lowest priority', async () => {
+  const repoRoot = await tmp();
+  const homeDir = await tmp();
+  const projectDir = await tmp();
+  const ctx = { repoRoot, homeDir, projectDir };
+
+  // plugin cache layout: <home>/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/<name>/
+  await seedSkill(homeDir, '.claude/plugins/cache/mp/caveman/abc123/skills', 'caveman');
+  const hit = resolveSkill('caveman', ctx);
+  assert.equal(hit.source, 'plugin');
+  assert.equal(hit.path, join(homeDir, '.claude/plugins/cache/mp/caveman/abc123/skills/caveman'));
+
+  // project shadows plugin
+  await seedSkill(projectDir, '.claude/skills', 'caveman');
+  assert.equal(resolveSkill('caveman', ctx).source, 'project');
+});
+
+test('resolveSkill: no plugin cache dir at all is a clean miss', async () => {
+  const ctx = { repoRoot: await tmp(), homeDir: await tmp(), projectDir: await tmp() };
+  const r = resolveSkill('nothere', ctx);
+  assert.equal(r.source, null);
+  assert.equal(r.searched.length, 4);
 });
 
 test('collectRequiredSkills: union across plan nodes, deduped, with attribution', () => {

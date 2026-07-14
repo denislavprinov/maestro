@@ -46,3 +46,19 @@ test('injectSkills skips global/project sources (nothing to copy)', async () => 
   assert.deepEqual(injected, []); // global already on scan path
   await assert.rejects(access(join(wt, '.claude', 'skills', 'imagegen'))); // nothing copied
 });
+
+test('injectSkills copies a plugin-cache skill into the worktree (not on the scan path)', async () => {
+  const repoRoot = await tmp();
+  const projectDir = await tmp();
+  const homeDir = await tmp();
+  // seed ONLY a plugin-cache skill
+  const pluginSkill = join(homeDir, '.claude', 'plugins', 'cache', 'mp', 'caveman', 'v1', 'skills', 'caveman');
+  await mkdir(pluginSkill, { recursive: true });
+  await writeFile(join(pluginSkill, 'SKILL.md'), '# caveman\n');
+  const resolved = validateSkills([{ skill: 'caveman', requiredBy: ['x'] }], { repoRoot, projectDir, homeDir });
+  assert.equal(resolved.get('caveman').source, 'plugin');
+  const wt = await tmp();
+  const injected = await injectSkills(resolved, { worktrees: [wt] });
+  assert.deepEqual(injected, ['caveman']);
+  await assert.doesNotReject(access(join(wt, '.claude', 'skills', 'caveman', 'SKILL.md')));
+});
