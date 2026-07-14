@@ -1209,12 +1209,27 @@ async function showHistoryDetail(id) {
     if (!res.ok) return;
     d = await res.json();
   } catch { return; }
+  const e = d.entry || {};
+  // Pipeline is streaming right now (started in another tab/browser): join the
+  // live run — the server replays its frame buffer on connect, rebuilding the
+  // progress view — instead of a disk view whose readiness is still unwritten
+  // (that painted a bogus "Done" screen with empty bars mid-run).
+  if (e.liveRunId) {
+    markHistoryActive(id);
+    currentPipelineId = id;
+    lastProjectDir = e.projectDir || '';
+    resetProgress();
+    show('progress');
+    startLiveMeter();
+    setPauseUi('running');
+    connectRun(e.liveRunId);                 // closes any previous socket itself
+    return;
+  }
   if (ws) { try { ws.close(); } catch {} ws = null; }
   stopLiveMeter();
   currentRunId = null;                       // disk view, no live socket
   markHistoryActive(id);
   currentHistoryId = id;                      // .md preview reads from this run's dir
-  const e = d.entry || {};
   lastProjectDir = e.projectDir || e.projectName || '';   // for the graph button on this view
   const est = e.estimatedCost;
   const realCost = e.totalCostUsd > 0 ? e.totalCostUsd : null;

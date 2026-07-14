@@ -155,3 +155,19 @@ test('POST /api/enable/resume: 409 on a joinable live entry carries liveRunId', 
   assert.equal(r.json.liveRunId, 'r-join');
   runs.delete('r-join');
 });
+
+test('GET /api/enable/history: live pipeline entries carry liveRunId; others do not', async () => {
+  const proj = freshRepo();
+  const { id } = await seedPipeline(proj, { title: 'Enable project for AI', status: 'running' });
+  const { id: idDone } = await seedPipeline(proj, { title: 'Enable project for AI', status: 'done' });
+  // joinable live handle for `id` (buffer + events, non-terminal status)
+  runs.set('r-hist-live', { status: 'running', pipelineId: id, buffer: [], events: { on() {} } });
+  try {
+    const hist = await (await fetch(`http://${base}/api/enable/history`)).json();
+    const live = hist.runs.find((x) => x.id === id);
+    const done = hist.runs.find((x) => x.id === idDone);
+    assert.equal(live.liveRunId, 'r-hist-live', 'running pipeline exposes its joinable runId');
+    assert.equal(live.status, 'running', 'live handle shields the row from stale-running reconcile');
+    assert.ok(!done.liveRunId, 'finished pipeline has no liveRunId');
+  } finally { runs.delete('r-hist-live'); }
+});

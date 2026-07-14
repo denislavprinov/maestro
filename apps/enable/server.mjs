@@ -388,6 +388,18 @@ async function enableHistory() {
       liveIds: [...runs.values()].map((r) => r.pipelineId ?? r.orch?.getState?.()?.id).filter(Boolean),
     });
   } catch {}
+  // pipelineId -> joinable live runId, so a second client can rejoin the
+  // stream that is already driving a pipeline instead of a mid-run disk view.
+  // Same joinability rule as /resume's live-guard: buffer + events present,
+  // status not terminal (claim placeholders and finished entries don't count).
+  const liveByPipeline = new Map();
+  for (const [id, e] of runs) {
+    const pid = e.pipelineId ?? e.orch?.getState?.()?.id;
+    if (pid && e.buffer && e.events &&
+        !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+      liveByPipeline.set(pid, id);
+    }
+  }
   const all = await listAllPipelines();
   return all.filter((p) => p.title === ENABLE_TITLE)
     .map((p) => {
@@ -397,7 +409,7 @@ async function enableHistory() {
         try { estimatedCost = estimateCost(probeRepoSize(p.projectDir)); } catch {}
       }
       const resumable = (p.status === 'paused' || p.status === 'interrupted') && !!p.hasResumePoint;
-      return { ...p, readiness, estimatedCost, resumable };
+      return { ...p, readiness, estimatedCost, resumable, liveRunId: liveByPipeline.get(p.id) ?? null };
     });
 }
 

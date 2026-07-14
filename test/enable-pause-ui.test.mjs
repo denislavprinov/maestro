@@ -156,3 +156,29 @@ test('styles.css carries the .paused-banner[hidden] display:none guard', () => {
   assert.match(css, /\.paused-banner\[hidden\]\s*\{\s*display:\s*none\s*;?\s*\}/,
     'needs .paused-banner[hidden] { display: none; } or hidden runs never hide the banner');
 });
+
+// Clicking a RUNNING pipeline in the nav must join its live stream (progress
+// screen + WS on the live runId), not paint the disk results view — readiness
+// is unwritten mid-run, so that view showed a bogus "Done" with empty bars.
+test('clicking a running history entry joins the live stream instead of the Done view', async () => {
+  const mk = { id: 'pl-live', dir: '/s/pl-live', title: 'Enable project for AI', status: 'running',
+    resumable: false, startedAt: '2026-07-15T10:00:00Z', projectName: 'p-live', readiness: null };
+  const { window: w } = await boot({
+    history: [mk],
+    onFetch: (url) => {
+      if (url.includes('/api/enable/history/pl-live')) {
+        return { ok: true, status: 200, json: async () => ({
+          entry: { ...mk, projectDir: '/x/p-live', liveRunId: 'run-live-9' },
+          readiness: null, changes: { summary: null, newFiles: [], changedFiles: [], nitpicks: [], patch: null },
+        }) };
+      }
+      return null;
+    },
+  });
+  w.document.querySelector('#history-list .hist-btn').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(FakeWS.last && FakeWS.last.url.includes('runId=run-live-9'), 'joined the live runId');
+  assert.equal(w.document.querySelector('#progress').classList.contains('active'), true, 'progress screen shown');
+  assert.equal(w.document.querySelector('#results').classList.contains('active'), false, 'no fake Done view');
+  assert.equal(w.document.querySelector('#pause-btn').hidden, false, 'live join offers Pause');
+});
