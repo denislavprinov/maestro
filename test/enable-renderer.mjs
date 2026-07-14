@@ -200,7 +200,7 @@ test('home lists past runs; clicking one opens the results view from disk', asyn
   const item = document.querySelector('#history-list li .hist-btn');
   assert.ok(item, 'one history row button (keyboard reachable)');
   assert.match(item.textContent, /tinytool/);
-  assert.match(item.textContent, /91/);
+  assert.match(item.textContent, /Done/, 'row shows the run status, not the score');
 
   item.click();
   await new Promise((r) => setTimeout(r, 0));

@@ -168,7 +168,7 @@ async function openGraph(name, returnTo) {
     report.innerHTML = '<p class="hint-line">Loading report…</p>';
     try {
       const md = await (await fetch(`/api/enable/graph/report?project=${encodeURIComponent(name)}`)).text();
-      report.innerHTML = renderMarkdown(md);
+      report.innerHTML = renderGraphMarkdown(md);
     } catch { report.innerHTML = '<p class="hint-line">Could not load the report.</p>'; }
   } else {
     report.innerHTML = '<p class="hint-line">No <code>GRAPH_REPORT.md</code> — run <code>/graphify</code> to generate one.</p>';
@@ -179,7 +179,7 @@ async function openGraph(name, returnTo) {
 // Tiny markdown renderer for GRAPH_REPORT.md (headings, bullet lists, hr,
 // paragraphs, inline code / bold / links). Source is escaped first so report
 // content can never inject markup.
-function renderMarkdown(md) {
+function renderGraphMarkdown(md) {
   const inline = (s) => esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
