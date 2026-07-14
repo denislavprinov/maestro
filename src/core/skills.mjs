@@ -9,7 +9,7 @@
 //   - resolveSkill()          pure: where does a skill live? (bundle|global|project|plugin|none)
 //   - collectRequiredSkills() pure: union of requiresSkills across the plan's agents
 //   - validateSkills()        gate: throw a structured abort if any are unresolvable
-//   - injectSkills()          side-effect: copy bundle-sourced skills into worktree(s)
+//   - injectSkills()          side-effect: copy bundle- and plugin-sourced skills into worktree(s)
 
 import { existsSync, readdirSync } from 'node:fs';
 import { cp } from 'node:fs/promises';

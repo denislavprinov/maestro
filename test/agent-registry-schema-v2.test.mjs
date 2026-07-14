@@ -95,9 +95,9 @@ test('the 17 pre-Task-6 shipped sidecars are unchanged by v2 (backward compatibi
   // is unchanged and still carries none.
   const CHANNEL_DEF_AGENTS = new Set(['onboardingExecutor', 'projectOnboarding']);
   for (const m of Object.values(reg)) {
+    assert.equal(m.promptHints, '');
     if (CHANNEL_DEF_AGENTS.has(m.key)) continue;
     assert.deepEqual(m.channelDefs, [], `${m.key} has no channelDefs`);
-    assert.equal(m.promptHints, '');
   }
   assert.deepEqual(reg.onboardingExecutor.channelDefs, [{ id: 'tasks', kind: 'json', filename: 'tasks-report.json' }]);
   assert.deepEqual(reg.projectOnboarding.channelDefs, [{ id: 'tools', kind: 'json', filename: 'tools.json' }]);
