@@ -5,6 +5,7 @@ import {
   DIMENSION_KEYS,
   normalizeReadiness,
   normalizeGraphSummary,
+  normalizeToolsReport,
 } from '../src/core/onboarding-contracts.mjs';
 import { DIMENSION_LABELS } from '../src/core/onboarding.mjs';
 
@@ -151,4 +152,55 @@ test('normalizeGraphSummary: non-boolean degraded coerced to false + warn', () =
 test('normalizeGraphSummary: fatal on non-object input', () => {
   const res = normalizeGraphSummary('nope');
   assert.equal(res.ok, false);
+});
+
+// ── normalizeToolsReport ────────────────────────────────────────────────────
+
+test('normalizeToolsReport: canonical object passes clean', () => {
+  const input = {
+    installed: [{ name: 'graphify', source: 'global', mandatory: true },
+                { name: 'writing-plans', source: 'bundle', mandatory: false }],
+    skipped: [{ name: 'my-private-thing', reason: 'not on allowlist' }],
+    suggested: [{ name: 'executing-plans', reason: 'pairs with writing-plans', source: 'catalog' }],
+  };
+  const res = normalizeToolsReport(input);
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.warnings, []);
+  assert.deepEqual(res.value, input);
+});
+
+test('normalizeToolsReport: not an object is fatal', () => {
+  assert.equal(normalizeToolsReport([]).ok, false);
+  assert.equal(normalizeToolsReport('x').ok, false);
+});
+
+test('normalizeToolsReport: missing arrays default to [] with warnings', () => {
+  const res = normalizeToolsReport({});
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.value, { installed: [], skipped: [], suggested: [] });
+  assert.equal(res.warnings.length, 3);
+});
+
+test('normalizeToolsReport: mandatory is recomputed from the curated baseline', () => {
+  const res = normalizeToolsReport({ installed: [
+    { name: 'caveman', source: 'plugin', mandatory: false },      // lies: caveman IS baseline
+    { name: 'writing-plans', source: 'global', mandatory: true }, // lies: it is not
+  ], skipped: [], suggested: [] });
+  assert.equal(res.ok, true);
+  assert.equal(res.value.installed[0].mandatory, true);
+  assert.equal(res.value.installed[1].mandatory, false);
+  assert.ok(res.warnings.length >= 2);
+});
+
+test('normalizeToolsReport: bad entries dropped, unknown source coerced, installed names pruned from suggested', () => {
+  const res = normalizeToolsReport({
+    installed: [{ name: 'graphify', source: 'weird' }, { source: 'global' }, 'junk'],
+    skipped: [{ name: 'x' }],
+    suggested: [{ name: 'graphify', reason: 'dupe' }, { name: 'executing-plans', source: 'nope' }],
+  });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.value.installed, [{ name: 'graphify', source: 'unknown', mandatory: true }]);
+  assert.deepEqual(res.value.skipped, [{ name: 'x', reason: '' }]);
+  assert.deepEqual(res.value.suggested, [{ name: 'executing-plans', reason: '', source: 'catalog' }]);
+  assert.ok(res.warnings.length >= 4);
 });

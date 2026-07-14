@@ -8,6 +8,8 @@
 //   ok:false   -> fatal (unusable); value is absent.
 //   ok:true    -> value is the normalized object; warnings describes every repair.
 
+import { CURATED_BASELINE } from './skill-vendor.mjs';
+
 /** The 9 readiness dimension keys — single source of truth, kept in parity
  *  with DIMENSION_LABELS (src/core/onboarding.mjs) by a dedicated test. */
 export const DIMENSION_KEYS = Object.freeze([
@@ -213,4 +215,76 @@ export function normalizeGraphSummary(raw) {
   }
 
   return { ok: true, value, warnings };
+}
+
+const TOOL_SOURCES = new Set(['bundle', 'global', 'project', 'plugin', 'unknown']);
+const SUGGESTION_SOURCES = new Set(['catalog', 'analyzer']);
+
+/** Normalize one {name, ...} entry array; entries without a usable name are dropped. */
+function namedEntries(raw, warnings, label, shape) {
+  if (!Array.isArray(raw)) {
+    warnings.push(`${label}: missing or not an array — defaulted to []`);
+    return [];
+  }
+  const out = [];
+  for (const e of raw) {
+    if (!isPlainObject(e) || typeof e.name !== 'string' || !e.name.trim()) {
+      warnings.push(`${label}: dropped entry without a usable name (${JSON.stringify(e)})`);
+      continue;
+    }
+    out.push(shape(e, e.name.trim()));
+  }
+  return out;
+}
+
+/**
+ * Normalize a tools.json object (infra-gen's installed/skipped/suggested tool report).
+ * Fatal: not a plain object. `mandatory` is DERIVED from CURATED_BASELINE membership
+ * (always recomputed, mirroring readiness.delta); suggested entries already installed
+ * are pruned.
+ */
+export function normalizeToolsReport(raw) {
+  const warnings = [];
+  if (!isPlainObject(raw)) {
+    return { ok: false, warnings: ['tools: not a plain object'] };
+  }
+  const baseline = new Set(CURATED_BASELINE);
+
+  const installed = namedEntries(raw.installed, warnings, 'tools.installed', (e, name) => {
+    let source = typeof e.source === 'string' && TOOL_SOURCES.has(e.source) ? e.source : 'unknown';
+    if (source === 'unknown' && e.source !== 'unknown') {
+      warnings.push(`tools.installed.${name}.source: not a known source (${JSON.stringify(e.source)}) — defaulted to "unknown"`);
+    }
+    const mandatory = baseline.has(name);
+    if (typeof e.mandatory === 'boolean' && e.mandatory !== mandatory) {
+      warnings.push(`tools.installed.${name}.mandatory: stored ${e.mandatory} did not match the curated baseline — recomputed value used`);
+    }
+    return { name, source, mandatory };
+  });
+
+  const skipped = namedEntries(raw.skipped, warnings, 'tools.skipped', (e, name) => ({
+    name, reason: e.reason != null ? String(e.reason) : '',
+  }));
+
+  const installedNames = new Set(installed.map((t) => t.name));
+  const suggested = namedEntries(raw.suggested, warnings, 'tools.suggested', (e, name) => {
+    let source = typeof e.source === 'string' && SUGGESTION_SOURCES.has(e.source) ? e.source : 'catalog';
+    if (source === 'catalog' && e.source != null && e.source !== 'catalog') {
+      warnings.push(`tools.suggested.${name}.source: not catalog|analyzer (${JSON.stringify(e.source)}) — defaulted to "catalog"`);
+    }
+    return { name, reason: e.reason != null ? String(e.reason) : '', source };
+  }).filter((s) => {
+    if (installedNames.has(s.name)) {
+      warnings.push(`tools.suggested.${s.name}: already installed — dropped`);
+      return false;
+    }
+    return true;
+  });
+
+  const knownKeys = new Set(['installed', 'skipped', 'suggested']);
+  for (const key of Object.keys(raw)) {
+    if (!knownKeys.has(key)) warnings.push(`tools.${key}: unknown top-level field — dropped`);
+  }
+
+  return { ok: true, value: { installed, skipped, suggested }, warnings };
 }
