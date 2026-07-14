@@ -18,7 +18,7 @@ import { runClaude } from './claude-runner.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderAttachmentsBlock } from './channels.mjs';
-import { normalizeReadiness, normalizeGraphSummary } from './onboarding-contracts.mjs';
+import { normalizeReadiness, normalizeGraphSummary, normalizeToolsReport, normalizeTasksReport } from './onboarding-contracts.mjs';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
@@ -963,11 +963,13 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
 const CONTRACT_VALIDATORS = {
   readiness: { pathOf: (outputs) => outputs.readiness?.jsonPath, normalize: normalizeReadiness },
   graph: { pathOf: (outputs) => outputs.graph?.path, normalize: normalizeGraphSummary },
+  tools: { pathOf: (outputs) => outputs.tools?.path, normalize: normalizeToolsReport },
+  tasks: { pathOf: (outputs) => outputs.tasks?.path, normalize: normalizeTasksReport },
 };
 
 /**
  * Schema-validate (repair + warn; hard-fail only when unusable) every declared
- * output channel that has a contract validator (readiness, graph). Called at
+ * output channel that has a contract validator (readiness, graph, tools, tasks). Called at
  * the end of runGenericProducer/runGenericVerifier, after the agent has run.
  *   - file missing            -> console.warn only (null-tolerant readers stay so).
  *   - unparseable/fatal-invalid -> throws, surfaces through the recoverable-error gate.
