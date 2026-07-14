@@ -514,6 +514,11 @@ app.post('/api/enable/vendor', (req, res) => {
   catch { return res.status(400).json({ error: `not a directory: ${dir}` }); }
 
   const target = path.join(dir, '.claude', 'skills', name);
+  const globalClaude = path.join(os.homedir(), '.claude');
+  const resolvedTarget = path.resolve(target);
+  if (resolvedTarget === globalClaude || resolvedTarget.startsWith(globalClaude + path.sep)) {
+    return res.status(400).json({ error: 'refusing to vendor into the user-global ~/.claude' });
+  }
   if (existsSync(path.join(target, 'SKILL.md'))) return res.json({ ok: true, name, already: true });
   const r = resolveSkill(name, { repoRoot: REPO_ROOT, projectDir: dir, homeDir: SKILLS_HOME });
   if (!r.source) return res.status(404).json({ error: `skill "${name}" was not found on this machine` });

@@ -1,7 +1,7 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -64,4 +64,10 @@ test('vendor: happy path copies a global-resolved skill and appends VENDORED.md'
 test('vendor: allowlisted but unresolvable on this machine -> 404', async () => {
   const { status } = await post('/api/enable/vendor', { dir: freshRepo(), name: 'requesting-code-review' });
   assert.equal(status, 404);
+});
+
+test('vendor: dir resolving into the user-global ~/.claude is rejected 400 (never copied)', async () => {
+  const { status, json } = await post('/api/enable/vendor', { dir: homedir(), name: 'writing-plans' });
+  assert.equal(status, 400);
+  assert.match(json.error, /~?\.claude|user-global|global/);
 });
