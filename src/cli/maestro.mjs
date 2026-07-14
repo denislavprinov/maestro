@@ -16,6 +16,7 @@ import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
 import { createOrchestrator } from '../core/orchestrator.mjs';
+import { detectValidationCommands } from '../core/validate-detect.mjs';
 import {
   addProject,
   listProjects,
@@ -57,6 +58,7 @@ function parseArgs(argv) {
     file: null,
     title: null,
     extras: [],
+    validate: [],
     ui: false,
     model: undefined,
     permissionMode: undefined,
@@ -75,6 +77,7 @@ function parseArgs(argv) {
     '--file',
     '--title',
     '--extras',
+    '--validate',
     '--model',
     '--permission-mode',
     '--workflow',
@@ -88,6 +91,7 @@ function parseArgs(argv) {
     '--file': 'file',
     '--title': 'title',
     '--extras': 'extras',
+    '--validate': 'validate',
     '--model': 'model',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
@@ -134,6 +138,10 @@ function parseArgs(argv) {
           const p = part.trim();
           if (p) out.extras.push(p);
         }
+      } else if (key === 'validate') {
+        // Repeatable; NOT comma-split (shell commands may legitimately contain commas).
+        const v = String(value).trim();
+        if (v) out.validate.push(v);
       } else {
         out[key] = value;
       }
@@ -175,6 +183,8 @@ Options:
   --title <text>           Human-readable run title
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
+  --validate <cmd>         Shell validation command run between implement and review;
+                           repeatable. Failure re-enters the implementer in fix mode.
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode (default acceptEdits)
   --workflow <id>          Saved workflow id to run (default: wf_default)
@@ -661,10 +671,21 @@ async function main() {
       mock: flags.mock,
     },
     auto: flags.auto,
+    validateCommands: flags.validate || [],
   });
 
   out(c('bold', `orchestrator — project: ${projectDir}`));
   if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));
+
+  // No --validate given: surface a detected suggestion as a one-line, informational
+  // hint. Detection never enables the gate on its own — the user's own --validate
+  // input stays authoritative.
+  if (!flags.validate?.length) {
+    const suggested = await detectValidationCommands(projectDir);
+    if (suggested.length) {
+      out(c('dim', `hint: detected ${suggested.map((s) => `"${s}"`).join(', ')} — pass --validate "<cmd>" to enable the validation gate`));
+    }
+  }
 
   return attachAndDrive(orch, flags, () => orch.run());
 }
