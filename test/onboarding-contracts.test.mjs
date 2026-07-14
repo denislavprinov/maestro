@@ -6,6 +6,7 @@ import {
   normalizeReadiness,
   normalizeGraphSummary,
   normalizeToolsReport,
+  normalizeTasksReport,
 } from '../src/core/onboarding-contracts.mjs';
 import { DIMENSION_LABELS } from '../src/core/onboarding.mjs';
 
@@ -203,4 +204,47 @@ test('normalizeToolsReport: bad entries dropped, unknown source coerced, install
   assert.deepEqual(res.value.skipped, [{ name: 'x', reason: '' }]);
   assert.deepEqual(res.value.suggested, [{ name: 'executing-plans', reason: '', source: 'catalog' }]);
   assert.ok(res.warnings.length >= 4);
+});
+
+// ── normalizeTasksReport ────────────────────────────────────────────────────
+
+test('normalizeTasksReport: canonical object passes clean, counts intact', () => {
+  const input = {
+    attempted: [
+      { gap: 'Add smoke test for CLI entry', status: 'completed', notes: 'test added + passing' },
+      { gap: 'Document release flow', status: 'skipped', notes: 'needs a human decision' },
+    ],
+    completed: 1, skipped: 1, failed: 0,
+  };
+  const res = normalizeTasksReport(input);
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.warnings, []);
+  assert.deepEqual(res.value, input);
+});
+
+test('normalizeTasksReport: not an object is fatal', () => {
+  assert.equal(normalizeTasksReport(null).ok, false);
+  assert.equal(normalizeTasksReport([1]).ok, false);
+});
+
+test('normalizeTasksReport: counts are recomputed from attempted, mismatch warns', () => {
+  const res = normalizeTasksReport({
+    attempted: [{ gap: 'x', status: 'completed' }, { gap: 'y', status: 'failed' }],
+    completed: 9, skipped: 9, failed: 9,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.value.completed, 1);
+  assert.equal(res.value.skipped, 0);
+  assert.equal(res.value.failed, 1);
+  assert.ok(res.warnings.some((w) => /completed/.test(w)));
+});
+
+test('normalizeTasksReport: bad status coerced to skipped, gapless entries dropped', () => {
+  const res = normalizeTasksReport({ attempted: [
+    { gap: 'x', status: 'wat' }, { status: 'completed' }, 'junk',
+  ] });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.value.attempted, [{ gap: 'x', status: 'skipped', notes: '' }]);
+  assert.equal(res.value.skipped, 1);
+  assert.ok(res.warnings.length >= 3); // bad status + 2 drops (+ count defaults)
 });
