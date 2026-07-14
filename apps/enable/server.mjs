@@ -2,7 +2,7 @@ import express from 'express';
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { readdirSync, existsSync, readFileSync, statSync, writeFileSync, cpSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, statSync, writeFileSync, cpSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -497,6 +497,29 @@ app.post('/api/enable/todo', (req, res) => {
   res.json({ written: fresh.length, skipped: gaps.length - fresh.length, path: file });
 });
 
+// Resolve `p` through the filesystem, not just lexically: walk up to the
+// deepest EXISTING ancestor, realpath *that* (so a symlinked ancestor —
+// e.g. a project's .claude pointed at the user-global ~/.claude — resolves
+// to its real target), then re-append the non-existing suffix untouched.
+// Falls back to the lexical path for any ancestor that can't be realpath'd
+// (e.g. doesn't exist at all, permission error).
+function resolveRealish(p) {
+  let cur = path.resolve(p);
+  const suffix = [];
+  while (!existsSync(cur)) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break; // reached filesystem root without finding anything real
+    suffix.unshift(path.basename(cur));
+    cur = parent;
+  }
+  try {
+    const real = realpathSync(cur);
+    return suffix.length ? path.join(real, ...suffix) : real;
+  } catch {
+    return suffix.length ? path.join(cur, ...suffix) : cur;
+  }
+}
+
 // vendor one suggested skill into the project's .claude/skills/ (results-screen
 // "Add" button). SECURITY: curated-allowlist MEMBERSHIP is the gate — an arbitrary
 // name is rejected before any disk probe, so this can never copy a personal skill.
@@ -515,8 +538,12 @@ app.post('/api/enable/vendor', (req, res) => {
 
   const target = path.join(dir, '.claude', 'skills', name);
   const globalClaude = path.join(os.homedir(), '.claude');
-  const resolvedTarget = path.resolve(target);
-  if (resolvedTarget === globalClaude || resolvedTarget.startsWith(globalClaude + path.sep)) {
+  // Resolve both sides through the filesystem so a symlinked ancestor (e.g. the
+  // project's .claude, or .claude/skills, pointed at ~/.claude) can't lexically
+  // dodge the prefix check while still landing writes inside the real global dir.
+  const resolvedTarget = resolveRealish(target);
+  const resolvedGlobal = existsSync(globalClaude) ? resolveRealish(globalClaude) : globalClaude;
+  if (resolvedTarget === resolvedGlobal || resolvedTarget.startsWith(resolvedGlobal + path.sep)) {
     return res.status(400).json({ error: 'refusing to vendor into the user-global ~/.claude' });
   }
   if (existsSync(path.join(target, 'SKILL.md'))) return res.json({ ok: true, name, already: true });

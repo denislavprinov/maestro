@@ -1,6 +1,6 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -70,4 +70,36 @@ test('vendor: dir resolving into the user-global ~/.claude is rejected 400 (neve
   const { status, json } = await post('/api/enable/vendor', { dir: homedir(), name: 'writing-plans' });
   assert.equal(status, 400);
   assert.match(json.error, /~?\.claude|user-global|global/);
+});
+
+test('vendor: a project .claude that is a SYMLINK into the user-global ~/.claude is rejected 400, not copied through', async () => {
+  // The guard compares `path.join(dir, '.claude', 'skills', name)` against
+  // ~/.claude lexically. If the project's `.claude` is a symlink into the
+  // real (or, here, HOME-overridden "fake") global ~/.claude, a purely lexical
+  // prefix check never sees the escape and cpSync would write straight through
+  // the symlink into the global config the guard exists to protect.
+  const prevHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'enable-vendor-fakehome-'));
+  const fakeGlobalClaude = join(fakeHome, '.claude');
+  mkdirSync(fakeGlobalClaude, { recursive: true });
+  // os.homedir() re-reads process.env.HOME on every call (Node, POSIX), so the
+  // server's `path.join(os.homedir(), '.claude')` picks this up per-request —
+  // no need to touch the running server or its module state.
+  process.env.HOME = fakeHome;
+  try {
+    const dir = freshRepo();
+    symlinkSync(fakeGlobalClaude, join(dir, '.claude'), 'dir');
+
+    const srcSkillDir = join(skillsHome, '.claude', 'skills', 'writing-plans');
+    mkdirSync(srcSkillDir, { recursive: true });
+    writeFileSync(join(srcSkillDir, 'SKILL.md'), '# writing-plans\n');
+
+    const { status, json } = await post('/api/enable/vendor', { dir, name: 'writing-plans' });
+    assert.equal(status, 400);
+    assert.match(json.error, /~?\.claude|user-global|global/);
+    // nothing landed through the symlink into the (fake) global .claude
+    assert.ok(!existsSync(join(fakeGlobalClaude, 'skills', 'writing-plans')));
+  } finally {
+    process.env.HOME = prevHome;
+  }
 });
