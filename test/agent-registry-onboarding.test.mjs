@@ -4,7 +4,7 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 test('onboarding agents are registered with correct channel wiring', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null }); // built-in layer only
-  assert.equal(Object.keys(reg).length, 18);                          // was 12, +5 onboarding, +1 enableClarifier
+  assert.equal(Object.keys(reg).length, 19);                          // was 12, +5 onboarding, +1 enableClarifier, +1 shellGate
 
   assert.deepEqual(reg.onboardingClarifier.produces, ['clarify']);
   assert.equal(reg.onboardingClarifier.runnerType, 'clarifier');
