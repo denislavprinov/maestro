@@ -32,6 +32,12 @@ clears quality gates:
    implementer to fix — looping Implement -> Review until only minor/suggestion issues
    remain (or you approve continuing past the cap).
 
+Optionally, a **validation gate** (`goose`-inspired) sits between step 3 and step 4: pass
+`--validate "<cmd>"` (repeatable) and the orchestrator runs your real shell commands
+(tests, lint, typecheck, ...) after every implement pass — a failure hands the
+implementer a review pointed straight at the failing command, no LLM judgment involved,
+before the code reviewer ever sees the diff.
+
 Run state, history, and configuration are saved in a single **SQLite database**
 (`~/.maestro/maestro.db`, via the built-in `node:sqlite`), while the agents' **markdown**
 outputs (plans, reviews) and any attachments live alongside it in a **machine-wide
@@ -80,9 +86,10 @@ npm run cli -- --project /path/to/your/project --file ./brief.md --title "Search
 ```
 
 Useful flags: `--model <m>`,
-`--permission-mode <m>`, `--yes`/`--non-interactive` (auto-answer clarify with the
-first option and gates with "continue"). See `docs/ARCHITECTURE.md` §4.1 for the full
-list.
+`--permission-mode <m>`, `--validate <cmd>` (repeatable; runs a real shell validation
+gate between implement and review — see "What it is" above), `--yes`/`--non-interactive`
+(auto-answer clarify with the first option and gates with "continue"). See
+`docs/ARCHITECTURE.md` §4.1 for the full list.
 
 ### Web UI
 

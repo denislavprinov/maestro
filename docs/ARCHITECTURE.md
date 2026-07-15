@@ -485,6 +485,39 @@ EventEmitter state machine sequencing all phases + loops + gates.
 **Auto mode (`opts.auto`):** non-interactive auto-answer — clarify => first option;
 gate => `continue`.
 
+### 3.8 Validation gate (`src/core/shell-gate.mjs`)
+
+A deterministic, non-LLM verifier synthesized into the implement/review loop when the
+caller opts in (CLI `--validate <cmd>`, or the web UI's Validate field), threaded through
+as `opts.validateCommands` on `resolveWorkflow`/the orchestrator. It never spawns Claude.
+
+- **Resolve-time insertion.** `resolveWorkflow` (`workflows.mjs`) mutates the RESOLVED
+  plan only — the saved workflow template on disk/DB is untouched, and a run with no
+  `validateCommands` produces a byte-identical plan to today. It finds the implement <->
+  review loop's anchor feedback edge (the first edge whose `from` node is a verifier),
+  splices a synthetic `shellGate` node into its own step directly before that verifier,
+  and adds a second feedback edge (`fb_gate`) rewinding `shellGate` -> the loop's
+  implementer target. No anchor (a workflow with no verifier-originated loop) => the gate
+  is skipped and `plan.gateSkipped = true` is set (audited, non-fatal).
+- **Shared `loopGroup` cycle budget.** Both the gate's `fb_gate` edge and the original
+  review loop's edge are stamped with the SAME `loopGroup` ('impl'), so the orchestrator's
+  dispatcher (§3.7's `_dispatch`) draws their rewind cycles from ONE shared counter
+  (`loopState[loopGroup]`) instead of two independent ones — a gate failure and a review
+  failure both count against the same `maxCycles` budget, and either can push the loop to
+  exhaustion (the same user gate-prompt as an ordinary review-cycle overflow).
+- **`runShellGate`.** Runs each command via `sh -c` in the pipeline's worktree (own
+  process group; killed on abort/timeout). The first non-zero exit converts the failure
+  into the standard protocol review shape (one `critical` issue naming the failing
+  command + its tail output); all commands passing yields an empty-issues review. This is
+  the SAME shape every other verifier returns, so the existing feedback-edge machinery
+  (blocked verdict -> rewind -> implementer FIX mode, driven by `reviewMdPath`/
+  `reviewKind` per CONV-5) needs zero changes to bind the gate's review onto the
+  implementer's next FIX-mode pass.
+- **Review kind `shellGate-review`.** An OPEN-SET kind (§5.3) — no `reviews` table schema
+  change. `channels.mjs`'s `allocate('review', ...)` mints `<key>-review` as the default
+  basename for any verifier key with no bespoke entry, so a custom verifier just works the
+  same way the gate does.
+
 ---
 
 ## 4. CLI / INSTALL / UI CONTRACTS (downstream consumers)
@@ -609,11 +642,14 @@ passes an unknown base through unchanged, so the mapping is lossless). `kind` re
 filename prefix; `cycle` (1-based) replaces the `cycleN` suffix. Per Amendment A3 the live
 agent hand-off still reads the JSON file the subprocess wrote; the DB row is the durable
 mirror `writeReview` upserts, and the `reviews` table is the authoritative history record.
+The open-set nature of `kind` is what lets the synthetic validation gate (§3.8) land its
+verdicts as `kind='shellGate-review'` with ZERO schema change — `reviewKindOf` has no
+`shellGate-review -> shellGate` mapping entry, so the base string passes through unchanged.
 
 ```
 reviews(
   pipeline_id TEXT  REFERENCES pipelines(id) ON DELETE CASCADE,
-  kind        TEXT,            -- 'refine' | 'plan' | 'impl' | 'ws' | 'webui'  (A2; free text)
+  kind        TEXT,            -- 'refine' | 'plan' | 'impl' | 'ws' | 'webui' | 'shellGate-review' (A2 + gate; free text)
   cycle       INTEGER,         -- 1-based loop cycle
   verdict     TEXT,            -- (JSON) { issues:[ {severity,title,detail,location} ], summary }
   PRIMARY KEY (pipeline_id, kind, cycle)
