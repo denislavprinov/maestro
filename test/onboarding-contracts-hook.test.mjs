@@ -110,3 +110,20 @@ test('verifier(readiness): missing readiness.json succeeds with a warning, no th
   assert.ok(res.review);
   assert.ok(cap.lines.some((l) => l.startsWith('[contracts] readiness:')), 'absence logged as a warning');
 });
+
+test('producer(tools): repairable tools.json is normalized on disk with a [contracts] warning', async () => {
+  const dir = await makeTmpDir();
+  const toolsPath = join(dir, 'tools.json');
+  const node = { nodeId: 't0', key: 'infra', runnerType: 'producer', loopSource: false, agentPrompt: 'You are infra-gen.' };
+  const cap = captureWarnings();
+  try {
+    await runGenericProducer(ctxFor(dir, node, {
+      outputs: { tools: { kind: 'artifact', path: toolsPath, channel: 'tools' } },
+    }));
+  } finally { cap.restore(); }
+  const written = JSON.parse(await readFile(toolsPath, 'utf8'));
+  assert.deepEqual(written.installed, []);
+  assert.deepEqual(written.skipped, []);
+  assert.deepEqual(written.suggested, []);
+  assert.ok(cap.lines.some((l) => l.startsWith('[contracts] tools:')));
+});
