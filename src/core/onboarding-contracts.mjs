@@ -218,7 +218,7 @@ export function normalizeGraphSummary(raw) {
 }
 
 const TOOL_SOURCES = new Set(['bundle', 'global', 'project', 'plugin', 'unknown']);
-const SUGGESTION_SOURCES = new Set(['catalog', 'analyzer']);
+const SUGGESTION_SOURCES = new Set(['catalog', 'analyzer', 'stack-match']);
 
 /** Normalize one {name, ...} entry array; entries without a usable name are dropped. */
 function namedEntries(raw, warnings, label, shape) {
@@ -243,7 +243,7 @@ function namedEntries(raw, warnings, label, shape) {
  * (always recomputed, mirroring readiness.delta); suggested entries already installed
  * are pruned.
  */
-export function normalizeToolsReport(raw) {
+export function normalizeToolsReport(raw, { stackMatches = [] } = {}) {
   const warnings = [];
   if (!isPlainObject(raw)) {
     return { ok: false, warnings: ['tools: not a plain object'] };
@@ -280,6 +280,20 @@ export function normalizeToolsReport(raw) {
     }
     return true;
   });
+
+  // Union deterministic stack matches into suggested. Installed and
+  // agent-suggested names win — the matcher only ADDS, never overrides.
+  // Each addition pushes a warning so the hook's existing warnings-triggered
+  // rewrite persists the unioned file (clean files stay byte-identical).
+  const suggestedNames = new Set(suggested.map((s) => s.name));
+  for (const m of stackMatches) {
+    for (const name of STACK_CATALOG[m.stack] || []) {
+      if (installedNames.has(name) || suggestedNames.has(name)) continue;
+      suggested.push({ name, reason: String(m.evidence || `${m.stack} detected`), source: 'stack-match' });
+      suggestedNames.add(name);
+      warnings.push(`tools.suggested.${name}: added from stack match (${m.stack})`);
+    }
+  }
 
   const knownKeys = new Set(['installed', 'skipped', 'suggested']);
   for (const key of Object.keys(raw)) {

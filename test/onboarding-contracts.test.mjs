@@ -204,3 +204,41 @@ test('normalizeToolsReport: bad entries dropped, unknown source coerced, install
   assert.deepEqual(res.value.suggested, [{ name: 'executing-plans', reason: '', source: 'catalog' }]);
   assert.ok(res.warnings.length >= 4);
 });
+
+test('normalizeToolsReport: stack matches union into suggested with source stack-match', () => {
+  const r = normalizeToolsReport(
+    { installed: [{ name: 'graphify', source: 'bundle' }], skipped: [], suggested: [] },
+    { stackMatches: [{ stack: 'spring-boot', evidence: 'Spring Boot detected (pom.xml)' }] },
+  );
+  assert.equal(r.ok, true);
+  const names = r.value.suggested.map((s) => s.name);
+  for (const n of ['rest-api-conventions', 'spring-data-jpa', 'spring-security-jwt', 'flyway-migrations', 'testing-pyramid']) {
+    assert.ok(names.includes(n), `${n} suggested for spring-boot`);
+  }
+  const s = r.value.suggested.find((x) => x.name === 'spring-data-jpa');
+  assert.equal(s.source, 'stack-match');
+  assert.equal(s.reason, 'Spring Boot detected (pom.xml)');
+});
+
+test('normalizeToolsReport: union skips installed names and agent suggestions win collisions', () => {
+  const r = normalizeToolsReport(
+    {
+      installed: [{ name: 'docker', source: 'bundle' }],
+      skipped: [],
+      suggested: [{ name: 'terraform', reason: 'agents saw infra dirs', source: 'analyzer' }],
+    },
+    { stackMatches: [{ stack: 'docker', evidence: 'Docker detected (Dockerfile)' },
+                     { stack: 'terraform', evidence: 'Terraform detected (*.tf)' }] },
+  );
+  assert.equal(r.ok, true);
+  assert.ok(!r.value.suggested.some((s) => s.name === 'docker'), 'installed name never suggested');
+  const tf = r.value.suggested.filter((s) => s.name === 'terraform');
+  assert.equal(tf.length, 1, 'no duplicate');
+  assert.equal(tf[0].source, 'analyzer', 'agent suggestion wins the collision');
+});
+
+test('normalizeToolsReport: agent-written stack-match source is accepted verbatim', () => {
+  const r = normalizeToolsReport({ installed: [], skipped: [], suggested: [{ name: 'docker', reason: 'x', source: 'stack-match' }] });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.suggested[0].source, 'stack-match');
+});

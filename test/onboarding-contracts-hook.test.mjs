@@ -127,3 +127,28 @@ test('producer(tools): repairable tools.json is normalized on disk with a [contr
   assert.deepEqual(written.suggested, []);
   assert.ok(cap.lines.some((l) => l.startsWith('[contracts] tools:')));
 });
+
+test('tools channel: hook unions detectStacks matches from ctx.projectDir', async () => {
+  // temp project with a Dockerfile; temp tools.json missing the docker suggestion
+  const proj = await makeTmpDir();
+  await writeFile(join(proj, 'Dockerfile'), 'FROM node:22', 'utf8');
+  const toolsPath = join(proj, 'tools.json');
+  await writeFile(toolsPath, JSON.stringify({ installed: [], skipped: [], suggested: [] }), 'utf8');
+  const node = { nodeId: 't2', key: 'infra', runnerType: 'producer', loopSource: false, agentPrompt: 'You are infra-gen.' };
+  const cap = captureWarnings();
+  try {
+    // decoy primary output ("out") so the mock write lands there, not on our
+    // pre-written tools.json fixture (mirrors the unparseable-tasks test's trick)
+    await runGenericProducer(ctxFor(proj, node, {
+      outputs: {
+        out: { kind: 'artifact', path: join(proj, 'out.md') },
+        tools: { kind: 'artifact', path: toolsPath, channel: 'tools' },
+      },
+    }));
+  } finally { cap.restore(); }
+
+  const after = JSON.parse(await readFile(toolsPath, 'utf8'));
+  const docker = after.suggested.find((s) => s.name === 'docker');
+  assert.ok(docker, 'docker suggested from Dockerfile');
+  assert.equal(docker.source, 'stack-match');
+});

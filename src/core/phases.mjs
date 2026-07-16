@@ -19,6 +19,7 @@ import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderAttachmentsBlock } from './channels.mjs';
 import { normalizeReadiness, normalizeGraphSummary, normalizeToolsReport } from './onboarding-contracts.mjs';
+import { detectStacks } from './stack-detect.mjs';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
@@ -994,7 +995,15 @@ async function validateContractOutputs(ctx) {
     } catch (err) {
       throw new Error(`[contracts] ${channel}: unparseable JSON (${path}): ${err.message}`);
     }
-    const result = normalize(raw);
+    let result;
+    if (channel === 'tools') {
+      let stackMatches = [];
+      try { stackMatches = detectStacks(ctx.projectDir); }
+      catch (err) { console.warn(`[contracts] tools: stack detection failed (${err.message}) — continuing without matches`); }
+      result = normalize(raw, { stackMatches });
+    } else {
+      result = normalize(raw);
+    }
     if (!result.ok) {
       const reason = result.warnings[0] || 'invalid contract';
       throw new Error(`[contracts] ${channel}: ${reason} (${path})`);
