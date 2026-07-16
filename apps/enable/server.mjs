@@ -14,7 +14,7 @@ import { deletePipeline } from '../../src/core/pipeline-delete.mjs';
 import { listWorkspaces, readWorkspace, isGitRepo, WORKSPACE_KEY_RE } from '../../src/core/workspaces.mjs';
 import { projectKey } from '../../src/core/store.mjs';
 import { buildWorkspaceMembers } from '../../ui/server.mjs';
-import { CURATED_ALLOWLIST } from '../../src/core/skill-vendor.mjs';
+import { CURATED_ALLOWLIST, vendorDestinations } from '../../src/core/skill-vendor.mjs';
 import { resolveSkill } from '../../src/core/skills.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -548,28 +548,35 @@ app.post('/api/enable/vendor', (req, res) => {
   try { if (!statSync(dir).isDirectory()) throw new Error('not a directory'); }
   catch { return res.status(400).json({ error: `not a directory: ${dir}` }); }
 
-  const target = path.join(dir, '.claude', 'skills', name);
+  const destinations = vendorDestinations(dir);
   const globalClaude = path.join(os.homedir(), '.claude');
-  // Resolve both sides through the filesystem so a symlinked ancestor (e.g. the
-  // project's .claude, or .claude/skills, pointed at ~/.claude) can't lexically
-  // dodge the prefix check while still landing writes inside the real global dir.
-  const resolvedTarget = resolveRealish(target);
   const resolvedGlobal = existsSync(globalClaude) ? resolveRealish(globalClaude) : globalClaude;
-  if (resolvedTarget === resolvedGlobal || resolvedTarget.startsWith(resolvedGlobal + path.sep)) {
-    return res.status(400).json({ error: 'refusing to vendor into the user-global ~/.claude' });
+  const targets = [];
+  for (const rel of destinations) {
+    const target = path.join(dir, ...rel.split('/'), name);
+    // Resolve through the filesystem so a symlinked ancestor (.claude, .cursor,
+    // .agents, or their skills/ subdir pointed at ~/.claude) can't lexically
+    // dodge the prefix check while landing writes inside the real global dir.
+    const resolvedTarget = resolveRealish(target);
+    if (resolvedTarget === resolvedGlobal || resolvedTarget.startsWith(resolvedGlobal + path.sep)) {
+      return res.status(400).json({ error: 'refusing to vendor into the user-global ~/.claude' });
+    }
+    targets.push({ rel, target });
   }
-  if (existsSync(path.join(target, 'SKILL.md'))) return res.json({ ok: true, name, already: true });
+  const missing = targets.filter((t) => !existsSync(path.join(t.target, 'SKILL.md')));
+  if (missing.length === 0) return res.json({ ok: true, name, already: true, destinations });
   const r = resolveSkill(name, { repoRoot: REPO_ROOT, projectDir: dir, homeDir: SKILLS_HOME });
   if (!r.source) return res.status(404).json({ error: `skill "${name}" was not found on this machine` });
   try {
-    cpSync(r.path, target, { recursive: true });
+    for (const t of missing) cpSync(r.path, t.target, { recursive: true });
     const manifest = path.join(dir, '.claude', 'skills', 'VENDORED.md');
     let head = '# Vendored skills\n';
     try { head = readFileSync(manifest, 'utf8'); } catch {}
-    const line = `- ${name} — vendored from ${r.source} via the Enable results screen (${new Date().toISOString().slice(0, 10)})\n`;
+    const line = `- ${name} — vendored from ${r.source} via the Enable results screen ` +
+      `(${new Date().toISOString().slice(0, 10)}) → ${destinations.join(', ')}\n`;
     writeFileSync(manifest, `${head.replace(/\n*$/, '\n')}${line}`);
   } catch (err) { return res.status(500).json({ error: String(err && err.message || err) }); }
-  res.json({ ok: true, name, source: r.source, already: false });
+  res.json({ ok: true, name, source: r.source, already: false, destinations });
 });
 
 // --- knowledge graph view -------------------------------------------------

@@ -103,3 +103,62 @@ test('vendor: a project .claude that is a SYMLINK into the user-global ~/.claude
     process.env.HOME = prevHome;
   }
 });
+
+// Shared HOME-override trap builder for the fan-out guard tests below: puts a
+// fake ~/.claude under a temp HOME, then symlinks `linkName` (a project-root
+// dir like '.claude' or '.cursor') straight into that fake global dir. Any
+// destination whose target path threads through that symlinked ancestor must
+// still be caught by the resolveRealish-based guard, per destination.
+function symlinkTrapProject(linkName) {
+  const prevHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'enable-vendor-fakehome-'));
+  const fakeGlobal = join(fakeHome, '.claude');
+  mkdirSync(fakeGlobal, { recursive: true });
+  process.env.HOME = fakeHome;
+  const dir = freshRepo();
+  // So vendorDestinations() recognizes the .cursor footprint (it checks for a
+  // `rules` subdir) even though `.cursor` itself is a symlink into fakeGlobal.
+  if (linkName === '.cursor') mkdirSync(join(fakeGlobal, 'rules'), { recursive: true });
+  symlinkSync(fakeGlobal, join(dir, linkName), 'dir');
+  return {
+    dir,
+    fakeGlobal,
+    restore() { process.env.HOME = prevHome; },
+  };
+}
+
+test('vendor fans out to .cursor/skills and .agents/skills when footprints exist', async () => {
+  const dir = freshRepo();
+  mkdirSync(join(dir, '.cursor', 'rules'), { recursive: true });
+  writeFileSync(join(dir, 'AGENTS.md'), '# agents');
+  const r = await post('/api/enable/vendor', { dir, name: 'writing-plans' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.destinations, ['.claude/skills', '.cursor/skills', '.agents/skills']);
+  for (const d of r.json.destinations) {
+    assert.ok(existsSync(join(dir, d, 'writing-plans', 'SKILL.md')), `${d} copy exists`);
+  }
+});
+
+test('vendor already:true only when present in EVERY destination; fills the missing ones', async () => {
+  const dir = freshRepo();
+  mkdirSync(join(dir, '.cursor', 'rules'), { recursive: true });
+  const r1 = await post('/api/enable/vendor', { dir, name: 'writing-plans' });
+  assert.equal(r1.json.already, false);
+  // add a new footprint after the first vendor -> .agents/skills now missing
+  writeFileSync(join(dir, 'AGENTS.md'), '# agents');
+  const r2 = await post('/api/enable/vendor', { dir, name: 'writing-plans' });
+  assert.equal(r2.json.already, false, 'fills the newly-required destination');
+  assert.ok(existsSync(join(dir, '.agents', 'skills', 'writing-plans', 'SKILL.md')));
+  const r3 = await post('/api/enable/vendor', { dir, name: 'writing-plans' });
+  assert.equal(r3.json.already, true, 'all destinations present now');
+});
+
+test('the ~/.claude guard applies to every destination (symlinked .cursor)', async () => {
+  const { dir, fakeGlobal, restore } = symlinkTrapProject('.cursor');
+  try {
+    const r = await post('/api/enable/vendor', { dir, name: 'writing-plans' });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /user-global/);
+    assert.ok(!existsSync(join(fakeGlobal, 'skills', 'writing-plans')), 'nothing written through the symlink');
+  } finally { restore(); }
+});
