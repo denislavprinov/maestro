@@ -91,23 +91,25 @@ Union rules: skip names already installed or already suggested (agent suggestion
 
 SKILL.md is an open standard; per-tool project dirs are fixed: `.claude/skills/`, `.cursor/skills/`, `.codex/skills/`, `.gemini/skills/`, plus vendor-neutral `.agents/skills/` read by multiple agents (Codex et al.).
 
-New pure function in `skill-vendor.mjs`:
+New function in `skill-vendor.mjs` (fs probes only, no mutation):
 
 ```js
-vendorDestinations(multiToolTargets) -> string[]   // relative dirs
+vendorDestinations(projectDir) -> string[]   // relative dirs
 ```
 
+Presence-based — reads which tool footprints the repo actually has (infra-gen writes those footprints from `multiToolTargets` during the run, so the answer is reflected on disk; also correct for old runs and hand-configured repos):
+
 - Always `['.claude/skills']` (current behavior, Claude Code primary).
-- Answer string names Cursor / `.cursor/rules` → add `.cursor/skills`.
-- Answer names `AGENTS.md` (generic-agents signal) → add `.agents/skills`.
-- Copilot token → nothing extra (Copilot has no skills support; instructions file only).
-- `none` / absent → just `.claude/skills`.
+- `.cursor/rules/` or `.cursorrules` exists → add `.cursor/skills`.
+- `AGENTS.md` exists (generic-agents signal) → add `.agents/skills`.
+- Copilot footprint (`.github/copilot-instructions.md`) → nothing extra (Copilot has no skills support; instructions file only).
+- Bare repo → just `.claude/skills`.
 
 The same skill dir is copied verbatim to each destination — duplication over symlinks, deliberately (cross-platform; the vendor guard was just hardened against symlink tricks and stays effective per destination).
 
 Both vendor paths honor destinations:
-- **Infra-gen agent (during run):** prompt updated to write vendored skills to every destination from the clarify answer.
-- **`/api/enable/vendor` endpoint (one-click):** server reads the run's stored `multiToolTargets` from the pipeline record — never client-supplied — computes destinations, copies to each, and applies the existing realpath `~/.claude` guard per destination. Response gains `destinations: string[]`.
+- **Infra-gen agent (during run):** prompt updated to mirror vendored skills into `.cursor/skills/` / `.agents/skills/` per its `multiToolTargets` clarify answer.
+- **`/api/enable/vendor` endpoint (one-click):** server computes destinations via `vendorDestinations(dir)` — never client-supplied — copies to each, and applies the existing realpath `~/.claude` guard per destination. Response gains `destinations: string[]`.
 
 `.claude/skills/VENDORED.md` manifest lists destinations per skill.
 
@@ -124,7 +126,7 @@ Both vendor paths honor destinations:
 - **stack-detect:** fixture dirs per manifest type (each DevOps artifact detected independently — Dockerfile alone must NOT suggest kubernetes); multi-stack repos; nextjs-implies-react suppression; empty/no-manifest repo → `[]`.
 - **catalog invariants:** STACK_CATALOG ⊆ allowlist; disjoint from baseline (extends the existing subset/disjoint test).
 - **suggestion union:** stack matches merge into `tools.suggested` with `source: 'stack-match'`; installed/duplicate/already-vendored names skipped; agent suggestions win collisions.
-- **vendorDestinations:** table test over answer-string variants (single, compound, none, free-text).
+- **vendorDestinations:** table test over repo footprints (bare, `.cursor/rules`, `.cursorrules`, `AGENTS.md`, copilot-only, all combined).
 - **vendor endpoint:** run with Cursor target → skill lands in `.claude/skills/` and `.cursor/skills/`; guard still rejects escape attempts per destination; response lists destinations.
 - **mirror hygiene:** every `STACK_CATALOG` name resolves as `bundle` source with a `SKILL.md` + `ATTRIBUTION.md` present.
 
