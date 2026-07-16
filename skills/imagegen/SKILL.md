@@ -8,9 +8,7 @@ description: >-
   picture / illustration / logo / icon / poster / banner / wallpaper /
   thumbnail / hero image / concept art", "visualize this", "edit this photo",
   "restyle this image", "combine these images", or when a deliverable needs
-  AI-generated visuals (e.g. artwork for a doc, deck, or post). Also use for
-  any visual that includes BEVUP branding — bundled official logo assets must
-  be composited in rather than letting the model draw the wordmark. Do NOT
+  AI-generated visuals (e.g. artwork for a doc, deck, or post). Do NOT
   use for charts/diagrams from data (use code or SVG instead).
 ---
 
@@ -94,33 +92,6 @@ Prompt: `Keep the product exactly as-is, but replace the background with a
 sunny beach scene: soft-focus sand and turquoise sea, late-afternoon light
 matching the product's existing shadows.` (`--input-image product.jpg`, no
 aspect ratio flag)
-
-## BEVUP brand logo
-
-When the requested image should contain the BEVUP logo or wordmark (the user
-mentions BEVUP branding, a BEVUP post/banner/poster, or asks to put "BEVUP" in
-the image), never let the model draw the logo from a text description — it
-will mangle the wordmark. Instead, pass the real logo file as an input image
-and instruct the model to place it faithfully:
-
-```bash
-python3 scripts/generate_image.py \
-  --input-image assets/bevup-logo-pink.png \
-  --prompt "Place this exact logo, unmodified, onto ... Do not redraw, distort, recolor, or add effects to the logo." \
-  --out post.png
-```
-
-Variant choice (both are the same mark, different colorways):
-
-- `assets/bevup-logo-pink.png` — vivid pink wordmark; use on light, neutral,
-  or dark backgrounds where the pink pops.
-- `assets/bevup-logo-cream.png` — soft cream/off-white wordmark; use on dark
-  or saturated/colorful backgrounds where pink would clash.
-
-Inspect the generated result: if the logo got redrawn or distorted, retry with
-stronger wording ("the first input image is a finished logo asset — composite
-it exactly as-is") or compose the logo over the image programmatically (e.g.
-PIL paste) instead of asking the model to do it.
 
 ## Multiple images
 
