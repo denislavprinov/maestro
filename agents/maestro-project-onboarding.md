@@ -101,6 +101,7 @@ In addition to `CLAUDE.md`, project skills, and rules, write these onboarding ta
   - `AGENTS.md` → write `AGENTS.md` at the repo root.
   - `.cursor/rules` (a.k.a. "Cursor") → write `.cursor/rules/` (modern `*.mdc` rule files) or `.cursorrules`, per the repo's existing convention.
   - `Copilot` (a.k.a. "Copilot instructions") → write `.github/copilot-instructions.md`.
+  - **Vendored-skill mirroring:** the SKILL.md format is an open standard. For every skill you vendor into `.claude/skills/`, ALSO copy the identical skill dir into each skills location implied by the chosen targets: Cursor → `.cursor/skills/<name>/`; `AGENTS.md` (generic agents) → `.agents/skills/<name>/`. Copilot has no skills support — its instructions file is the only Copilot artifact. Record the destinations per skill in `.claude/skills/VENDORED.md`.
 
   Example: the choice `"AGENTS.md + .cursor/rules + Copilot instructions"` means emit **all three** files; `"AGENTS.md"` alone means just that one; `"none"` means emit none. Do NOT stop after `AGENTS.md` when the label lists more.
 
