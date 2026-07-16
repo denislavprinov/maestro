@@ -2,24 +2,29 @@ import express from 'express';
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { readdirSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, statSync, writeFileSync, cpSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runOnboarding, resumeOnboarding, readFinalReadiness, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
+import { runOnboarding, resumeOnboarding, readFinalReadiness, readToolsReport, readTasksReport, ENABLE_TITLE } from '../../src/core/onboarding.mjs';
 import { listAllPipelines, reconcileStaleRunning } from '../../src/core/artifacts.mjs';
 import { estimateCost } from '../../src/core/costEstimate.mjs';
 import { deletePipeline } from '../../src/core/pipeline-delete.mjs';
 import { listWorkspaces, readWorkspace, isGitRepo, WORKSPACE_KEY_RE } from '../../src/core/workspaces.mjs';
 import { projectKey } from '../../src/core/store.mjs';
 import { buildWorkspaceMembers } from '../../ui/server.mjs';
+import { CURATED_ALLOWLIST } from '../../src/core/skill-vendor.mjs';
+import { resolveSkill } from '../../src/core/skills.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PROJECTS_ROOT = process.env.MAESTRO_ENABLE_PROJECTS_ROOT || process.cwd();
 const PORT = Number(process.env.PORT) || 4319;
 const HOST = process.env.HOST || '127.0.0.1';
+const REPO_ROOT = path.join(__dirname, '../..');
+// tests point this at a throwaway home so skill resolution is deterministic
+const SKILLS_HOME = process.env.ENABLE_SKILLS_HOME || os.homedir();
 
 // Per-boot session token, issued as a SameSite=Strict HttpOnly cookie with the
 // UI and required on /api/* and the WS handshake. This shields the localhost
@@ -383,6 +388,18 @@ async function enableHistory() {
       liveIds: [...runs.values()].map((r) => r.pipelineId ?? r.orch?.getState?.()?.id).filter(Boolean),
     });
   } catch {}
+  // pipelineId -> joinable live runId, so a second client can rejoin the
+  // stream that is already driving a pipeline instead of a mid-run disk view.
+  // Same joinability rule as /resume's live-guard: buffer + events present,
+  // status not terminal (claim placeholders and finished entries don't count).
+  const liveByPipeline = new Map();
+  for (const [id, e] of runs) {
+    const pid = e.pipelineId ?? e.orch?.getState?.()?.id;
+    if (pid && e.buffer && e.events &&
+        !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+      liveByPipeline.set(pid, id);
+    }
+  }
   const all = await listAllPipelines();
   return all.filter((p) => p.title === ENABLE_TITLE)
     .map((p) => {
@@ -392,7 +409,7 @@ async function enableHistory() {
         try { estimatedCost = estimateCost(probeRepoSize(p.projectDir)); } catch {}
       }
       const resumable = (p.status === 'paused' || p.status === 'interrupted') && !!p.hasResumePoint;
-      return { ...p, readiness, estimatedCost, resumable };
+      return { ...p, readiness, estimatedCost, resumable, liveRunId: liveByPipeline.get(p.id) ?? null };
     });
 }
 
@@ -405,7 +422,10 @@ app.get('/api/enable/history/:id', async (req, res) => {
   try {
     const entry = (await enableHistory()).find((p) => p.id === req.params.id);
     if (!entry || !entry.dir) return res.status(404).json({ error: 'unknown run' });
-    res.json({ entry, readiness: entry.readiness, changes: readChanges(entry.dir) });
+    res.json({
+      entry, readiness: entry.readiness, changes: readChanges(entry.dir),
+      tools: readToolsReport(entry.dir), tasks: readTasksReport(entry.dir),
+    });
   } catch (err) { res.status(500).json({ error: String(err && err.message || err) }); }
 });
 
@@ -487,6 +507,69 @@ app.post('/api/enable/todo', (req, res) => {
   try { writeFileSync(file, text); }
   catch (err) { return res.status(500).json({ error: String(err && err.message || err) }); }
   res.json({ written: fresh.length, skipped: gaps.length - fresh.length, path: file });
+});
+
+// Resolve `p` through the filesystem, not just lexically: walk up to the
+// deepest EXISTING ancestor, realpath *that* (so a symlinked ancestor —
+// e.g. a project's .claude pointed at the user-global ~/.claude — resolves
+// to its real target), then re-append the non-existing suffix untouched.
+// Falls back to the lexical path for any ancestor that can't be realpath'd
+// (e.g. doesn't exist at all, permission error).
+function resolveRealish(p) {
+  let cur = path.resolve(p);
+  const suffix = [];
+  while (!existsSync(cur)) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break; // reached filesystem root without finding anything real
+    suffix.unshift(path.basename(cur));
+    cur = parent;
+  }
+  try {
+    const real = realpathSync(cur);
+    return suffix.length ? path.join(real, ...suffix) : real;
+  } catch {
+    return suffix.length ? path.join(cur, ...suffix) : cur;
+  }
+}
+
+// vendor one suggested skill into the project's .claude/skills/ (results-screen
+// "Add" button). SECURITY: curated-allowlist MEMBERSHIP is the gate — an arbitrary
+// name is rejected before any disk probe, so this can never copy a personal skill.
+// Writes to the project's CURRENT working tree (a user-initiated post-run action),
+// not the enable branch.
+app.post('/api/enable/vendor', (req, res) => {
+  const { dir: rawDir, name } = req.body || {};
+  if (typeof name !== 'string' || !CURATED_ALLOWLIST.includes(name)) {
+    return res.status(400).json({ error: 'skill is not on the curated allowlist' });
+  }
+  if (typeof rawDir !== 'string' || !rawDir) return res.status(400).json({ error: 'dir required' });
+  const dir = path.isAbsolute(rawDir) ? rawDir : resolveProjectDir(rawDir);
+  if (!dir) return res.status(400).json({ error: `unknown project: ${rawDir}` });
+  try { if (!statSync(dir).isDirectory()) throw new Error('not a directory'); }
+  catch { return res.status(400).json({ error: `not a directory: ${dir}` }); }
+
+  const target = path.join(dir, '.claude', 'skills', name);
+  const globalClaude = path.join(os.homedir(), '.claude');
+  // Resolve both sides through the filesystem so a symlinked ancestor (e.g. the
+  // project's .claude, or .claude/skills, pointed at ~/.claude) can't lexically
+  // dodge the prefix check while still landing writes inside the real global dir.
+  const resolvedTarget = resolveRealish(target);
+  const resolvedGlobal = existsSync(globalClaude) ? resolveRealish(globalClaude) : globalClaude;
+  if (resolvedTarget === resolvedGlobal || resolvedTarget.startsWith(resolvedGlobal + path.sep)) {
+    return res.status(400).json({ error: 'refusing to vendor into the user-global ~/.claude' });
+  }
+  if (existsSync(path.join(target, 'SKILL.md'))) return res.json({ ok: true, name, already: true });
+  const r = resolveSkill(name, { repoRoot: REPO_ROOT, projectDir: dir, homeDir: SKILLS_HOME });
+  if (!r.source) return res.status(404).json({ error: `skill "${name}" was not found on this machine` });
+  try {
+    cpSync(r.path, target, { recursive: true });
+    const manifest = path.join(dir, '.claude', 'skills', 'VENDORED.md');
+    let head = '# Vendored skills\n';
+    try { head = readFileSync(manifest, 'utf8'); } catch {}
+    const line = `- ${name} — vendored from ${r.source} via the Enable results screen (${new Date().toISOString().slice(0, 10)})\n`;
+    writeFileSync(manifest, `${head.replace(/\n*$/, '\n')}${line}`);
+  } catch (err) { return res.status(500).json({ error: String(err && err.message || err) }); }
+  res.json({ ok: true, name, source: r.source, already: false });
 });
 
 // --- knowledge graph view -------------------------------------------------

@@ -58,3 +58,21 @@ test('vendorDestinations: presence-based per-tool dirs, .claude always first', (
   writeFileSync(join(all, 'AGENTS.md'), '# agents');
   assert.deepEqual(vendorDestinations(all), ['.claude/skills', '.cursor/skills', '.agents/skills']);
 });
+
+test('caveman joins graphify in the curated baseline (mandatory tools)', () => {
+  assert.ok(CURATED_BASELINE.includes('graphify'));
+  assert.ok(CURATED_BASELINE.includes('caveman'));
+});
+
+test('OPTIONAL_CATALOG: subset of the allowlist, disjoint from the baseline', () => {
+  assert.ok(OPTIONAL_CATALOG.length > 0);
+  for (const name of OPTIONAL_CATALOG) {
+    assert.ok(CURATED_ALLOWLIST.includes(name), `${name} must be allowlisted`);
+    assert.ok(!CURATED_BASELINE.includes(name), `${name} must not be in the baseline`);
+  }
+});
+
+test('caveman is always vendored even with zero refs (baseline union)', () => {
+  const { vendor } = resolveVendorTargets(new Set());
+  assert.ok(vendor.includes('caveman'));
+});

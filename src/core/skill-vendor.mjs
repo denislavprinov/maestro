@@ -9,10 +9,11 @@ import { join } from 'node:path';
 
 /** Always-vendored known-good floor (run-config overridable). */
 export const CURATED_BASELINE = Object.freeze([
-  'graphify', 'test-driven-development', 'systematic-debugging', 'verification-before-completion',
+  'graphify', 'caveman', 'test-driven-development', 'systematic-debugging', 'verification-before-completion',
 ]);
 
-/** Optional skills for advanced workflows, offered conditionally by the onboarding flow. */
+/** Optional add-ons: offered at clarify (Q6) and suggested on the results screen.
+ *  Invariant (tested): subset of the allowlist, disjoint from the baseline. */
 export const OPTIONAL_CATALOG = Object.freeze([
   'writing-plans', 'executing-plans', 'requesting-code-review',
 ]);

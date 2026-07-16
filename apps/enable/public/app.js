@@ -10,10 +10,11 @@ const STAGES = [
   { node: 's_infra',   label: 'Build',      color: '#46d39a' },
   { node: 's_tests',   label: 'Add tests',  color: '#f2a25c' },
   { node: 's_eval',    label: 'Review',     color: '#f5b833' },
+  { node: 's_execute', label: 'Fix gaps',   color: '#a78bfa' },
   { node: 's_canary',  label: 'Test-drive', color: '#46d39a' },
 ];
 
-// The 5 fixed set-up questions. value === the choice string sent to the engine.
+// The 7 fixed set-up questions. value === the choice string sent to the engine.
 const SETUP_QUESTIONS = {
   testTier: { type: 'single', options: [
     { value: 'scaffold', label: 'Scaffold (recommended)' }, { value: 'docs-only', label: 'Docs only' },
@@ -26,6 +27,15 @@ const SETUP_QUESTIONS = {
     { value: 'copilot', label: 'Copilot' }, { value: 'agents', label: 'AGENTS.md (Codex & others)' }],
     defaults: ['cursor', 'copilot', 'agents'] },
   canary: { type: 'single', options: [{ value: 'yes', label: 'Yes (recommended)' }, { value: 'no', label: 'No' }] },
+  optionalTools: { type: 'multi', options: [
+    { value: 'writing-plans', label: 'Writing plans' },
+    { value: 'executing-plans', label: 'Executing plans' },
+    { value: 'requesting-code-review', label: 'Requesting code review' }],
+    defaults: [] },
+  executeTasks: { type: 'single', options: [
+    { value: 'up-to-3', label: 'Yes — up to 3 tasks (recommended)' },
+    { value: 'up-to-1', label: 'Yes — 1 task' },
+    { value: 'none', label: 'No' }] },
 };
 
 let baseline = null;
@@ -285,6 +295,10 @@ function collectAnswers() {
   }
   const scope = document.querySelector('input[data-free="scopeConstraints"]').value.trim();
   a.scopeConstraints = scope;
+  // optionalTools rides the clarify answer as ONE comma-joined string ('none' = none)
+  const opt = [...document.querySelectorAll('input[name="optionalTools"]:checked')].map((el) => el.value);
+  a.optionalTools = opt.length ? opt.join(', ') : 'none';
+  a.executeTasks = document.querySelector('input[name="executeTasks"]:checked')?.value;
   return a;
 }
 
@@ -750,6 +764,8 @@ function renderResults(r) {
   document.querySelector('#gaps-wrap').hidden = gaps.length === 0;
   document.querySelector('#gaps').innerHTML = gaps.map((g) => `<li>${typeof g === 'string' ? g : (g.title || JSON.stringify(g))}</li>`).join('');
   resetTodoButton(gaps.map((g) => (typeof g === 'string' ? g : g.title || JSON.stringify(g))));
+  renderTools(r.tools || null);
+  renderTasksNote(r.tasks || null);
   document.querySelector('#result-branch').textContent = r.branch ? `Branch: ${r.branch}` : '';
   refreshGraphButtons(lastProjectDir);   // graph may have been (re)built during the run
   renderStats(r._stats || (currentRunId ? liveStats() : null));
@@ -790,11 +806,56 @@ async function createTodoTasks() {
   }
 }
 
+// ---------- installed / suggested tools ----------
+function renderTools(tools) {
+  const wrap = document.querySelector('#tools-wrap');
+  const installed = Array.isArray(tools?.installed) ? tools.installed : [];
+  const suggested = Array.isArray(tools?.suggested) ? tools.suggested : [];
+  wrap.hidden = installed.length === 0 && suggested.length === 0;
+  document.querySelector('#tools-installed').innerHTML = installed.map((t) =>
+    `<li class="tool-row"><code>${esc(t.name)}</code>${t.mandatory ? ' <span class="tool-badge">mandatory</span>' : ''}</li>`).join('');
+  const sWrap = document.querySelector('#suggested-wrap');
+  sWrap.hidden = suggested.length === 0;
+  document.querySelector('#vendor-error').hidden = true;
+  document.querySelector('#tools-suggested').innerHTML = suggested.map((t) =>
+    `<li class="tool-row"><code>${esc(t.name)}</code>` +
+    `${t.reason ? ` <span class="tool-reason">${esc(t.reason)}</span>` : ''}` +
+    `<button type="button" class="ghost-btn small vendor-btn" data-name="${esc(t.name)}"${lastProjectDir ? '' : ' disabled'}>Add</button></li>`).join('');
+}
+
+function renderTasksNote(tasks) {
+  const el = document.querySelector('#tasks-note');
+  const done = Number(tasks?.completed) || 0;
+  el.hidden = done === 0;
+  el.textContent = done ? `${done} task${done === 1 ? '' : 's'} already done during enablement.` : '';
+}
+
+async function vendorSkill(btn) {
+  const errEl = document.querySelector('#vendor-error');
+  errEl.hidden = true;
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  try {
+    const res = await fetch('/api/enable/vendor', { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: lastProjectDir, name: btn.dataset.name }) });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    btn.textContent = body.already ? '✓ Already added' : '✓ Added';
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Add';
+    errEl.textContent = `Could not add ${btn.dataset.name}: ${err.message}`;
+    errEl.hidden = false;
+  }
+}
+
 // ---------- what changed ----------
 const MAX_FILE_ROWS = 12;
 
 function esc(s) {
-  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 function statBar(added, removed) {
@@ -1148,12 +1209,27 @@ async function showHistoryDetail(id) {
     if (!res.ok) return;
     d = await res.json();
   } catch { return; }
+  const e = d.entry || {};
+  // Pipeline is streaming right now (started in another tab/browser): join the
+  // live run — the server replays its frame buffer on connect, rebuilding the
+  // progress view — instead of a disk view whose readiness is still unwritten
+  // (that painted a bogus "Done" screen with empty bars mid-run).
+  if (e.liveRunId) {
+    markHistoryActive(id);
+    currentPipelineId = id;
+    lastProjectDir = e.projectDir || '';
+    resetProgress();
+    show('progress');
+    startLiveMeter();
+    setPauseUi('running');
+    connectRun(e.liveRunId);                 // closes any previous socket itself
+    return;
+  }
   if (ws) { try { ws.close(); } catch {} ws = null; }
   stopLiveMeter();
   currentRunId = null;                       // disk view, no live socket
   markHistoryActive(id);
   currentHistoryId = id;                      // .md preview reads from this run's dir
-  const e = d.entry || {};
   lastProjectDir = e.projectDir || e.projectName || '';   // for the graph button on this view
   const est = e.estimatedCost;
   const realCost = e.totalCostUsd > 0 ? e.totalCostUsd : null;
@@ -1164,7 +1240,7 @@ async function showHistoryDetail(id) {
     estLow: est?.low, estHigh: est?.high,
     tokens: null,                            // not persisted for past runs
   };
-  renderResults({ ...(d.readiness || {}), branch: e.branch ?? null, _stats });
+  renderResults({ ...(d.readiness || {}), tools: d.tools ?? null, tasks: d.tasks ?? null, branch: e.branch ?? null, _stats });
   renderChanges(d.changes);
 }
 
@@ -1222,6 +1298,10 @@ function init() {
 
   document.querySelector('#browse-btn').addEventListener('click', openPicker);
   document.querySelector('#todo-btn').addEventListener('click', createTodoTasks);
+  document.querySelector('#tools-suggested').addEventListener('click', (e) => {
+    const btn = e.target.closest('.vendor-btn');
+    if (btn && !btn.disabled) vendorSkill(btn);
+  });
   const picker = document.querySelector('#picker-modal');
   picker.addEventListener('click', (e) => {
     if (e.target.closest('[data-pclose]')) { closePicker(); return; }

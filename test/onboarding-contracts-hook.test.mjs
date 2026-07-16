@@ -152,3 +152,36 @@ test('tools channel: hook unions detectStacks matches from ctx.projectDir', asyn
   assert.ok(docker, 'docker suggested from Dockerfile');
   assert.equal(docker.source, 'stack-match');
 });
+
+test('verifier(tasks): missing tasks-report.json warns but does not throw', async () => {
+  const dir = await makeTmpDir();
+  const node = { nodeId: 'x0', key: 'onboardingExecutor', runnerType: 'verifier', loopSource: true, agentPrompt: 'You are the executor.' };
+  const cap = captureWarnings();
+  try {
+    const res = await runGenericVerifier(ctxFor(dir, node, {
+      outputs: {
+        review: { kind: 'review', mdPath: join(dir, 'x-review-cycle1.md'), jsonPath: join(dir, 'x-review-cycle1.json') },
+        tasks: { kind: 'artifact', path: join(dir, 'tasks-report.json'), channel: 'tasks' },
+      },
+    }));
+    assert.ok(res.review !== undefined);
+  } finally { cap.restore(); }
+  assert.ok(cap.lines.some((l) => l.includes('[contracts] tasks: output file missing')));
+});
+
+test('producer(tasks): unparseable tasks-report.json throws through the hook', async () => {
+  const dir = await makeTmpDir();
+  const tasksPath = join(dir, 'tasks-report.json');
+  const node = { nodeId: 'x1', key: 'anything', runnerType: 'producer', loopSource: false, agentPrompt: 'x' };
+  // primary output is a decoy md so the mock does not overwrite the fixture
+  await writeFile(tasksPath, '{not json', 'utf8');
+  await assert.rejects(
+    runGenericProducer(ctxFor(dir, node, {
+      outputs: {
+        out: { kind: 'artifact', path: join(dir, 'out.md') },
+        tasks: { kind: 'artifact', path: tasksPath, channel: 'tasks' },
+      },
+    })),
+    /\[contracts\] tasks: unparseable JSON/,
+  );
+});

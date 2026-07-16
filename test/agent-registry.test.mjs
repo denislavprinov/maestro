@@ -7,17 +7,17 @@ import { join } from 'node:path';
 import { loadAgentRegistry, registryToSteps, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns all shipped agents (16 project + 2 workspace)', () => {
+test('loadAgentRegistry returns all shipped agents (17 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
+    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingExecutor', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 18); // +1: enableClarifier (Enable app)
+  assert.equal(Object.keys(reg).length, 19); // +1: enableClarifier, +1: onboardingExecutor (Enable app)
   // The two workspace agents are scope:'workspace-only'; the rest are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
-    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer']);
+    ['clarify', 'decomposer', 'enableClarifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'onboardingAnalyzer', 'onboardingCanary', 'onboardingClarifier', 'onboardingEvaluator', 'onboardingExecutor', 'onboardingTests', 'planReviewer', 'planner', 'projectOnboarding', 'refiner', 'reviewer']);
 });
 
 test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
@@ -86,8 +86,9 @@ test('registry insertion order follows .order ascending', () => {
   assert.deepEqual(Object.keys(reg), [
     'clarify', 'workspaceScanner', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'workspaceReviewer',
     'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'projectOnboarding',
-    'onboardingClarifier', 'enableClarifier', 'onboardingAnalyzer', 'onboardingTests', 'onboardingEvaluator', 'onboardingCanary',
-  ]); // enableClarifier (order 8.15) sorts between onboardingClarifier (8.1) and onboardingAnalyzer (8.2)
+    'onboardingClarifier', 'enableClarifier', 'onboardingAnalyzer', 'onboardingTests', 'onboardingEvaluator', 'onboardingExecutor', 'onboardingCanary',
+  ]); // enableClarifier (order 8.15) sorts between onboardingClarifier (8.1) and onboardingAnalyzer (8.2);
+  // onboardingExecutor (order 8.45) sorts between onboardingEvaluator (8.4) and onboardingCanary (8.5)
 });
 
 test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => {
@@ -110,7 +111,7 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 16); // +1: enableClarifier (Enable app)
+  assert.equal(steps.length, 17); // +1: enableClarifier, +1: onboardingExecutor (Enable app)
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true });
   assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true });
   assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false });
@@ -149,7 +150,7 @@ test('exactly the verifiers are loopSources; producers are not', () => {
   const reg = loadAgentRegistry();
   const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
   // workspaceReviewer is the workspace-run review loop source (mirrors reviewer).
-  assert.deepEqual(loopSources, ['manualWebUiTesting', 'onboardingEvaluator', 'planReviewer', 'reviewer', 'workspaceReviewer']);
+  assert.deepEqual(loopSources, ['manualWebUiTesting', 'onboardingEvaluator', 'onboardingExecutor', 'planReviewer', 'reviewer', 'workspaceReviewer']);
   for (const m of Object.values(reg)) {
     if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
   }

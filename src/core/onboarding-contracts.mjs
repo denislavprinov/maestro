@@ -302,3 +302,50 @@ export function normalizeToolsReport(raw, { stackMatches = [] } = {}) {
 
   return { ok: true, value: { installed, skipped, suggested }, warnings };
 }
+
+const TASK_STATUSES = new Set(['completed', 'skipped', 'failed']);
+
+/**
+ * Normalize a tasks-report.json object (the executor's gap-task report).
+ * Fatal: not a plain object. The completed/skipped/failed counts are DERIVED
+ * from attempted[] (always recomputed, mirroring readiness.delta).
+ */
+export function normalizeTasksReport(raw) {
+  const warnings = [];
+  if (!isPlainObject(raw)) {
+    return { ok: false, warnings: ['tasks: not a plain object'] };
+  }
+
+  const attempted = [];
+  if (!Array.isArray(raw.attempted)) {
+    warnings.push('tasks.attempted: missing or not an array — defaulted to []');
+  } else {
+    for (const e of raw.attempted) {
+      if (!isPlainObject(e) || typeof e.gap !== 'string' || !e.gap.trim()) {
+        warnings.push(`tasks.attempted: dropped entry without a usable gap (${JSON.stringify(e)})`);
+        continue;
+      }
+      let status = typeof e.status === 'string' ? e.status : '';
+      if (!TASK_STATUSES.has(status)) {
+        warnings.push(`tasks.attempted."${e.gap.trim()}".status: not completed|skipped|failed (${JSON.stringify(e.status)}) — defaulted to "skipped"`);
+        status = 'skipped';
+      }
+      attempted.push({ gap: e.gap.trim(), status, notes: e.notes != null ? String(e.notes) : '' });
+    }
+  }
+
+  const counts = { completed: 0, skipped: 0, failed: 0 };
+  for (const a of attempted) counts[a.status] += 1;
+  for (const k of Object.keys(counts)) {
+    if (toNumberOrNull(raw[k]) !== counts[k]) {
+      warnings.push(`tasks.${k}: stored ${JSON.stringify(raw[k])} did not match recomputed ${counts[k]} — recomputed value used`);
+    }
+  }
+
+  const knownKeys = new Set(['attempted', 'completed', 'skipped', 'failed']);
+  for (const key of Object.keys(raw)) {
+    if (!knownKeys.has(key)) warnings.push(`tasks.${key}: unknown top-level field — dropped`);
+  }
+
+  return { ok: true, value: { attempted, ...counts }, warnings };
+}

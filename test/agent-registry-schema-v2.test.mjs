@@ -87,13 +87,20 @@ test('collectChannelDefs merges registry-wide; first definition wins on conflict
   });
 });
 
-test('the 18 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
+test('the 17 pre-Task-6 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
-  assert.equal(Object.keys(reg).length, 18); // +1: enableClarifier (Enable app)
+  assert.equal(Object.keys(reg).length, 19); // +1: enableClarifier, +1: onboardingExecutor (Enable app)
+  // onboardingExecutor (tasks channel) and projectOnboarding (tools channel) are the two
+  // Task-6 agents that deliberately DO declare channelDefs; every other shipped sidecar
+  // is unchanged and still carries none.
+  const CHANNEL_DEF_AGENTS = new Set(['onboardingExecutor', 'projectOnboarding']);
   for (const m of Object.values(reg)) {
-    assert.deepEqual(m.channelDefs, [], `${m.key} has no channelDefs`);
     assert.equal(m.promptHints, '');
+    if (CHANNEL_DEF_AGENTS.has(m.key)) continue;
+    assert.deepEqual(m.channelDefs, [], `${m.key} has no channelDefs`);
   }
+  assert.deepEqual(reg.onboardingExecutor.channelDefs, [{ id: 'tasks', kind: 'json', filename: 'tasks-report.json' }]);
+  assert.deepEqual(reg.projectOnboarding.channelDefs, [{ id: 'tools', kind: 'json', filename: 'tools.json' }]);
   assert.deepEqual(reg.planner.consumes, ['userPrompt', 'clarify', 'review']);
   assert.deepEqual(reg.planner.produces, ['plan']);
 });

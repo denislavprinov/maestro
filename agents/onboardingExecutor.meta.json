@@ -1,0 +1,12 @@
+{
+  "key": "onboardingExecutor", "domain": "coding",
+  "displayName": "Onboarding Execute", "description": "opt-in: knock out the evaluator's top gap tasks on the enable branch, then hand back for an honest re-score",
+  "color": "violet", "icon": "<path d=\"M4 7h9M4 12h6M4 17h9\" stroke-linecap=\"round\"/><path d=\"M14.5 16.5l2 2 4-4.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "maestro-onboarding-executor.md",
+  "runnerType": "verifier", "loopSource": true, "fanOut": true,
+  "consumes": ["readiness", "clarify", "code"], "optionalConsumes": ["graph"],
+  "produces": ["review", "tasks"],
+  "channelDefs": [{ "id": "tasks", "kind": "json", "filename": "tasks-report.json" }],
+  "connectsTo": ["onboardingCanary"], "order": 8.45,
+  "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+}
