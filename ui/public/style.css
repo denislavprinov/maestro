@@ -1043,16 +1043,30 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .btn-assets[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .assets-panel { margin-top: 14px; border: 1px solid var(--line); border-radius: 18px; background: #FBFBF9; padding: 8px 20px 16px; }
 .assets-panel[hidden] { display: none; }
-.assets-row { padding: 13px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: auto auto 1fr auto; gap: 8px 10px; align-items: center; }
+.assets-row { padding: 15px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: auto auto 1fr auto; gap: 9px 11px; align-items: center; }
 .assets-row:first-child { border-top: none; }
-.a-dot { width: 9px; height: 9px; border-radius: 50%; }
+.a-dot { width: 11px; height: 11px; border-radius: 50%; }
 .a-dot.skill { background: var(--violet); }
 .a-dot.agent { background: var(--blue); }
 .a-dot.graphify { background: var(--amber); }
-.a-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
-.a-count { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
-.a-items { grid-column: 1 / -1; margin: 6px 0 0; padding-left: 19px; color: var(--ink-3); font-size: 12px; }
-.a-items li { margin: 2px 0; }
+.a-kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); }
+.a-name { font-size: 15px; color: var(--ink); }
+.a-count { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.a-items { grid-column: 1 / -1; margin: 6px 0 0; padding-left: 22px; }
+.a-items li { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+.a-items li + li { border-top: 1px dashed var(--line); }
+.a-detail { font-size: 13.5px; color: var(--ink-2); }
+/* Per-invocation stage chip — same palette as the pipeline step pills above,
+   so an asset visually maps to the stage it ran in. */
+.a-phase {
+  flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; border-radius: 999px; padding: 3px 11px; line-height: 1.5;
+}
+.a-phase[data-color="red"]    { background: var(--red-bg);    color: var(--red-ink);    }
+.a-phase[data-color="violet"] { background: var(--violet-bg); color: var(--violet-ink); }
+.a-phase[data-color="green"]  { background: var(--green-bg);  color: var(--green-ink);  }
+.a-phase[data-color="amber"]  { background: var(--amber-bg);  color: var(--amber-ink);  }
+.a-phase[data-color="blue"]   { background: var(--blue-bg);   color: var(--blue-ink);   }
 .assets-empty { padding: 12px 0; color: var(--ink-3); font-size: 12.5px; }
 
 /* Loop-badge cycle-count text (renderer sizes font-size inline). */

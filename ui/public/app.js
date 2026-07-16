@@ -1144,6 +1144,21 @@ function assetsPillText(assets) {
 }
 const ASSET_KIND_LABEL = { skill: 'Skill', agent: 'Agent', graphify: 'graphify' };
 
+// Map an invocation's pipeline stage (uiPhase) to its label + the SAME color
+// token the DAG step uses above, so an asset chip reads as the stage it ran in.
+const ASSET_PHASE = {
+  clarify:   { label: 'Clarify',   color: 'red'    },
+  plan:      { label: 'Plan',      color: 'violet' },
+  refine:    { label: 'Refine',    color: 'green'  },
+  implement: { label: 'Implement', color: 'amber'  },
+  review:    { label: 'Review',    color: 'blue'   },
+};
+function assetPhaseChip(uiPhase) {
+  const p = ASSET_PHASE[uiPhase];
+  if (!p) return '';
+  return `<span class="a-phase" data-color="${p.color}">${escapeHtml(p.label)}</span>`;
+}
+
 // Paint the "Assets used" disclosure (button pill + drill-down panel). Mirrors
 // paintSubsBar: idempotent click binding, always visible once a run exists,
 // reuses escapeHtml. Empty -> greyed pill + empty-state line.
@@ -1172,7 +1187,7 @@ function paintAssetsPanel(barEl, assets) {
       <b class="a-name">${escapeHtml(g.name)}</b>
       <span class="a-count">×${g.count}</span>
       <ul class="a-items">${g.items.map((it) =>
-        `<li>${escapeHtml(it.detail || '')}${it.uiPhase ? ` <em>(${escapeHtml(it.uiPhase)})</em>` : ''}</li>`).join('')}</ul>
+        `<li><span class="a-detail">${escapeHtml(it.detail || '—')}</span>${assetPhaseChip(it.uiPhase)}</li>`).join('')}</ul>
     </div>`).join('') || '<div class="assets-empty">No Skills, Agents or graphify were invoked.</div>';
 }
 
