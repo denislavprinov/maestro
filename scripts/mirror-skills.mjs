@@ -4,8 +4,8 @@
 // skills/<local-name>/, writes ATTRIBUTION.md + copies the upstream LICENSE.
 // Every refresh is a deliberate re-run + human review + commit — never runtime.
 //
-// Usage: node scripts/mirror-skills.mjs [--ref-override <repo>=<sha>]
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, copyFileSync, mkdtempSync } from 'node:fs';
+// Usage: node scripts/mirror-skills.mjs
+import { cpSync, rmSync, writeFileSync, existsSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -37,26 +37,29 @@ const SOURCES = {
 
 for (const [url, { ref, skills }] of Object.entries(SOURCES)) {
   const tmp = mkdtempSync(join(tmpdir(), 'mirror-'));
-  execFileSync('git', ['clone', '--depth', '50', url, tmp], { stdio: 'inherit' });
-  execFileSync('git', ['-C', tmp, 'checkout', ref], { stdio: 'inherit' });
-  const sha = execFileSync('git', ['-C', tmp, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  for (const [local, remotePath] of Object.entries(skills)) {
-    const src = join(tmp, remotePath);
-    if (!existsSync(join(src, 'SKILL.md'))) {
-      console.error(`SKIP ${local}: ${remotePath} has no SKILL.md at ${url}@${sha} — check the upstream layout`);
-      continue;
+  try {
+    execFileSync('git', ['clone', '--depth', '50', url, tmp], { stdio: 'inherit' });
+    execFileSync('git', ['-C', tmp, 'checkout', ref], { stdio: 'inherit' });
+    const sha = execFileSync('git', ['-C', tmp, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    for (const [local, remotePath] of Object.entries(skills)) {
+      const src = join(tmp, remotePath);
+      if (!existsSync(join(src, 'SKILL.md'))) {
+        console.error(`SKIP ${local}: ${remotePath} has no SKILL.md at ${url}@${sha} — check the upstream layout`);
+        continue;
+      }
+      const dest = join(repoRoot, 'skills', local);
+      rmSync(dest, { recursive: true, force: true });
+      cpSync(src, dest, { recursive: true });
+      for (const lic of ['LICENSE', 'LICENSE.md', 'LICENSE.txt']) {
+        if (existsSync(join(tmp, lic))) { copyFileSync(join(tmp, lic), join(dest, 'LICENSE')); break; }
+      }
+      writeFileSync(join(dest, 'ATTRIBUTION.md'),
+        `# Attribution\n\nMirrored from ${url}\n\n- path: \`${remotePath}\`\n- commit: ${sha}\n` +
+        `- mirrored: ${new Date().toISOString().slice(0, 10)}\n- local modifications: none\n`);
+      console.log(`mirrored ${local} <- ${url}@${sha.slice(0, 7)}:${remotePath}`);
     }
-    const dest = join(repoRoot, 'skills', local);
-    rmSync(dest, { recursive: true, force: true });
-    cpSync(src, dest, { recursive: true });
-    for (const lic of ['LICENSE', 'LICENSE.md', 'LICENSE.txt']) {
-      if (existsSync(join(tmp, lic))) { copyFileSync(join(tmp, lic), join(dest, 'LICENSE')); break; }
-    }
-    writeFileSync(join(dest, 'ATTRIBUTION.md'),
-      `# Attribution\n\nMirrored from ${url}\n\n- path: \`${remotePath}\`\n- commit: ${sha}\n` +
-      `- mirrored: ${new Date().toISOString().slice(0, 10)}\n- local modifications: none\n`);
-    console.log(`mirrored ${local} <- ${url}@${sha.slice(0, 7)}:${remotePath}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
-  rmSync(tmp, { recursive: true, force: true });
 }
 console.log('Done. REVIEW every mirrored file before committing.');
