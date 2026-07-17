@@ -50,6 +50,11 @@ the feature**. Each rung has a gate question and a codebase anchor the skill mus
 | 5 | Platform capability | Does it need new engine semantics — orchestrator states, DB schema, channels, gates, UI surface, CLI? | `docs/ARCHITECTURE.md` (contract update mandatory) |
 | 6 | External skill on top | Does it orchestrate maestro from outside without touching internals? | `.claude/skills/orchestrate` as precedent |
 
+> **Note (post-validation, commit 7882858):** the shipped skill tightens the rung-2/3
+> gate wording (the distinguisher is whether another agent's channel branch must
+> special-case the new key) and drops the stale `AGENT_FILES` anchor, which is no
+> longer a code symbol in `src/`. The skill file is authoritative for ladder wording.
+
 Tie-breakers and smells, stated in the skill:
 
 - A feature that crosses two rungs should be split into two features.

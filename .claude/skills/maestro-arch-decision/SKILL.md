@@ -63,9 +63,12 @@ checking the anchor in the working tree — never from memory.
 
 ## Recording the ADR
 
-- Path: `docs/adr/NNN-<slug>.md`. Create `docs/adr/` if it does not exist. `NNN`
-  is the next zero-padded 3-digit number (`ls docs/adr/` to find it; first is `001`).
-- Commit the ADR file on its own with message `docs(adr): NNN <feature name>`.
+- Path: `docs/adr/NNN-<slug>.md`. Create `docs/adr/` if it does not exist (then
+  `NNN` is `001`); otherwise `NNN` is the next zero-padded 3-digit number after
+  the highest in `ls docs/adr/`.
+- Commit the ADR file on its own with message `docs(adr): NNN <feature name>`,
+  ending the commit message with the repo's standard trailer
+  `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
 Template (keep it ~15 lines):
 
