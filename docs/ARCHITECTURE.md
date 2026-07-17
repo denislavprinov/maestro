@@ -4,6 +4,10 @@ This document is the authoritative contract every builder codes against. The exa
 export signatures, event names, and on-disk JSON/Markdown file contracts below are
 binding. Do not change a signature without updating this file first.
 
+**Extension decisions:** where a new feature belongs (agent, runner, workflow,
+platform, external skill) is decided by the `.claude/skills/maestro-arch-decision`
+skill; each verdict is recorded as a mini-ADR in `docs/adr/`.
+
 **Product:** a deterministic multi-agent pipeline that drives Claude Code (headless)
 through **Plan -> Refine -> Implement -> Review** for a software task, exposed via a
 CLI, an installable `/maestro` skill, and a web UI.
