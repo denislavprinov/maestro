@@ -22,8 +22,8 @@ checking the anchor in the working tree — never from memory.
 | # | Rung | Gate question | Anchor (verify in tree) |
 |---|------|---------------|-------------------------|
 | 1 | Config/prompt tweak | Can an existing agent's `.md` prompt or `meta.json` express it? | `agents/*.md`, `agents/*.meta.json` |
-| 2 | New agent, reuse runner | Is it a producer or verifier over existing artifact types? | `docs/ADDING-AGENTS.md`, `src/core/agent-registry.mjs` |
-| 3 | New agent + new runner branch | Does it need a new artifact type or a new loop target? | `src/core/runners.mjs`, `src/core/phases.mjs`, `src/core/channels.mjs`, `AGENT_FILES`, mock case |
+| 2 | New agent, reuse runner | Is it a plain producer/verifier artifact — its own `runners.mjs`/`phases.mjs` switch-arm and channel id are fine — with NO new loop/gating semantics and NO other agent's branch needing to special-case it? | `docs/ADDING-AGENTS.md`, `src/core/agent-registry.mjs` |
+| 3 | New agent + new runner branch | Does it introduce a new loop target, or verdict/gating semantics that force ANOTHER agent's branch to special-case it (e.g. a review-provenance discriminator, a cold-replan branch)? | `src/core/runners.mjs`, `src/core/phases.mjs`, `src/core/channels.mjs`, mock case in `src/core/claude-runner.mjs` |
 | 4 | New workflow/topology | Is it a composition of existing agents in a different order/loop? | Pipeline Composer, `src/core/builtin-workflows.mjs` |
 | 5 | Platform capability | Does it need new engine semantics — orchestrator states, DB schema, channels, gates, UI surface, CLI? | `docs/ARCHITECTURE.md` (a contract update is mandatory) |
 | 6 | External skill on top | Does it orchestrate maestro from outside without touching internals? | `.claude/skills/orchestrate` as precedent |
@@ -33,7 +33,12 @@ checking the anchor in the working tree — never from memory.
 - A feature that crosses two rungs should be **split into two features** — decide
   each separately.
 - Unsure between rung 2 and rung 3: prototype at rung 2; escalate only when runner
-  reuse actually breaks.
+  reuse actually breaks. A dedicated `switch`-arm in `runners.mjs`/`phases.mjs`
+  for the new key is normal rung-2 bookkeeping (every producer gets one, e.g.
+  `manualTestsChecklist`) — it is NOT by itself evidence of rung 3. The rung-3
+  tell is another agent's branch having to change because of the new one (a
+  loop-target rewind, a provenance/mode discriminator) — see `planReviewer`'s
+  `implementer`/`planner` branches in `src/core/channels.mjs` as the contrast.
 - Smell: an agent prompt encoding control flow (loops, phase sequencing) is a
   hidden rung-4/5 feature wearing an agent costume.
 - A rung-5 verdict must name the `docs/ARCHITECTURE.md` sections that change; if
