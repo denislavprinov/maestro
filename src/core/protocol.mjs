@@ -134,11 +134,11 @@ const MAX_CLARIFY_OPTIONS = 4;
 
 /**
  * Coerce arbitrary parsed data into the canonical clarify shape:
- *   { questions: [ { id, question, options:[2–4 strings], allowFreeText:true } ] }
- * Always returns at least { questions: [] }. Caps questions at MAX_CLARIFY_QUESTIONS
- * and options at MAX_CLARIFY_OPTIONS; blank options are trimmed away (the UI/CLI also
- * filter them), so binary/assumption questions keep exactly their real choices —
- * nothing is padded.
+ *   { questions: [ { id, question, options:[2–4 strings], allowFreeText:true,
+ *                    confidence?:[int…sum 100], recommended?:string } ] }
+ * Always returns at least { questions: [] }. confidence/recommended are optional:
+ * absent unless the agent supplied usable numbers. recommended is emitted ONLY
+ * alongside confidence (no recommended-only dead data downstream).
  */
 export function normalizeClarify(data) {
   if (!data || typeof data !== 'object') return { questions: [] };
@@ -150,15 +150,61 @@ export function normalizeClarify(data) {
     const id = asString(q.id).trim() || `q${i + 1}`;
     const question = asString(q.question).trim();
     if (!question) continue;
-    // Allow 2–4 options: trim, drop blanks, cap at MAX_CLARIFY_OPTIONS. No padding.
-    // asString does not trim, so trim explicitly here before dropping empties.
-    const options = (Array.isArray(q.options) ? q.options.map(asString) : [])
-      .map((o) => o.trim())
-      .filter(Boolean)
-      .slice(0, MAX_CLARIFY_OPTIONS);
-    questions.push({ id, question, options, allowFreeText: true });
+
+    // --- options + confidence: ZIP, then filter, so alignment survives the
+    // blank-drop and the cap (rule 1). Confidence is usable only when it is an
+    // array aligned 1:1 with the RAW options whose entries are all finite
+    // numbers (rule 2); otherwise drop it entirely => no bars.
+    const rawOptions = Array.isArray(q.options) ? q.options.map(asString) : [];
+    const rawConf = q.confidence;
+    const confUsable =
+      Array.isArray(rawConf) &&
+      rawConf.length === rawOptions.length &&
+      rawConf.every((n) => Number.isFinite(n));
+
+    const paired = rawOptions
+      .map((o, idx) => ({ option: o.trim(), conf: confUsable ? Number(rawConf[idx]) : null }))
+      .filter((p) => p.option)                 // drop blank options (carries its conf away)
+      .slice(0, MAX_CLARIFY_OPTIONS);          // existing cap (rule 5)
+
+    const options = paired.map((p) => p.option);
+    const out = { id, question, options, allowFreeText: true };
+
+    // --- renormalize kept confidences to integers summing to exactly 100
+    // (rule 3): coerce negatives to 0, scale to 100, round, and push the
+    // rounding remainder (100 - sum, may be negative) onto the largest entry.
+    // Sum 0 => drop confidence.
+    let confidence = null;
+    if (confUsable && options.length) {
+      const kept = paired.map((p) => Math.max(0, p.conf));
+      const total = kept.reduce((a, b) => a + b, 0);
+      if (total > 0) {
+        const rounded = kept.map((v) => Math.round((v / total) * 100));
+        const sum = rounded.reduce((a, b) => a + b, 0);
+        let maxIdx = 0;
+        for (let k = 1; k < rounded.length; k++) if (rounded[k] > rounded[maxIdx]) maxIdx = k;
+        rounded[maxIdx] += 100 - sum;          // remainder -> largest (first on ties)
+        confidence = rounded;
+      }
+    }
+    if (confidence) out.confidence = confidence;
+
+    // --- resolve recommended (rule 4) — only meaningful when confidence survived.
+    if (confidence) {
+      const rec = asString(q.recommended).trim();
+      if (rec && options.includes(rec)) {
+        out.recommended = rec;                 // explicit, valid agent pick
+      } else {
+        let maxIdx = 0;                         // default: max-confidence option (first on ties)
+        for (let k = 1; k < confidence.length; k++) if (confidence[k] > confidence[maxIdx]) maxIdx = k;
+        out.recommended = options[maxIdx];
+      }
+    }
+    // confidence absent => recommended omitted entirely (see Q&A).
+
+    questions.push(out);
   }
-  return { questions: questions.slice(0, MAX_CLARIFY_QUESTIONS) };
+  return { questions: questions.slice(0, MAX_CLARIFY_QUESTIONS) }; // existing cap (rule 5)
 }
 
 /**

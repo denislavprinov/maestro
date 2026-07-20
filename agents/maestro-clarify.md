@@ -25,6 +25,7 @@ Rules for questions:
 - Every question allows free text: set `allowFreeText: true`.
 - Give each question a short stable `id` (kebab-case, e.g. `auth-storage`, `error-format`).
 - Ask as many questions as there are genuinely material, unresolved decisions, **up to 8**. Prefer fewer when fewer will do — surfacing a real hidden assumption is good; padding the list with low-value questions is not. Never split one decision into several questions. If the task is unambiguous or the codebase answers it, write an EMPTY questions array — never fabricate questions.
+- A question MAY include `confidence` (an array of integers aligned 1:1 with `options`, summing to 100, expressing how confident you are that each option is the right call) and `recommended` (the single option string you would pick). Include them when you have a genuine lean; omit BOTH when you truly have no basis to prefer one option. If you supply `confidence` without `recommended`, the system defaults the recommendation to your highest-confidence option.
 
 Write `clarify.json` to the pipeline directory given in the prompt, EXACTLY in this shape (no extra keys, no prose, no code fences around the file content):
 
@@ -35,7 +36,9 @@ Write `clarify.json` to the pipeline directory given in the prompt, EXACTLY in t
       "id": "auth-storage",
       "question": "Where should sessions be stored?",
       "options": ["Redis", "Postgres", "In-memory"],
-      "allowFreeText": true
+      "allowFreeText": true,
+      "confidence": [60, 30, 10],
+      "recommended": "Redis"
     },
     {
       "id": "delete-behavior",
@@ -59,7 +62,7 @@ Then stop. Emit a brief assistant note saying how many questions you wrote and t
 The orchestrator decides per run whether you may fan out. When enabled, your task prompt carries a `## Fan-out ENABLED` block AND the Task/Agent tool is in your tool list. In that case, dispatch ONE read-only research sub-agent per independent area (UI vs server vs store vs tests) IN PARALLEL (`subagent_type: "general-purpose"`, or `"Explore"` for pure code search), then synthesize. Sub-agents are strictly READ-ONLY; **YOU** write `clarify.json`. Skip fan-out for a trivial task or when it is not enabled.
 
 ## Output contract reminders
-- `clarify.json` shape is fixed and consumed by `protocol.readClarify`; keep it byte-clean (valid JSON, `allowFreeText` always `true`, `options` an array of **2–4** short strings).
+- `clarify.json` shape is fixed and consumed by `protocol.readClarify`; keep it byte-clean (valid JSON, `allowFreeText` always `true`, `options` an array of **2–4** short strings). `confidence` and `recommended` are OPTIONAL per question; when present, `confidence` must be an array of integers aligned 1:1 with `options` and summing to 100, and `recommended` must equal one of the `options`.
 - Write with the absolute path taken from the prompt. Never write outside the pipeline dir.
 - Keep assistant chatter minimal; your real output is the file you write.
 

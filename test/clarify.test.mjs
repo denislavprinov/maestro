@@ -129,6 +129,122 @@ test('normalizeClarify allows 2–4 options and never pads', () => {
   assert.ok(out.questions.every((q) => q.allowFreeText === true)); // still forced true
 });
 
+test('normalizeClarify zips confidence to options before dropping blanks', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'z', question: 'Zip?', options: ['Redis', '', 'Postgres'], confidence: [60, 0, 40] }],
+  });
+  assert.deepEqual(out.questions[0].options, ['Redis', 'Postgres']);
+  assert.deepEqual(out.questions[0].confidence, [60, 40]); // blank's conf dropped with it
+});
+
+test('normalizeClarify renormalizes to sum exactly 100, remainder on largest', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'r', question: 'Round?', options: ['A', 'B', 'C'], confidence: [1, 1, 1] }],
+  });
+  const conf = out.questions[0].confidence;
+  assert.equal(conf.reduce((a, b) => a + b, 0), 100);
+  assert.deepEqual(conf, [34, 33, 33]); // 33+33+33=99, +1 to first
+});
+
+test('normalizeClarify scales large/unnormalized confidence to sum 100', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'big', question: 'Big?', options: ['A', 'B'], confidence: [600, 200] }],
+  });
+  const conf = out.questions[0].confidence;
+  assert.equal(conf.reduce((a, b) => a + b, 0), 100);
+  assert.deepEqual(conf, [75, 25]);
+});
+
+test('normalizeClarify coerces a negative confidence entry to 0 before scaling', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'neg', question: 'Neg?', options: ['A', 'B', 'C'], confidence: [-10, 50, 50] }],
+  });
+  const conf = out.questions[0].confidence;
+  assert.equal(conf[0], 0);
+  assert.equal(conf.reduce((a, b) => a + b, 0), 100);
+});
+
+test('normalizeClarify drops confidence on length mismatch', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'm', question: 'M?', options: ['A', 'B', 'C'], confidence: [50, 50] }],
+  });
+  assert.equal(out.questions[0].confidence, undefined);
+  assert.equal(out.questions[0].recommended, undefined);
+});
+
+test('normalizeClarify drops confidence with non-numeric entries', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'n', question: 'N?', options: ['A', 'B'], confidence: [50, 'x'] }],
+  });
+  assert.equal(out.questions[0].confidence, undefined);
+});
+
+test('normalizeClarify drops confidence when entries sum to zero', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 's', question: 'S?', options: ['A', 'B'], confidence: [0, 0] }],
+  });
+  assert.equal(out.questions[0].confidence, undefined);
+  assert.equal(out.questions[0].recommended, undefined);
+});
+
+test('normalizeClarify keeps recommended when it matches a surviving option', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'k', question: 'K?', options: ['A', 'B'], confidence: [70, 30], recommended: 'B' }],
+  });
+  assert.equal(out.questions[0].recommended, 'B');
+});
+
+test('normalizeClarify defaults recommended to the max-confidence option when omitted', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'd', question: 'D?', options: ['A', 'B', 'C'], confidence: [10, 70, 20] }],
+  });
+  assert.equal(out.questions[0].recommended, 'B');
+});
+
+test('normalizeClarify ignores an invalid recommended and falls back to max', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'iv', question: 'IV?', options: ['A', 'B'], confidence: [80, 20], recommended: 'Nope' }],
+  });
+  assert.equal(out.questions[0].recommended, 'A');
+});
+
+test('normalizeClarify drops recommended when its option was filtered as blank', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'rb', question: 'RB?', options: ['A', '', 'C'], confidence: [50, 10, 40], recommended: '' }],
+  });
+  // recommended '' is not a surviving option -> default to max-confidence (A: 50 vs C: 40 after renorm)
+  assert.deepEqual(out.questions[0].options, ['A', 'C']);
+  assert.equal(out.questions[0].recommended, 'A');
+});
+
+test('normalizeClarify defaults recommended to the first option on a tie', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 't', question: 'T?', options: ['A', 'B'], confidence: [50, 50] }],
+  });
+  assert.equal(out.questions[0].recommended, 'A');
+});
+
+test('normalizeClarify omits recommended when there is no confidence', () => {
+  const out = normalizeClarify({
+    questions: [{ id: 'o', question: 'O?', options: ['A', 'B'], recommended: 'A' }],
+  });
+  assert.equal(out.questions[0].confidence, undefined);
+  assert.equal(out.questions[0].recommended, undefined);
+});
+
+test('normalizeClarify normalizes a mixed set independently', () => {
+  const out = normalizeClarify({
+    questions: [
+      { id: 'with', question: 'With?', options: ['A', 'B'], confidence: [80, 20] },
+      { id: 'without', question: 'Without?', options: ['X', 'Y'] },
+    ],
+  });
+  assert.deepEqual(out.questions[0].confidence, [80, 20]);
+  assert.equal(out.questions[0].recommended, 'A');
+  assert.equal(out.questions[1].confidence, undefined);
+  assert.equal(out.questions[1].recommended, undefined);
+});
+
 import { spawnSync } from 'node:child_process';
 
 test('CLI no longer advertises --max-clarify in help', () => {

@@ -253,15 +253,22 @@ async function askClarify(rl, questions) {
     out('');
     out(c('bold', `Q: ${q.question}`));
     const opts = (q.options || []).filter((o) => o && o.trim());
-    opts.forEach((o, i) => out(`  ${i + 1}) ${o}`));
+    const conf = Array.isArray(q.confidence) && q.confidence.length === opts.length ? q.confidence : null;
+    const recommended = conf ? q.recommended : null;
+    opts.forEach((o, i) => {
+      let line = `  ${i + 1}) ${o}`;
+      if (conf) line += ` — ${conf[i]}%`;
+      if (recommended && o === recommended) line += ' (recommended)';
+      out(line);
+    });
     const ownIndex = opts.length + 1;
     out(`  ${ownIndex}) type your own`);
     let choice = '';
     while (!choice) {
       const raw = (await question(rl, c('cyan', 'Choose [number or text]: '))).trim();
       if (!raw) {
-        // Empty input defaults to the first option.
-        choice = opts[0] || '';
+        // Empty input defaults to the recommended option when present, else the first.
+        choice = (recommended && opts.includes(recommended) ? recommended : opts[0]) || '';
         if (choice) break;
         continue;
       }
