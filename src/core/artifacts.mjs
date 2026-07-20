@@ -411,6 +411,76 @@ export function listSubAgents(pipelineId) {
 }
 
 /**
+ * Persist ONE asset invocation (Skill / Agent sub-agent / graphify) detected on the
+ * main claude stream. Mirrors upsertSubAgent: idempotent UPSERT keyed on (pipeline_id, id)
+ * — the tool_use id, unique per invocation — with COALESCE on every column so a partial
+ * replay never clobbers set values. Best-effort under WAL contention (the live
+ * state.assets is the reconcile source of truth). The pipelines row must already exist (FK).
+ * @param {string} pipelineId
+ * @param {{id:string, kind?:string, name?:string, detail?:string, nodeId?:string,
+ *          uiPhase?:string, stepIndex?:number, cycle?:number, stepKey?:string,
+ *          invokedAt?:string}} rec
+ */
+export function upsertAssetInvocation(pipelineId, rec) {
+  if (!pipelineId || !rec || !rec.id) return;
+  try {
+    tx(() => {
+      getDb().prepare(`
+        INSERT INTO pipeline_assets
+          (pipeline_id, id, kind, name, detail, node_id, ui_phase, step_index, cycle, step_key, invoked_at)
+        VALUES (@pipeline_id,@id,@kind,@name,@detail,@node_id,@ui_phase,@step_index,@cycle,@step_key,@invoked_at)
+        ON CONFLICT(pipeline_id, id) DO UPDATE SET
+          kind       = COALESCE(excluded.kind, kind),
+          name       = COALESCE(excluded.name, name),
+          detail     = COALESCE(excluded.detail, detail),
+          node_id    = COALESCE(excluded.node_id, node_id),
+          ui_phase   = COALESCE(excluded.ui_phase, ui_phase),
+          step_index = COALESCE(excluded.step_index, step_index),
+          cycle      = COALESCE(excluded.cycle, cycle),
+          step_key   = COALESCE(excluded.step_key, step_key),
+          invoked_at = COALESCE(excluded.invoked_at, invoked_at)
+      `).run({
+        pipeline_id: pipelineId,
+        id: rec.id,
+        kind: rec.kind ?? null,
+        name: rec.name ?? null,
+        detail: rec.detail ?? null,
+        node_id: rec.nodeId ?? null,
+        ui_phase: rec.uiPhase ?? null,
+        step_index: Number.isFinite(rec.stepIndex) ? rec.stepIndex : null,
+        cycle: Number.isFinite(rec.cycle) ? rec.cycle : null,
+        step_key: rec.stepKey ?? null,
+        invoked_at: rec.invokedAt ?? null,
+      });
+    });
+  } catch { /* best-effort: live state.assets is the reconcile source of truth. */ }
+}
+
+/**
+ * List a pipeline's asset invocations as the shared camelCase record array, ordered by
+ * (invoked_at, id). Inverse of upsertAssetInvocation's column mapping. Always returns an
+ * array (never null). Wired into rowToState so it rides every detail response; the UI
+ * dedups by (kind, name) at render time.
+ * @param {string} pipelineId
+ * @returns {Array<{id:string, kind:string, name:string, detail:string|null,
+ *   nodeId:string|null, uiPhase:string|null, stepIndex:number|null, cycle:number|null,
+ *   stepKey:string|null, invokedAt:string|null}>}
+ */
+export function listAssetInvocations(pipelineId) {
+  if (!pipelineId) return [];
+  return getDb().prepare(`
+    SELECT id, kind, name, detail, node_id, ui_phase, step_index, cycle, step_key, invoked_at
+      FROM pipeline_assets WHERE pipeline_id = ?
+     ORDER BY invoked_at ASC, id ASC
+  `).all(pipelineId).map((r) => ({
+    id: r.id, kind: r.kind, name: r.name, detail: r.detail ?? null,
+    nodeId: r.node_id ?? null, uiPhase: r.ui_phase ?? null,
+    stepIndex: r.step_index ?? null, cycle: r.cycle ?? null,
+    stepKey: r.step_key ?? null, invokedAt: r.invoked_at ?? null,
+  }));
+}
+
+/**
  * Persist a run's decomposition: its ordered phases + the self-contained task files.
  * Idempotent UPSERT on the PKs (never the delete-all path), so a re-write or a later
  * status update never duplicates rows. Best-effort under WAL contention (mirrors
@@ -1599,6 +1669,7 @@ function rowToState(row) {
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
+    assets: listAssetInvocations(row.id),
   };
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
