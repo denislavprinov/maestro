@@ -104,7 +104,7 @@ test('workspace mode swaps the single source dropdown for per-project dropdowns'
   // Single dropdown hidden; per-project list shown with one select per member.
   assert.equal(doc.querySelector('#sourceBranchWrap').classList.contains('hidden'), true);
   assert.equal(doc.querySelector('#ws-source-branches').classList.contains('hidden'), false);
-  assert.equal(doc.querySelectorAll('#ws-source-branches select.ws-src-select').length, 2);
+  assert.equal(doc.querySelectorAll('#ws-source-branches input.ws-src-select').length, 2);
   // The "Source branch" field/header itself is never hidden.
   assert.equal(doc.querySelector('#sourceBranchHint').closest('.field').classList.contains('hidden'), false);
 });

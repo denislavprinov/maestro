@@ -134,6 +134,7 @@ const el = {
   wsMembers: $('#ws-members'),
   sourceBranchHint: $('#sourceBranchHint'),
   sourceBranchWrap: $('#sourceBranchWrap'),
+  sourceBranchList: $('#sourceBranchList'),   // <-- new: the single-mode datalist
   wsSourceBranches: $('#ws-source-branches'),
 
   // Workspaces management view
@@ -3683,51 +3684,42 @@ function onProjectChanged() {
   }
 }
 
-// Seed any branch <select> with a single placeholder option. Empty value === "let
-// the server default to current HEAD". Returns the option for in-place updates.
-// We always seed one so the select is never blank (m3) and always communicates
-// state — loading, the auto default, or an error (m2).
-function seedBranchPlaceholder(select, text) {
-  if (!select) return null;
-  select.innerHTML = '';
-  const opt = document.createElement('option');
-  opt.value = '';
-  opt.textContent = text;
-  select.appendChild(opt);
-  return opt;
-}
-
-// Populate any branch <select> from /api/branches for `projectDir`, pre-selecting
-// the repo's current branch (HEAD). Empty value still falls back to HEAD on submit.
-async function populateBranchSelect(select, projectDir) {
-  if (!select) return;
-  if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); return; }
-  const placeholder = seedBranchPlaceholder(select, 'Loading branches…');
+// Fill a <datalist> with the project's LOCAL branches and pre-fill the paired
+// <input> with the current branch (HEAD), so the field defaults exactly like the
+// old <select> did. Clearing the input → empty value → server falls back to HEAD.
+// Typing filters the datalist natively — that is the "search". Local branches only.
+async function populateBranchDatalist(listEl, input, projectDir) {
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  if (input) { input.value = ''; input.placeholder = 'current branch (auto)'; }
+  if (!projectDir) return;                       // no project yet → auto only
+  if (input) input.placeholder = 'Loading branches…';
   try {
     const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     const branches = Array.isArray(data.branches) ? data.branches : [];
-    if (!branches.length) { placeholder.textContent = 'current branch (auto)'; return; }
-    // Rebuild: explicit "auto" first, then every branch (current pre-selected).
-    seedBranchPlaceholder(select, 'current branch (auto)');
     for (const b of branches) {
       const opt = document.createElement('option');
-      opt.value = b; opt.textContent = b;
-      if (b === data.current) opt.selected = true;
-      select.appendChild(opt);
+      opt.value = b;                             // <option value> = the searchable entry
+      listEl.appendChild(opt);
+    }
+    if (input) {
+      input.placeholder = 'current branch (auto)';
+      // Parity with the old pre-selected <select>: default to HEAD when present.
+      if (data.current && branches.includes(data.current)) input.value = data.current;
     }
   } catch {
-    // m2: surface the failure instead of leaving a silently-empty select. The
-    // empty value still makes the server fall back to HEAD on submit.
-    placeholder.textContent = 'current branch (auto — branch list unavailable)';
+    // Mirror old behaviour: empty value still makes the server fall back to HEAD.
+    if (input) input.placeholder = 'current branch (auto — branch list unavailable)';
   }
 }
 
-// Back-compat shim for the single #sourceBranch (existing call sites in
-// onProjectChanged are unchanged). setBranchPlaceholder is no longer needed
-// (its callers move to seedBranchPlaceholder / are removed in setRunTarget).
-function refreshBranches(projectDir) { return populateBranchSelect(el.sourceBranch, projectDir); }
+// Back-compat shim for the single #sourceBranch combobox (call sites in
+// onProjectChanged use this name: refreshBranches(path) / refreshBranches('')).
+function refreshBranches(projectDir) {
+  return populateBranchDatalist(el.sourceBranchList, el.sourceBranch, projectDir);
+}
 
 el.projectSelect.addEventListener('change', () => {
   if (el.projectSelect.value === '__add__') {
@@ -4012,21 +4004,31 @@ function renderWorkspaceSourceBranches() {
     name.textContent = wsBasename(p) + (missing ? ' (missing)' : '');
 
     const wrap = document.createElement('div');
-    wrap.className = 'select-wrap';
-    const sel = document.createElement('select');
-    sel.className = 'select ws-src-select';
-    sel.dataset.projectKey = key;
-    wrap.appendChild(sel);
+    wrap.className = 'combo-wrap';
 
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'input branch-combo ws-src-select';  // ws-src-select kept as submit hook
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = 'current branch (auto)';
+    input.dataset.projectKey = key;
+    const listId = `ws-src-list-${i}`;
+    input.setAttribute('list', listId);
+
+    const list = document.createElement('datalist');
+    list.id = listId;
+
+    wrap.appendChild(input);
+    wrap.appendChild(list);
     row.appendChild(name);
     row.appendChild(wrap);
     host.appendChild(row);
 
     if (missing) {
-      sel.disabled = true;
-      seedBranchPlaceholder(sel, 'current branch (auto)');
+      input.disabled = true;            // can't pick a branch in a missing checkout
     } else {
-      populateBranchSelect(sel, p); // async; defaults to HEAD per the clarification
+      populateBranchDatalist(list, input, p); // async; defaults to that project's HEAD
     }
   });
 }
@@ -5335,7 +5337,7 @@ el.form.addEventListener('submit', async (e) => {
     // "auto" placeholder) so the server falls back to each project's default.
     const byKey = {};
     if (el.wsSourceBranches) {
-      el.wsSourceBranches.querySelectorAll('select.ws-src-select').forEach((s) => {
+      el.wsSourceBranches.querySelectorAll('input.ws-src-select').forEach((s) => {
         const key = s.dataset.projectKey;
         const val = (s.value || '').trim();
         if (key && val) byKey[key] = val;
